@@ -14,7 +14,9 @@ credenciales contra `sessionAccountsDB`. El backend esperado expone:
 - `POST /auth/logout` con `{ refreshToken }` y respuesta `204`.
 
 `VITE_API_BASE_URL` debe apuntar al prefijo del backend, por defecto
-`http://localhost:8080/api/v1`.
+`http://localhost:8080/api/v1` en desarrollo y `/api/v1` en un build de
+producción. Puede ser relativa (`/api/v1`, como en la imagen Docker): el
+`http-client` la resuelve contra el origen de la página.
 
 ## Sesion y permisos
 
