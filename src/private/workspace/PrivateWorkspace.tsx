@@ -834,7 +834,9 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
   ] = await Promise.all([
     // Limpieza obtiene las habitaciones desde housekeeping; evita depender de
     // `rooms.read` en perfiles personalizados con acceso solo al módulo.
-    canReadRooms && role !== 'housekeeping' ? permissionAwareList(() => roomService.getRooms()) : [],
+    canReadRooms && role !== 'housekeeping'
+      ? permissionAwareList(() => roomService.getRooms())
+      : [],
     canReadRoomCatalog ? permissionAwareList(() => roomService.getRoomTypes()) : [],
     canReadRoomCatalog ? permissionAwareList(() => roomService.getRoomFeatures()) : [],
     canReadBookings ? permissionAwareList(() => bookingService.getBookings()) : [],
@@ -842,7 +844,9 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
     ROOM_SERVICE_READ_ROLES.includes(role)
       ? permissionAwareList(() => catalogService.getProducts())
       : [],
-    ROOM_SERVICE_READ_ROLES.includes(role) ? permissionAwareList(() => orderService.getOrders()) : [],
+    ROOM_SERVICE_READ_ROLES.includes(role)
+      ? permissionAwareList(() => orderService.getOrders())
+      : [],
     canReadServiceRequests
       ? role === 'housekeeping'
         ? safeList(() => serviceRequestService.getRequests())
