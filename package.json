@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "check": "node scripts/check.mjs",
-    "test": "npm run test:auth && npm run test:currency && npm run test:date && npm run test:money-contract && npm run test:contract && npm run test:shared-contract && npm run test:referential-integrity && npm run test:room-status && npm run test:lot-c-d && npm run test:services && npm run test:e2e-integration && npm run test:public-booking && npm run test:presentation && npm run test:workspace && npm run test:router && npm run test:media && npm run test:dev-quick-login",
+    "test": "npm run test:auth && npm run test:currency && npm run test:date && npm run test:money-contract && npm run test:contract && npm run test:shared-contract && npm run test:referential-integrity && npm run test:room-status && npm run test:lot-c-d && npm run test:services && npm run test:e2e-integration && npm run test:public-booking && npm run test:presentation && npm run test:workspace && npm run test:router && npm run test:media",
     "test:auth": "node scripts/test-auth.mjs",
     "test:currency": "node scripts/test-currency.mjs",
     "test:date": "node scripts/test-date.mjs",
@@ -28,8 +28,7 @@
     "test:presentation": "node scripts/test-presentation.mjs",
     "test:workspace": "node scripts/test-workspace.mjs",
     "test:router": "node scripts/test-router.mjs",
-    "test:media": "node scripts/test-media.mjs",
-    "test:dev-quick-login": "node scripts/test-dev-quick-login.mjs"
+    "test:media": "node scripts/test-media.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.446.0",

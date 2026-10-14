@@ -1,16 +1,11 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
 import { useAuth } from '@/modules/auth/components/auth-context';
 import { SessionStatus } from '@/modules/auth/components/SessionStatus';
 import { getLoginDestination } from '@/private/routes/navigation';
-import type { DevAccount } from '../pages/DevQuickLogin';
 import '../pages/staff-login.css';
-
-// Solo con `npm run dev`, igual que en StaffLoginPage: en producción
-// `import.meta.env.DEV` es `false` y Vite elimina el import y las credenciales demo.
-const DevQuickLogin = import.meta.env.DEV ? lazy(() => import('../pages/DevQuickLogin')) : null;
 
 type PublicAuthModalProps = {
   onClose: () => void;
@@ -34,12 +29,6 @@ export function PublicAuthModal({ onClose }: PublicAuthModalProps) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loginWith(email, password);
-  }
-
-  async function pickDevAccount(account: DevAccount) {
-    setEmail(account.email);
-    setPassword(account.password);
-    await loginWith(account.email, account.password);
   }
 
   async function loginWith(loginEmail: string, loginPassword: string) {
@@ -125,11 +114,6 @@ export function PublicAuthModal({ onClose }: PublicAuthModalProps) {
             </button>
           </form>
         )}
-        {DevQuickLogin && !isLoading && !sessionError ? (
-          <Suspense fallback={null}>
-            <DevQuickLogin onPick={pickDevAccount} disabled={isSubmitting} />
-          </Suspense>
-        ) : null}
         <p className="muted visitor-auth-modal-switch">
           ¿Primera vez como huésped?{' '}
           <Link

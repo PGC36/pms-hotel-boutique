@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
@@ -6,12 +6,7 @@ import { useAuth } from '@/modules/auth/components/auth-context';
 import { SessionStatus } from '@/modules/auth/components/SessionStatus';
 import { GuestAccessScreen } from '@/modules/guest-portal/components/GuestAccessScreen';
 import { getLoginDestination } from '@/private/routes/navigation';
-import type { DevAccount } from './DevQuickLogin';
 import './staff-login.css';
-
-// Solo con `npm run dev`. En el build de producción `import.meta.env.DEV` es
-// `false`: Vite elimina el import dinámico y las credenciales demo no llegan al bundle.
-const DevQuickLogin = import.meta.env.DEV ? lazy(() => import('./DevQuickLogin')) : null;
 
 export function StaffLoginPage() {
   const location = useLocation();
@@ -34,12 +29,6 @@ function StaffLoginForm() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loginWith(email, password);
-  }
-
-  async function pickDevAccount(account: DevAccount) {
-    setEmail(account.email);
-    setPassword(account.password);
-    await loginWith(account.email, account.password);
   }
 
   async function loginWith(loginEmail: string, loginPassword: string) {
@@ -119,12 +108,6 @@ function StaffLoginForm() {
             {isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
           </button>
         </form>
-
-        {DevQuickLogin ? (
-          <Suspense fallback={null}>
-            <DevQuickLogin onPick={pickDevAccount} disabled={isSubmitting} />
-          </Suspense>
-        ) : null}
 
         <p className="muted">
           ¿Primera vez como huésped?{' '}
