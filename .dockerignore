@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.git
+.github
+.codex
+.env
+.env.*
+mobile
+docs
+*.md
+Jenkinsfile
+sonar-project.properties
