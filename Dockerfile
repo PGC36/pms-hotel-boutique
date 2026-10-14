@@ -19,7 +19,10 @@ COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/proxy-headers.inc /etc/nginx/conf.d/proxy-headers.inc
 COPY --from=build /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+# Puntos de montaje del HTTPS de producción; vacíos en la imagen (ver docker/nginx.conf).
+RUN mkdir -p /etc/nginx/tls /etc/nginx/certs
+
+EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget -q --spider http://127.0.0.1/healthz || exit 1
