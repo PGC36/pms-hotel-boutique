@@ -1,0 +1,179 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-test:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    env:
+      HAS_SONARQUBE: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' && secrets.SONAR_PROJECT_KEY != '' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run static checks
+        run: npm run check
+
+      - name: Run tests and coverage
+        run: npm run test:coverage --if-present
+
+      - name: SonarQube analysis
+        if: env.HAS_SONARQUBE == 'true'
+        uses: SonarSource/sonarqube-scan-action@v5.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >-
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+
+      - name: SonarQube quality gate
+        if: env.HAS_SONARQUBE == 'true'
+        uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: SonarQube not configured
+        if: env.HAS_SONARQUBE != 'true'
+        run: |
+          echo "::notice title=SonarQube omitido::Configura SONAR_TOKEN, SONAR_HOST_URL y SONAR_PROJECT_KEY para activar analisis y Quality Gate."
+
+  production-build-and-release:
+    name: Production build and release
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/master' ||
+      startsWith(github.ref, 'refs/tags/v'))
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Archive production build
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dist
+          path: dist/
+
+  docker:
+    name: Imagen Docker en GHCR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Nombre de imagen
+        id: meta
+        run: |
+          # GHCR exige nombres en minúsculas.
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build y push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy al VPS
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: deploy-vps
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Verificar secrets de deploy
+        id: check
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::notice title=Deploy omitido::Faltan DEPLOY_HOST, DEPLOY_KEY o DEPLOY_KNOWN_HOSTS."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy por SSH
+        if: steps.check.outputs.enabled == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # La llave solo puede ejecutar /opt/pms/deploy.sh en el servidor (forced command).
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "deploy@${DEPLOY_HOST}" "frontend ${GITHUB_SHA}"

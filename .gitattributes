@@ -1,0 +1,18 @@
+# Normaliza los finales de línea del repositorio a LF para todo el equipo,
+# sin depender de que cada máquina tenga `core.autocrlf` configurado igual.
+# No cambiar `core.autocrlf` a mano localmente — ver README.md.
+* text=auto eol=lf
+
+# Binarios: nunca normalizar finales de línea ni intentar diff de texto.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.pdf binary

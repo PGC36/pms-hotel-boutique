@@ -1,0 +1,146 @@
+.dprc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dprc-calendar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  background-color: var(--color-surface);
+}
+
+.dprc-calendar--disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.dprc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-6);
+}
+
+.dprc-month-label {
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  text-transform: capitalize;
+}
+
+.dprc-nav-button {
+  display: grid;
+  place-items: center;
+  width: var(--space-11);
+  height: var(--space-11);
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.dprc-nav-button:hover:not(:disabled) {
+  background-color: var(--color-surface-secondary);
+  color: var(--color-text-primary);
+}
+
+.dprc-nav-button:focus-visible {
+  outline: 2px solid var(--color-brand-gold);
+  outline-offset: 2px;
+}
+
+.dprc-nav-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dprc-weekdays,
+.dprc-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+}
+
+.dprc-weekday {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  padding-bottom: var(--space-3);
+}
+
+.dprc-day {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.dprc-day:hover:not(:disabled) {
+  background-color: var(--color-surface-secondary);
+}
+
+.dprc-day:focus-visible {
+  outline: 2px solid var(--color-brand-gold);
+  outline-offset: 2px;
+}
+
+.dprc-day:disabled {
+  cursor: not-allowed;
+}
+
+.dprc-day--outside {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+
+.dprc-day--in-range {
+  background-color: var(--color-surface-secondary);
+  border-radius: 0;
+}
+
+.dprc-day--start,
+.dprc-day--end {
+  background-color: var(--color-brand-gold);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.dprc-day--start {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dprc-day--end {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.dprc-day--unavailable {
+  color: var(--color-text-muted);
+  background-color: var(--color-surface-secondary);
+  text-decoration: line-through;
+}
+
+.dprc-calendar--range-invalid .dprc-day--start,
+.dprc-calendar--range-invalid .dprc-day--end {
+  background-color: var(--color-error);
+  color: var(--color-surface);
+}
+
+.dprc-calendar--range-invalid .dprc-day--in-range {
+  background-color: var(--color-error);
+  opacity: 0.15;
+}

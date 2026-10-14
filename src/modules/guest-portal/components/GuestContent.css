@@ -1,0 +1,19 @@
+/* Estilos nuevos de GuestContent (issue #146). El resto del portal sigue en index.css. */
+
+.gs-menu-card-photo {
+  overflow: hidden;
+  margin-bottom: var(--space-4);
+  height: var(--size-legacy-140);
+  border-radius: var(--radius-md);
+  background: var(--media-placeholder-bg);
+}
+
+.gs-amenity-photo {
+  flex: none;
+  width: var(--size-legacy-80);
+  overflow: hidden;
+  align-self: flex-start;
+  aspect-ratio: var(--media-aspect-ratio);
+  border-radius: var(--radius-md);
+  background: var(--media-placeholder-bg);
+}

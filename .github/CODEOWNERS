@@ -1,0 +1,9 @@
+# Contrato compartido con la app móvil. Un PR que toque cualquiera de
+# estas rutas necesita la revisión de @PGC36.
+/src/shared/ @PGC36
+/src/data/db.ts @PGC36
+/src/app/routes.ts @PGC36
+/src/app/router.tsx @PGC36
+/src/modules/auth/models/ @PGC36
+/docs/CONTRATO-DATOS.md @PGC36
+/docs/DECISIONES.md @PGC36

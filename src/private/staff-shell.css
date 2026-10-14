@@ -1,0 +1,21 @@
+.staff-shell .sidebar {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .staff-shell > .sidebar {
+    position: static;
+    width: 100%;
+    min-height: auto;
+    transform: none;
+  }
+
+  .staff-shell .side-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
+
+  .staff-shell .workspace-label {
+    grid-column: 1 / -1;
+  }
+}

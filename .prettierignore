@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.tmp-bolt-source/
+package-lock.json
+docs/
+.serena/
+docker/

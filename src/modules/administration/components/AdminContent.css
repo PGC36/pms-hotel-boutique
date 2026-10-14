@@ -1,0 +1,156 @@
+/* Estilos nuevos de AdminContent (issue #146). El resto del módulo sigue en index.css. */
+
+.adm-modal-error {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--ui-danger-bg);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.adm-modal-section {
+  margin-top: var(--space-5);
+}
+
+.adm-concierge-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.adm-concierge-form label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.adm-concierge-form input {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+.adm-catalog-stack {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.adm-checklist-template-field {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.adm-checklist-template-field textarea {
+  min-height: 12rem;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  font: inherit;
+  line-height: var(--line-height-normal);
+  resize: vertical;
+}
+
+.adm-checklist-template-note {
+  margin-bottom: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.adm-concierge-form .adm-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.adm-concierge-list {
+  display: grid;
+}
+
+.adm-concierge-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.adm-concierge-row > div:first-child {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.adm-concierge-row > div:first-child span {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .adm-concierge-form,
+  .adm-concierge-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-concierge-row .adm-actions {
+    justify-content: flex-start;
+  }
+}
+
+.adm-catalog-thumb {
+  flex: none;
+  width: var(--size-legacy-56);
+  overflow: hidden;
+  aspect-ratio: var(--media-aspect-ratio);
+  border-radius: var(--radius-sm);
+  background: var(--media-placeholder-bg);
+}
+
+.adm-catalog-thumb .catalog-image--placeholder {
+  padding: 0;
+}
+
+.adm-catalog-thumb .catalog-image--placeholder span {
+  display: none;
+}
+
+.adm-catalog-thumb .catalog-image__icon {
+  width: var(--space-7);
+  height: var(--space-7);
+}
+
+.adm-catalog-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* En pantallas angostas el modal nunca supera el ancho visible. */
+.adm-modal {
+  max-width: calc(100vw - var(--space-6));
+  box-sizing: border-box;
+}
+
+.adm-field-help {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-normal);
+}
