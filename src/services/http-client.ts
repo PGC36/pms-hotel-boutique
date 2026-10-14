@@ -1,8 +1,24 @@
-const DEFAULT_API_BASE_URL = 'http://localhost:8080/api/v1';
-
 function getApiBaseUrl(): string {
   const env = (import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env;
-  return env?.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
+  if (env?.VITE_API_BASE_URL) return env.VITE_API_BASE_URL;
+  // Vite reemplaza import.meta.env.DEV por una constante en el build: el backend local no
+  // queda en el bundle de producción, que usa el mismo dominio (Nginx redirige /api).
+  return import.meta.env.DEV ? 'http://localhost:8080/api/v1' : '/api/v1';
+}
+
+/**
+ * Base absoluta de la API, siempre terminada en "/". En producción
+ * VITE_API_BASE_URL es relativa ("/api/v1", mismo dominio detrás de Nginx) y
+ * `new URL(path, base)` no acepta una base relativa: se resuelve contra el
+ * origen de la página. Una base absoluta (desarrollo) queda igual. Sin
+ * `window` (pruebas en Node) el origen es "http://localhost".
+ */
+export function resolveApiBaseUrl(baseUrl: string = getApiBaseUrl()): string {
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://localhost';
+  return new URL(`${baseUrl.replace(/\/+$/, '')}/`, `${origin}/`).href;
 }
 
 type RefreshHandler = () => Promise<string | null>;
@@ -100,8 +116,7 @@ export class HttpClient {
     body?: unknown,
     init?: HttpClientInit,
   ): Promise<Response> {
-    const baseUrl = getApiBaseUrl();
-    const url = new URL(path.replace(/^\/+/, ''), `${baseUrl.replace(/\/+$/, '')}/`);
+    const url = new URL(path.replace(/^\/+/, ''), resolveApiBaseUrl());
     const headers = new Headers(init?.headers);
     // Multipart: el navegador arma el Content-Type con su boundary; fijarlo a mano lo rompe.
     const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
