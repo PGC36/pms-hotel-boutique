@@ -3,7 +3,10 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { create, act } from 'react-test-renderer';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { router as configuredRouter } from '@/app/router';
-import { rolePermissionsFromBackendRoles } from '@/modules/administration/utils/rolePermissions';
+import {
+  rolePermissionsFromBackendRoles,
+  rolePermissionKeysFromUi,
+} from '@/modules/administration/utils/rolePermissions';
 import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { authService, sessionStorageKey } from '@/modules/auth/services/auth-service';
 import { getLoginDestination } from '@/private/routes/navigation';
@@ -674,6 +677,31 @@ test('ADMIN keeps its administration group fixed and reads other views from navi
   assert.equal(reception['RECEPCIÓN::Caja'], false);
   assert.equal(reception['ADMINISTRACIÓN::Usuarios y roles'], false);
   assert.equal(reception['HUÉSPED::Inicio'], false);
+
+  const configuredConcierge = rolePermissionsFromBackendRoles([
+    role('concierge', [
+      'navigation.configured',
+      'navigation.administracion.dashboard',
+      'navigation.conserjeria.solicitudes',
+      'concierge.read',
+      'bookings.read',
+    ]),
+  ]).concierge;
+  assert.equal(configuredConcierge['ADMINISTRACIÓN::Dashboard'], true);
+  assert.equal(configuredConcierge['CONSERJERÍA::Solicitudes'], true);
+  assert.equal(configuredConcierge['CONSERJERÍA::Por habitación'], false);
+  assert.equal(configuredConcierge['CONSERJERÍA::Historial'], false);
+
+  const updatedConciergeKeys = rolePermissionKeysFromUi('concierge', {
+    'CONSERJERÍA::Solicitudes': true,
+    'CONSERJERÍA::Por habitación': false,
+    'CONSERJERÍA::Historial': false,
+  });
+  assert.ok(updatedConciergeKeys.includes('navigation.configured'));
+  assert.ok(updatedConciergeKeys.includes('navigation.conserjeria.solicitudes'));
+  assert.ok(updatedConciergeKeys.includes('concierge.read'));
+  assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.por-habitacion'));
+  assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.historial'));
 });
 
 test('session survives remount; logout in another tab clears access', async () => {

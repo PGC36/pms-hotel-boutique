@@ -38,6 +38,7 @@ import { inventoryService } from '@/services/inventoryService';
 import { personnelService } from '@/services/personnelService';
 import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
+import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
 import { HttpError } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
@@ -364,6 +365,17 @@ const backendPermissionsByAccessKey: Record<string, string[]> = {
 };
 
 const adminNavigationPermissionByAccessKey: Record<string, string> = {
+  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: 'navigation.administracion.dashboard',
+  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]:
+    'navigation.administracion.usuarios-y-roles',
+  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: 'navigation.administracion.habitaciones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: 'navigation.administracion.tarifas',
+  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: 'navigation.administracion.promociones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: 'navigation.administracion.servicios',
+  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: 'navigation.administracion.reportes',
+  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: 'navigation.administracion.inventario',
+  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: 'navigation.administracion.caja',
+  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: 'navigation.administracion.auditoria',
   [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'navigation.recepcion.resumen',
   [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'navigation.recepcion.calendario',
   [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'navigation.recepcion.reservas',
@@ -394,16 +406,6 @@ const adminNavigationPermissionByAccessKey: Record<string, string> = {
   [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'navigation.huesped.notificaciones',
 };
 
-const adminNavigationPermissionsFromUi = (permissions: Record<string, boolean>) =>
-  Object.entries(permissions)
-    .filter(([key, enabled]) => enabled && !key.startsWith(`${ADMIN_ACCESS_GROUP_NAME}::`))
-    .flatMap(([key]) => {
-      const permission = adminNavigationPermissionByAccessKey[key];
-      return permission ? [permission] : [];
-    })
-    .filter((permission, index, all) => all.indexOf(permission) === index)
-    .sort();
-
 const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
   if (role.permissionIds.length === 0) {
     const fallbackPermissions = getRoleDashboardPermissions(role.code);
@@ -412,15 +414,17 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
       : fallbackPermissions;
   }
   const granted = new Set(role.permissionIds);
-  if (normalizeRoleCode(role.code) === 'admin') {
-    return withFixedAdminPermissions(
-      Object.fromEntries(
-        ALL_PERMISSIONS.map((key) => {
-          const permission = adminNavigationPermissionByAccessKey[key];
-          return [key, permission ? granted.has(permission) : false];
-        }),
-      ),
+  const hasConfiguredNavigation = granted.has('navigation.configured');
+  if (normalizeRoleCode(role.code) === 'admin' || hasConfiguredNavigation) {
+    const navigationPermissions = Object.fromEntries(
+      ALL_PERMISSIONS.map((key) => {
+        const permission = adminNavigationPermissionByAccessKey[key];
+        return [key, permission ? granted.has(permission) : false];
+      }),
     );
+    return normalizeRoleCode(role.code) === 'admin'
+      ? withFixedAdminPermissions(navigationPermissions)
+      : navigationPermissions;
   }
   const permissions = Object.fromEntries(
     ALL_PERMISSIONS.map((key) => {
@@ -433,15 +437,6 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
   ) as Record<string, boolean>;
   return permissions;
 };
-
-const backendPermissionsFromUi = (permissions: Record<string, boolean>): string[] =>
-  [
-    ...new Set(
-      Object.entries(permissions)
-        .filter(([, enabled]) => enabled)
-        .flatMap(([key]) => backendPermissionsByAccessKey[key] ?? []),
-    ),
-  ].sort();
 
 const reportTabsByGroup: Record<ReportGroup, AdminReportTab[]> = {
   'Resumen operativo': ['Ocupación', 'Reservas', 'Cancelaciones'],
@@ -2321,9 +2316,7 @@ function AdminContentReady({
               try {
                 const isEditingProtectedAdminRole =
                   editRole !== null && normalizeRoleCode(editRole.code) === 'admin';
-                const nextPermissionKeys = isEditingProtectedAdminRole
-                  ? adminNavigationPermissionsFromUi(r.permissions)
-                  : backendPermissionsFromUi(r.permissions);
+                const nextPermissionKeys = rolePermissionKeysFromUi(r.code, r.permissions);
                 let saved = editRole
                   ? await personnelService.updateRole(editRole.dbId, { name: r.name })
                   : await personnelService.createRole({
@@ -4208,7 +4201,8 @@ function RoleModal({
           name,
           description,
           permissions: isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
-          permissionKeys: backendPermissionsFromUi(
+          permissionKeys: rolePermissionKeysFromUi(
+            role?.code ?? name.toLowerCase().replace(/\s+/g, '_'),
             isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
           ),
           userCount: role?.userCount ?? 0,

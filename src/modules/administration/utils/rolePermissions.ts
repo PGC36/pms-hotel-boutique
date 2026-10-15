@@ -132,6 +132,17 @@ const backendPermissionsByAccessKey: Record<string, string[]> = {
 };
 
 const adminNavigationPermissionByAccessKey: Record<string, string> = {
+  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: 'navigation.administracion.dashboard',
+  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]:
+    'navigation.administracion.usuarios-y-roles',
+  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: 'navigation.administracion.habitaciones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: 'navigation.administracion.tarifas',
+  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: 'navigation.administracion.promociones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: 'navigation.administracion.servicios',
+  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: 'navigation.administracion.reportes',
+  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: 'navigation.administracion.inventario',
+  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: 'navigation.administracion.caja',
+  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: 'navigation.administracion.auditoria',
   [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'navigation.recepcion.resumen',
   [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'navigation.recepcion.calendario',
   [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'navigation.recepcion.reservas',
@@ -189,15 +200,17 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
       : fallbackPermissions;
   }
   const granted = new Set(role.permissionIds);
-  if (normalizeRoleCode(role.code) === 'admin') {
-    return withFixedAdminPermissions(
-      Object.fromEntries(
-        ALL_PERMISSIONS.map((key) => {
-          const permission = adminNavigationPermissionByAccessKey[key];
-          return [key, permission ? granted.has(permission) : false];
-        }),
-      ),
+  const hasConfiguredNavigation = granted.has('navigation.configured');
+  if (normalizeRoleCode(role.code) === 'admin' || hasConfiguredNavigation) {
+    const navigationPermissions = Object.fromEntries(
+      ALL_PERMISSIONS.map((key) => {
+        const permission = adminNavigationPermissionByAccessKey[key];
+        return [key, permission ? granted.has(permission) : false];
+      }),
     );
+    return normalizeRoleCode(role.code) === 'admin'
+      ? withFixedAdminPermissions(navigationPermissions)
+      : navigationPermissions;
   }
   const permissions = Object.fromEntries(
     ALL_PERMISSIONS.map((key) => {
@@ -215,3 +228,25 @@ export const rolePermissionsFromBackendRoles = (roles: Role[]) =>
   Object.fromEntries(
     roles.map((role) => [normalizeRoleCode(role.code), uiPermissionsFromBackend(role)]),
   ) as Record<string, Record<string, boolean>>;
+
+export const rolePermissionKeysFromUi = (
+  roleCode: string,
+  permissions: Record<string, boolean>,
+) => {
+  const isAdmin = normalizeRoleCode(roleCode) === 'admin';
+  const operationalPermissions = isAdmin
+    ? []
+    : Object.entries(permissions)
+        .filter(([, enabled]) => enabled)
+        .flatMap(([key]) => backendPermissionsByAccessKey[key] ?? []);
+  const navigationPermissions = Object.entries(permissions)
+    .filter(([, enabled]) => enabled)
+    .flatMap(([key]) => {
+      const permission = adminNavigationPermissionByAccessKey[key];
+      return permission ? [permission] : [];
+    });
+
+  return [
+    ...new Set([...operationalPermissions, ...navigationPermissions, 'navigation.configured']),
+  ].sort();
+};
