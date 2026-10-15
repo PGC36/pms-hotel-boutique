@@ -43,6 +43,8 @@ type ApiProduct = {
   priceCents: number;
   currency?: ProductDto['currency'];
   active: boolean;
+  /** Existencia del inventario ligado al producto (RoomServiceProductResponse). */
+  stockQuantity?: number;
   images?: ApiMediaImage[];
   createdAt?: string;
   updatedAt?: string;
@@ -103,7 +105,7 @@ function mapProductFromApi(api: ApiProduct): ProductDto {
     category: api.category,
     price_cents: api.priceCents,
     currency: api.currency ?? 'GTQ',
-    stock_quantity: 0,
+    stock_quantity: api.stockQuantity ?? 0,
     reorder_level: 0,
     active: api.active,
     images: toMediaImageDtos(api.images),
