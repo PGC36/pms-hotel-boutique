@@ -50,6 +50,8 @@ el repositorio.
 
 ```env
 VITE_API_BASE_URL=http://localhost:8080/api/v1
+# Opcional: errores a Sentry (docs/sentry.md). Vacío = Sentry no se carga.
+VITE_SENTRY_DSN=
 ```
 
 Para la validacion E2E local, levantar el backend Spring en `develop` con
@@ -151,4 +153,6 @@ tablas heredadas. Ver [la guía de componentes](src/shared/README.md).
   moneda y fecha de WEB-07 (centavos enteros, GTQ, dd-mm-aaaa, HH:mm).
 - [.codex/CONTEXT.md](.codex/CONTEXT.md): instrucciones de continuidad para agentes.
 - [mobile/README.md](mobile/README.md): alcance de la futura aplicación nativa.
+- [docs/sentry.md](docs/sentry.md): Sentry en el frontend (errores, source maps,
+  privacidad, secrets de GitHub).
 - [NEXT_CONTRIBUTOR.md](NEXT_CONTRIBUTOR.md): guía de trabajo para el siguiente compañero.
