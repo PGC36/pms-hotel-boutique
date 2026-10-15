@@ -3,7 +3,10 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { create, act } from 'react-test-renderer';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { router as configuredRouter } from '@/app/router';
-import { rolePermissionsFromBackendRoles } from '@/modules/administration/utils/rolePermissions';
+import {
+  rolePermissionsFromBackendRoles,
+  rolePermissionKeysFromUi,
+} from '@/modules/administration/utils/rolePermissions';
 import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { authService, sessionStorageKey } from '@/modules/auth/services/auth-service';
 import { getLoginDestination } from '@/private/routes/navigation';
@@ -191,33 +194,33 @@ const apiRoles = [
       'guest-portal.room-service',
       'guest-portal.requests',
       'guest-portal.notifications',
-      'admin-nav.reception.summary',
-      'admin-nav.reception.calendar',
-      'admin-nav.reception.reservations',
-      'admin-nav.reception.guests',
-      'admin-nav.reception.availability',
-      'admin-nav.reception.rooms',
-      'admin-nav.reception.cash',
-      'admin-nav.housekeeping.home',
-      'admin-nav.housekeeping.rooms',
-      'admin-nav.housekeeping.requests',
-      'admin-nav.housekeeping.history',
-      'admin-nav.room-service.orders',
-      'admin-nav.room-service.menu',
-      'admin-nav.room-service.history',
-      'admin-nav.room-service.inventory',
-      'admin-nav.concierge.requests',
-      'admin-nav.concierge.by-room',
-      'admin-nav.concierge.history',
-      'admin-nav.guest.home',
-      'admin-nav.guest.reservations',
-      'admin-nav.guest.stay',
-      'admin-nav.guest.amenities',
-      'admin-nav.guest.concierge',
-      'admin-nav.guest.services',
-      'admin-nav.guest.room-service',
-      'admin-nav.guest.requests',
-      'admin-nav.guest.notifications',
+      'navigation.recepcion.resumen',
+      'navigation.recepcion.calendario',
+      'navigation.recepcion.reservas',
+      'navigation.recepcion.huespedes',
+      'navigation.recepcion.disponibilidad',
+      'navigation.recepcion.habitaciones',
+      'navigation.recepcion.caja',
+      'navigation.limpieza.inicio',
+      'navigation.limpieza.habitaciones',
+      'navigation.limpieza.solicitudes',
+      'navigation.limpieza.historial',
+      'navigation.room-service.pedidos-activos',
+      'navigation.room-service.menu',
+      'navigation.room-service.historial',
+      'navigation.room-service.inventario',
+      'navigation.conserjeria.solicitudes',
+      'navigation.conserjeria.por-habitacion',
+      'navigation.conserjeria.historial',
+      'navigation.huesped.inicio',
+      'navigation.huesped.mis-reservas',
+      'navigation.huesped.mi-estancia',
+      'navigation.huesped.amenidades',
+      'navigation.huesped.conserjeria',
+      'navigation.huesped.servicios-de-habitacion',
+      'navigation.huesped.room-service',
+      'navigation.huesped.mis-solicitudes-y-pedidos',
+      'navigation.huesped.notificaciones',
     ],
   },
   {
@@ -653,8 +656,8 @@ test('ADMIN keeps its administration group fixed and reads other views from navi
 
   const admin = rolePermissionsFromBackendRoles([
     role('admin', [
-      'admin-nav.housekeeping.rooms',
-      'admin-nav.guest.services',
+      'navigation.limpieza.habitaciones',
+      'navigation.huesped.servicios-de-habitacion',
       'housekeeping.read',
     ]),
   ]).admin;
@@ -674,6 +677,31 @@ test('ADMIN keeps its administration group fixed and reads other views from navi
   assert.equal(reception['RECEPCIÓN::Caja'], false);
   assert.equal(reception['ADMINISTRACIÓN::Usuarios y roles'], false);
   assert.equal(reception['HUÉSPED::Inicio'], false);
+
+  const configuredConcierge = rolePermissionsFromBackendRoles([
+    role('concierge', [
+      'navigation.configured',
+      'navigation.administracion.dashboard',
+      'navigation.conserjeria.solicitudes',
+      'concierge.read',
+      'bookings.read',
+    ]),
+  ]).concierge;
+  assert.equal(configuredConcierge['ADMINISTRACIÓN::Dashboard'], true);
+  assert.equal(configuredConcierge['CONSERJERÍA::Solicitudes'], true);
+  assert.equal(configuredConcierge['CONSERJERÍA::Por habitación'], false);
+  assert.equal(configuredConcierge['CONSERJERÍA::Historial'], false);
+
+  const updatedConciergeKeys = rolePermissionKeysFromUi('concierge', {
+    'CONSERJERÍA::Solicitudes': true,
+    'CONSERJERÍA::Por habitación': false,
+    'CONSERJERÍA::Historial': false,
+  });
+  assert.ok(updatedConciergeKeys.includes('navigation.configured'));
+  assert.ok(updatedConciergeKeys.includes('navigation.conserjeria.solicitudes'));
+  assert.ok(updatedConciergeKeys.includes('concierge.read'));
+  assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.por-habitacion'));
+  assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.historial'));
 });
 
 test('session survives remount; logout in another tab clears access', async () => {

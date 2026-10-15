@@ -38,6 +38,7 @@ import { inventoryService } from '@/services/inventoryService';
 import { personnelService } from '@/services/personnelService';
 import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
+import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
 import { HttpError } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
@@ -364,44 +365,46 @@ const backendPermissionsByAccessKey: Record<string, string[]> = {
 };
 
 const adminNavigationPermissionByAccessKey: Record<string, string> = {
-  [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'admin-nav.reception.summary',
-  [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'admin-nav.reception.calendar',
-  [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'admin-nav.reception.reservations',
-  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: 'admin-nav.reception.guests',
-  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: 'admin-nav.reception.availability',
-  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: 'admin-nav.reception.rooms',
-  [roleAccessKey('RECEPCIÓN', 'Caja')]: 'admin-nav.reception.cash',
-  [roleAccessKey('LIMPIEZA', 'Inicio')]: 'admin-nav.housekeeping.home',
-  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: 'admin-nav.housekeeping.rooms',
-  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: 'admin-nav.housekeeping.requests',
-  [roleAccessKey('LIMPIEZA', 'Historial')]: 'admin-nav.housekeeping.history',
-  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: 'admin-nav.room-service.orders',
-  [roleAccessKey('ROOM SERVICE', 'Menú')]: 'admin-nav.room-service.menu',
-  [roleAccessKey('ROOM SERVICE', 'Historial')]: 'admin-nav.room-service.history',
-  [roleAccessKey('ROOM SERVICE', 'Inventario')]: 'admin-nav.room-service.inventory',
-  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: 'admin-nav.concierge.requests',
-  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: 'admin-nav.concierge.by-room',
-  [roleAccessKey('CONSERJERÍA', 'Historial')]: 'admin-nav.concierge.history',
-  [roleAccessKey('HUÉSPED', 'Inicio')]: 'admin-nav.guest.home',
-  [roleAccessKey('HUÉSPED', 'Mis reservas')]: 'admin-nav.guest.reservations',
-  [roleAccessKey('HUÉSPED', 'Mi estancia')]: 'admin-nav.guest.stay',
-  [roleAccessKey('HUÉSPED', 'Amenidades')]: 'admin-nav.guest.amenities',
-  [roleAccessKey('HUÉSPED', 'Conserjería')]: 'admin-nav.guest.concierge',
-  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: 'admin-nav.guest.services',
-  [roleAccessKey('HUÉSPED', 'Room service')]: 'admin-nav.guest.room-service',
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]: 'admin-nav.guest.requests',
-  [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'admin-nav.guest.notifications',
+  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: 'navigation.administracion.dashboard',
+  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]:
+    'navigation.administracion.usuarios-y-roles',
+  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: 'navigation.administracion.habitaciones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: 'navigation.administracion.tarifas',
+  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: 'navigation.administracion.promociones',
+  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: 'navigation.administracion.servicios',
+  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: 'navigation.administracion.reportes',
+  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: 'navigation.administracion.inventario',
+  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: 'navigation.administracion.caja',
+  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: 'navigation.administracion.auditoria',
+  [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'navigation.recepcion.resumen',
+  [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'navigation.recepcion.calendario',
+  [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'navigation.recepcion.reservas',
+  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: 'navigation.recepcion.huespedes',
+  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: 'navigation.recepcion.disponibilidad',
+  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: 'navigation.recepcion.habitaciones',
+  [roleAccessKey('RECEPCIÓN', 'Caja')]: 'navigation.recepcion.caja',
+  [roleAccessKey('LIMPIEZA', 'Inicio')]: 'navigation.limpieza.inicio',
+  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: 'navigation.limpieza.habitaciones',
+  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: 'navigation.limpieza.solicitudes',
+  [roleAccessKey('LIMPIEZA', 'Historial')]: 'navigation.limpieza.historial',
+  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: 'navigation.room-service.pedidos-activos',
+  [roleAccessKey('ROOM SERVICE', 'Menú')]: 'navigation.room-service.menu',
+  [roleAccessKey('ROOM SERVICE', 'Historial')]: 'navigation.room-service.historial',
+  [roleAccessKey('ROOM SERVICE', 'Inventario')]: 'navigation.room-service.inventario',
+  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: 'navigation.conserjeria.solicitudes',
+  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: 'navigation.conserjeria.por-habitacion',
+  [roleAccessKey('CONSERJERÍA', 'Historial')]: 'navigation.conserjeria.historial',
+  [roleAccessKey('HUÉSPED', 'Inicio')]: 'navigation.huesped.inicio',
+  [roleAccessKey('HUÉSPED', 'Mis reservas')]: 'navigation.huesped.mis-reservas',
+  [roleAccessKey('HUÉSPED', 'Mi estancia')]: 'navigation.huesped.mi-estancia',
+  [roleAccessKey('HUÉSPED', 'Amenidades')]: 'navigation.huesped.amenidades',
+  [roleAccessKey('HUÉSPED', 'Conserjería')]: 'navigation.huesped.conserjeria',
+  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: 'navigation.huesped.servicios-de-habitacion',
+  [roleAccessKey('HUÉSPED', 'Room service')]: 'navigation.huesped.room-service',
+  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]:
+    'navigation.huesped.mis-solicitudes-y-pedidos',
+  [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'navigation.huesped.notificaciones',
 };
-
-const adminNavigationPermissionsFromUi = (permissions: Record<string, boolean>) =>
-  Object.entries(permissions)
-    .filter(([key, enabled]) => enabled && !key.startsWith(`${ADMIN_ACCESS_GROUP_NAME}::`))
-    .flatMap(([key]) => {
-      const permission = adminNavigationPermissionByAccessKey[key];
-      return permission ? [permission] : [];
-    })
-    .filter((permission, index, all) => all.indexOf(permission) === index)
-    .sort();
 
 const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
   if (role.permissionIds.length === 0) {
@@ -411,15 +414,17 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
       : fallbackPermissions;
   }
   const granted = new Set(role.permissionIds);
-  if (normalizeRoleCode(role.code) === 'admin') {
-    return withFixedAdminPermissions(
-      Object.fromEntries(
-        ALL_PERMISSIONS.map((key) => {
-          const permission = adminNavigationPermissionByAccessKey[key];
-          return [key, permission ? granted.has(permission) : false];
-        }),
-      ),
+  const hasConfiguredNavigation = granted.has('navigation.configured');
+  if (normalizeRoleCode(role.code) === 'admin' || hasConfiguredNavigation) {
+    const navigationPermissions = Object.fromEntries(
+      ALL_PERMISSIONS.map((key) => {
+        const permission = adminNavigationPermissionByAccessKey[key];
+        return [key, permission ? granted.has(permission) : false];
+      }),
     );
+    return normalizeRoleCode(role.code) === 'admin'
+      ? withFixedAdminPermissions(navigationPermissions)
+      : navigationPermissions;
   }
   const permissions = Object.fromEntries(
     ALL_PERMISSIONS.map((key) => {
@@ -432,15 +437,6 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
   ) as Record<string, boolean>;
   return permissions;
 };
-
-const backendPermissionsFromUi = (permissions: Record<string, boolean>): string[] =>
-  [
-    ...new Set(
-      Object.entries(permissions)
-        .filter(([, enabled]) => enabled)
-        .flatMap(([key]) => backendPermissionsByAccessKey[key] ?? []),
-    ),
-  ].sort();
 
 const reportTabsByGroup: Record<ReportGroup, AdminReportTab[]> = {
   'Resumen operativo': ['Ocupación', 'Reservas', 'Cancelaciones'],
@@ -2320,9 +2316,7 @@ function AdminContentReady({
               try {
                 const isEditingProtectedAdminRole =
                   editRole !== null && normalizeRoleCode(editRole.code) === 'admin';
-                const nextPermissionKeys = isEditingProtectedAdminRole
-                  ? adminNavigationPermissionsFromUi(r.permissions)
-                  : backendPermissionsFromUi(r.permissions);
+                const nextPermissionKeys = rolePermissionKeysFromUi(r.code, r.permissions);
                 let saved = editRole
                   ? await personnelService.updateRole(editRole.dbId, { name: r.name })
                   : await personnelService.createRole({
@@ -4207,7 +4201,8 @@ function RoleModal({
           name,
           description,
           permissions: isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
-          permissionKeys: backendPermissionsFromUi(
+          permissionKeys: rolePermissionKeysFromUi(
+            role?.code ?? name.toLowerCase().replace(/\s+/g, '_'),
             isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
           ),
           userCount: role?.userCount ?? 0,
