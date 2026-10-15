@@ -26,6 +26,7 @@ import { CheckInScreen } from '@/modules/front-desk/screens/CheckInScreen';
 import { GuestAccountScreen } from '@/modules/front-desk/screens/GuestAccountScreen';
 import { CheckOutScreen } from '@/modules/front-desk/screens/CheckOutScreen';
 import { PrivateSessionWorkspace } from '@/private/workspace/PrivateSessionWorkspace';
+import { RouteErrorBoundary } from '@/app/observability/RouteErrorBoundary';
 
 /**
  * Cada pantalla real de un módulo de privateNavigation vive aquí, con su
@@ -166,9 +167,11 @@ const placeholderPmsRoutes = privateNavigation
     ],
   }));
 
+// errorElement: pantalla de error en español y reporte a Sentry (docs/sentry.md).
 export const router = createBrowserRouter([
   {
     element: <PublicLayout />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { path: routePaths.public.home, element: <SearchScreen /> },
       { path: routePaths.public.roomTypeDetail, element: <RoomDetailScreen /> },
@@ -183,6 +186,7 @@ export const router = createBrowserRouter([
   },
   {
     element: <RequireSession />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { path: routePaths.pms.dashboard, element: <PrivateSessionWorkspace /> },
       { path: routePaths.pms.reception, element: <PrivateSessionWorkspace role="reception" /> },
