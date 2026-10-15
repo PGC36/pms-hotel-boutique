@@ -103,6 +103,12 @@ seleccionar o deseleccionar sus permisos y toggles individuales para ajustes
 puntuales. Desde INT-13, los cambios hechos en el editor se persisten en el
 backend de roles/permisos y el workspace solo refleja en memoria la
 actualizacion de la sesion actual.
+Para conservar las selecciones independientes por vista, el editor guarda
+ademas las llaves `navigation.*` y el marcador `navigation.configured` en cada
+rol. Los permisos funcionales (`bookings.read`, `concierge.read`, etc.) se
+mantienen para la autorizacion de operaciones; no se usan para reconstruir el
+menu cuando el marcador indica que ya existe una seleccion explicita. Esto
+evita que permisos operativos compartidos vuelvan a marcar vistas por defecto.
 Cuando un rol operativo tiene permisos de un solo modulo, el sidebar conserva
 la lista plana original; si recibe permisos cruzados de dos o mas modulos,
 agrupa automaticamente por modulo para evitar opciones duplicadas sin contexto.
