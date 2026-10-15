@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { OrderStatus, RoomServiceOrder } from '@/private/workspace/PrivateWorkspace';
 import { catalogService } from '@/services/catalogService';
+import { HttpError } from '@/services/http-client';
 import { inventoryService } from '@/services/inventoryService';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -40,7 +41,13 @@ const statusClass = (status: OrderStatus): string =>
 const orderTotal = (order: RoomServiceOrder) =>
   order.items.reduce((sum, item) => sum + item.quantity * item.price, 0);
 
-type MenuItem = { name: string; description: string; price: number; category: string };
+type MenuItem = {
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  stock: number;
+};
 
 const PRODUCT_CATEGORY_LABELS: Record<string, string> = {
   foodAndBeverage: 'Alimentos y bebidas',
@@ -78,10 +85,19 @@ const menuCategories = ['Desayunos', 'Almuerzos', 'Cenas', 'Bebidas', 'Botanas']
 const inventoryStatusClass = (status: string) =>
   status === 'Disponible' ? 'success' : status === 'Bajo' ? 'warning' : 'terracotta';
 
-type CatalogState =
+// Menú e inventario se cargan por separado: el rol Room Service solo tiene
+// room-service.read, y un 403 de /inventory/items no debe tumbar el menú.
+type MenuState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; menu: MenuItem[]; inventory: InventoryItem[] };
+  | { status: 'ready'; menu: MenuItem[] };
+
+type InventoryState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'forbidden' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; inventory: InventoryItem[] };
 
 function getErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'No fue posible cargar el catálogo de cocina.';
@@ -98,6 +114,7 @@ export function RoomServiceContent({
   onReject,
   onCancel,
   onRefreshOrders,
+  canWriteInventory,
   onAction,
   search,
   setSearch,
@@ -114,6 +131,8 @@ export function RoomServiceContent({
   onReject: (id: number, reason: string) => void;
   onCancel: (id: number, reason: string) => void;
   onRefreshOrders: () => Promise<void>;
+  /** `inventory.write`: sin él no se ofrece "Registrar insumo" (el backend respondería 403). */
+  canWriteInventory: boolean;
   onAction: (msg: string) => void;
   search: string;
   setSearch: (v: string) => void;
@@ -124,7 +143,8 @@ export function RoomServiceContent({
   const [rejectionReason, setRejectionReason] = useState('');
   const [cancelOrderId, setCancelOrderId] = useState<number | null>(null);
   const [cancelReason, setCancelReason] = useState('');
-  const [catalog, setCatalog] = useState<CatalogState>({ status: 'loading' });
+  const [menuState, setMenuState] = useState<MenuState>({ status: 'loading' });
+  const [inventoryState, setInventoryState] = useState<InventoryState>({ status: 'idle' });
   const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
   const [inventoryItemId, setInventoryItemId] = useState('');
   const [inventoryQuantity, setInventoryQuantity] = useState('1');
@@ -132,14 +152,10 @@ export function RoomServiceContent({
   const [inventorySaving, setInventorySaving] = useState(false);
   const [refreshingOrders, setRefreshingOrders] = useState(false);
 
-  const loadCatalog = async () => {
-    setCatalog({ status: 'loading' });
+  const loadMenu = async () => {
+    setMenuState({ status: 'loading' });
     try {
-      const [products, inventoryItemsData] = await Promise.all([
-        catalogService.getProducts(),
-        inventoryService.getItems(),
-      ]);
-
+      const products = await catalogService.getProducts();
       const menu: MenuItem[] = products
         .filter((product) => product.category === 'foodAndBeverage')
         .map((product) => ({
@@ -147,9 +163,18 @@ export function RoomServiceContent({
           description: product.description ?? product.sku,
           price: Math.round(product.priceCents / 100),
           category: PRODUCT_CATEGORY_LABELS[product.category] ?? product.category,
+          stock: product.stockQuantity,
         }));
+      setMenuState({ status: 'ready', menu });
+    } catch (cause) {
+      setMenuState({ status: 'error', message: getErrorMessage(cause) });
+    }
+  };
 
-      const inventory: InventoryItem[] = inventoryItemsData
+  const loadInventory = async () => {
+    setInventoryState({ status: 'loading' });
+    try {
+      const inventory: InventoryItem[] = (await inventoryService.getItems())
         .filter((item) => item.category === 'roomService')
         .map((item) => ({
           id: item.id,
@@ -159,24 +184,32 @@ export function RoomServiceContent({
           status:
             item.currentQuantity === 0 ? 'Agotado' : item.isBelowMinimum ? 'Bajo' : 'Disponible',
         }));
-
-      setCatalog({ status: 'ready', menu, inventory });
+      setInventoryState({ status: 'ready', inventory });
       if (inventory.length > 0) setInventoryItemId((current) => current || inventory[0].id);
     } catch (cause) {
-      setCatalog({ status: 'error', message: getErrorMessage(cause) });
+      setInventoryState(
+        cause instanceof HttpError && cause.status === 403
+          ? { status: 'forbidden' }
+          : { status: 'error', message: getErrorMessage(cause) },
+      );
     }
   };
 
   useEffect(() => {
-    void loadCatalog();
+    void loadMenu();
   }, []);
 
-  const menuItems = catalog.status === 'ready' ? catalog.menu : [];
-  const inventoryItems = catalog.status === 'ready' ? catalog.inventory : [];
+  // El inventario solo se pide al entrar a su sección.
+  useEffect(() => {
+    if (nav === 'Inventario' && inventoryState.status === 'idle') void loadInventory();
+  }, [nav, inventoryState.status]);
+
+  const menuItems = menuState.status === 'ready' ? menuState.menu : [];
+  const inventoryItems = inventoryState.status === 'ready' ? inventoryState.inventory : [];
   const selectedInventoryItem = inventoryItems.find((item) => item.id === inventoryItemId);
 
-  const refreshCatalog = async (message: string) => {
-    await loadCatalog();
+  const refreshMenu = async (message: string) => {
+    await loadMenu();
     onAction(message);
   };
 
@@ -206,7 +239,7 @@ export function RoomServiceContent({
         quantity,
         notes: inventoryNotes,
       });
-      await loadCatalog();
+      await loadInventory();
       setInventoryModalOpen(false);
       setInventoryQuantity('1');
       setInventoryNotes('');
@@ -609,7 +642,7 @@ export function RoomServiceContent({
           </div>
           <button
             className="button small secondary"
-            onClick={() => void refreshCatalog('Menú actualizado')}
+            onClick={() => void refreshMenu('Menú actualizado')}
           >
             <FileText size={14} /> Actualizar
           </button>
@@ -621,21 +654,21 @@ export function RoomServiceContent({
             </span>
           ))}
         </div>
-        {catalog.status === 'loading' && <LoadingState label="Cargando el menú..." />}
-        {catalog.status === 'error' && (
+        {menuState.status === 'loading' && <LoadingState label="Cargando el menú..." />}
+        {menuState.status === 'error' && (
           <ErrorState
             title="No pudimos cargar el menú"
-            description={catalog.message}
-            onRetry={() => void loadCatalog()}
+            description={menuState.message}
+            onRetry={() => void loadMenu()}
           />
         )}
-        {catalog.status === 'ready' && menuItems.length === 0 && (
+        {menuState.status === 'ready' && menuItems.length === 0 && (
           <EmptyState
             title="Sin productos"
             description="No hay productos de alimentos y bebidas activos en el catálogo."
           />
         )}
-        {catalog.status === 'ready' && menuItems.length > 0 && (
+        {menuState.status === 'ready' && menuItems.length > 0 && (
           <div className="rs-menu-grid">
             {menuItems.map((item) => (
               <div className="rs-menu-item" key={item.name}>
@@ -645,7 +678,10 @@ export function RoomServiceContent({
                 <div>
                   <strong>{item.name}</strong>
                   <p>{item.description}</p>
-                  <span className="rs-menu-cat-tag">{item.category}</span>
+                  <span className="rs-menu-cat-tag">{item.category}</span>{' '}
+                  <small className="rs-menu-stock">
+                    {item.stock > 0 ? `${item.stock} disponibles` : 'Agotado'}
+                  </small>
                 </div>
                 <b>{money(item.price)}</b>
               </div>
@@ -729,25 +765,35 @@ export function RoomServiceContent({
             <h3>Inventario de cocina</h3>
             <p>Insumos disponibles para preparar pedidos</p>
           </div>
-          <button className="button small primary" onClick={() => setInventoryModalOpen(true)}>
-            <Plus size={14} /> Registrar insumo
-          </button>
+          {canWriteInventory && inventoryState.status !== 'forbidden' && (
+            <button className="button small primary" onClick={() => setInventoryModalOpen(true)}>
+              <Plus size={14} /> Registrar insumo
+            </button>
+          )}
         </div>
-        {catalog.status === 'loading' && <LoadingState label="Cargando el inventario..." />}
-        {catalog.status === 'error' && (
-          <ErrorState
-            title="No pudimos cargar el inventario"
-            description={catalog.message}
-            onRetry={() => void loadCatalog()}
+        {(inventoryState.status === 'idle' || inventoryState.status === 'loading') && (
+          <LoadingState label="Cargando el inventario..." />
+        )}
+        {inventoryState.status === 'forbidden' && (
+          <EmptyState
+            title="Sin acceso al inventario"
+            description="Tu rol no tiene permiso para consultar el inventario. Solicita acceso a Administración."
           />
         )}
-        {catalog.status === 'ready' && inventoryItems.length === 0 && (
+        {inventoryState.status === 'error' && (
+          <ErrorState
+            title="No pudimos cargar el inventario"
+            description={inventoryState.message}
+            onRetry={() => void loadInventory()}
+          />
+        )}
+        {inventoryState.status === 'ready' && inventoryItems.length === 0 && (
           <EmptyState
             title="Sin insumos"
             description="No hay insumos de cocina registrados en el inventario."
           />
         )}
-        {catalog.status === 'ready' && inventoryItems.length > 0 && (
+        {inventoryState.status === 'ready' && inventoryItems.length > 0 && (
           <div className="rs-inventory-grid">
             {inventoryItems.map((item) => (
               <div className="rs-inventory-item" key={item.id}>

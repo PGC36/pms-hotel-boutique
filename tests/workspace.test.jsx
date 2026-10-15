@@ -39,6 +39,60 @@ const settle = (ms = 700) =>
     await new Promise((resolve) => setTimeout(resolve, ms));
   });
 
+// Permisos reales de cada rol operativo (migraciones 008/020 del backend), tal como
+// los devuelve GET /auth/permissions: el workspace no se muestra sin ellos.
+const SESSION_PERMISSIONS = {
+  reception: [
+    'booking-companions.read',
+    'booking-companions.write',
+    'bookings.check-in',
+    'bookings.check-out',
+    'bookings.read',
+    'bookings.write',
+    'cash.read',
+    'cash.write',
+    'charges.read',
+    'charges.write',
+    'concierge.read',
+    'concierge.write',
+    'deposits.read',
+    'deposits.write',
+    'folios.read',
+    'folios.write',
+    'guests.read',
+    'guests.write',
+    'payments.read',
+    'payments.write',
+    'rates.read',
+    'room-features.read',
+    'room-service.read',
+    'room-service.write',
+    'room-types.read',
+    'rooms.read',
+    'service-requests.read',
+    'service-requests.write',
+  ],
+  housekeeping: [
+    'housekeeping.read',
+    'housekeeping.write',
+    'rooms.read',
+    'service-requests.read',
+    'service-requests.write',
+  ],
+  concierge: [
+    'bookings.read',
+    'concierge.read',
+    'concierge.write',
+    'guests.read',
+    'service-requests.read',
+  ],
+  roomService: ['bookings.read', 'guests.read', 'room-service.read', 'room-service.write'],
+};
+const navLabels = () =>
+  view.root
+    .findAll((node) => node.type === 'button' && hasClass(node, 'nav-item'))
+    .map((node) => text(node).replace(/\d+$/, ''));
+
 // --- Recepción: ReservationFormModal ------------------------------------
 
 const INVALID_RANGE =
@@ -389,6 +443,9 @@ function installHousekeepingBackend() {
       };
       return json(state.rooms[index]);
     }
+    if (method === 'GET' && path === '/auth/permissions') {
+      return json({ permissions: SESSION_PERMISSIONS.housekeeping });
+    }
     return json({ message: `Ruta no mockeada: ${method} ${path}` }, 404);
   };
   return state;
@@ -447,6 +504,11 @@ const toasts = () => view.root.findAll((node) => hasClass(node, 'toast')).map(te
 const expectedOpenRequests = () =>
   hkBackend.stayovers.filter((request) => ['pending', 'in_progress'].includes(request.status))
     .length;
+
+test('limpieza: con sus permisos reales conserva todas sus secciones', async () => {
+  await mountHousekeeping();
+  assert.deepEqual(navLabels(), ['Inicio', 'Habitaciones', 'Solicitudes', 'Historial']);
+});
 
 test('limpieza: el panel carga sin pedir datos para los que el rol no tiene permiso', async () => {
   await mountHousekeeping();
@@ -748,8 +810,46 @@ const rsOrder = (id, status, extra = {}) => ({
   ...extra,
 });
 
-function installRoomServiceBackend() {
-  const state = { orders: [rsOrder('order-1', 'pending')], requests: [] };
+const rsProduct = (id, name, stockQuantity) => ({
+  id,
+  sku: id.toUpperCase(),
+  name,
+  description: `${name} de la cocina`,
+  category: 'food_and_beverage',
+  priceCents: 4500,
+  currency: 'GTQ',
+  active: true,
+  stockQuantity,
+  images: [],
+});
+
+const rsInventoryItem = (id, name, currentQuantity) => ({
+  id,
+  sku: id.toUpperCase(),
+  name,
+  description: null,
+  category: 'room_service',
+  unit: 'unit',
+  currentQuantity,
+  minimumQuantity: 2,
+  lowStock: false,
+  productId: null,
+  active: true,
+  images: [],
+  createdAt: '2026-10-03T12:00:00Z',
+  updatedAt: '2026-10-03T12:00:00Z',
+});
+
+// Opciones: `permissions` responde GET /auth/permissions ('fail' → 500; se puede cambiar en
+// `state.permissions`) y tarda `permissionsDelayMs`; `inventory` es la lista de
+// /inventory/items o 'forbidden' (403, rol sin inventory.read).
+function installRoomServiceBackend({
+  permissions = SESSION_PERMISSIONS.roomService,
+  permissionsDelayMs = 0,
+  inventory,
+  products = [],
+} = {}) {
+  const state = { orders: [rsOrder('order-1', 'pending')], requests: [], inventory, permissions };
   const allowed = {
     pending: ['accepted', 'rejected', 'cancelled'],
     accepted: ['preparing', 'cancelled'],
@@ -771,8 +871,34 @@ function installRoomServiceBackend() {
     state.requests.push({ call: `${method} ${path}`, body });
     if (method === 'GET' && path === '/admin/audit-logs') return json([]);
     if (method === 'GET' && path === '/rooms') return json({ status: 403 }, 403);
-    if (method === 'GET' && path === '/room-service/products') return json([]);
+    if (method === 'GET' && path === '/room-service/products') return json(products);
     if (method === 'GET' && path === '/room-service/orders') return json(state.orders);
+    if (method === 'GET' && path === '/auth/permissions') {
+      if (permissionsDelayMs)
+        await new Promise((resolve) => setTimeout(resolve, permissionsDelayMs));
+      return state.permissions === 'fail'
+        ? json({ status: 500 }, 500)
+        : json({ permissions: state.permissions });
+    }
+    if (path.startsWith('/inventory/items') && state.inventory === 'forbidden') {
+      return json({ status: 403, message: 'Forbidden' }, 403);
+    }
+    if (method === 'GET' && path === '/inventory/items' && state.inventory) {
+      return json(state.inventory);
+    }
+    const movement = path.match(/^\/inventory\/items\/([^/]+)\/movements$/);
+    if (method === 'POST' && movement && state.inventory) {
+      const item = state.inventory.find((entry) => entry.id === movement[1]);
+      item.currentQuantity += body.quantity;
+      return json({
+        id: `movement-${state.requests.length}`,
+        inventoryItemId: item.id,
+        ...body,
+        responsibleUserId: null,
+        occurredAt: '2026-10-03T13:00:00Z',
+        createdAt: '2026-10-03T13:00:00Z',
+      });
+    }
     const status = path.match(/^\/room-service\/orders\/([^/]+)\/status$/);
     if (method === 'POST' && status) {
       const order = state.orders.find((item) => item.id === status[1]);
@@ -787,8 +913,8 @@ function installRoomServiceBackend() {
 }
 
 let rsBackend;
-async function mountRoomService() {
-  rsBackend = installRoomServiceBackend();
+async function mountRoomService(options) {
+  rsBackend = installRoomServiceBackend(options);
   await act(async () => {
     view = create(
       <MemoryRouter>
@@ -859,6 +985,158 @@ test('room service: si el backend rechaza la transición se recargan los pedidos
   assert.equal(orderCards().length, 0, 'el pedido cancelado sale de Pedidos activos');
 });
 
+// Regresión: el Menú cargaba productos e inventario con Promise.all y el 403 de
+// /inventory/items (rol room_service sin inventory.read) tumbaba todo el catálogo.
+const rsMenuProducts = [
+  rsProduct('product-1', 'Club sándwich', 18),
+  rsProduct('product-2', 'Café de olla', 0),
+];
+const inventoryRequests = () =>
+  rsBackend.requests.filter(({ call }) => call.includes('/inventory/'));
+const sideNavCount = () => view.root.findAll((node) => hasClass(node, 'side-nav')).length;
+async function createRoomServiceWorkspace(options) {
+  rsBackend = installRoomServiceBackend(options);
+  await act(async () => {
+    view = create(
+      <MemoryRouter>
+        <PrivateWorkspace role="room-service" sessionName="Room Service Test" />
+      </MemoryRouter>,
+    );
+  });
+}
+
+test('room service: sin inventory.read el Menú muestra productos con existencias y no pide inventario', async () => {
+  await mountRoomService({ inventory: 'forbidden', products: rsMenuProducts });
+  await settle();
+  assert.ok(
+    rsBackend.requests.some(({ call }) => call === 'GET /auth/permissions'),
+    'consulta los permisos reales de la sesión',
+  );
+  assert.deepEqual(navLabels(), ['Pedidos activos', 'Menú', 'Historial']);
+
+  await goTo('Menú');
+  await settle();
+  const menu = text(view.root);
+  assert.ok(!menu.includes('No pudimos cargar el menú'), 'el menú no queda en error');
+  assert.match(menu, /Club sándwich/);
+  assert.match(menu, /18 disponibles/);
+  assert.match(menu, /Café de olla/);
+  assert.match(menu, /Agotado/);
+  assert.deepEqual(inventoryRequests(), [], 'abrir el Menú no pide /inventory/items');
+
+  await goTo('Historial');
+  assert.match(text(view.root), /Historial de pedidos/);
+  await goTo('Pedidos activos');
+  assert.equal(orderCards().length, 1, 'los pedidos activos siguen cargando');
+});
+
+test('room service: el empleado respeta las secciones que Administración ocultó (navigation.*)', async () => {
+  await mountRoomService({
+    permissions: [
+      ...SESSION_PERMISSIONS.roomService,
+      'inventory.read',
+      'navigation.configured',
+      'navigation.room-service.pedidos-activos',
+      'navigation.room-service.menu',
+    ],
+    inventory: [rsInventoryItem('inv-1', 'Café molido', 5)],
+    products: rsMenuProducts,
+  });
+  assert.deepEqual(navLabels(), ['Pedidos activos', 'Menú'], 'Historial e Inventario ocultos');
+  await goTo('Menú');
+  await settle();
+  assert.match(text(view.root), /18 disponibles/);
+  assert.deepEqual(inventoryRequests(), []);
+});
+
+test('room service: mientras llegan los permisos reales no se muestra ninguna sección', async () => {
+  await createRoomServiceWorkspace({ permissionsDelayMs: 1500, products: rsMenuProducts });
+  await settle(800);
+  assert.equal(sideNavCount(), 0, 'sin navegación antes de conocer los permisos');
+  assert.match(text(view.root), /Cargando el panel privado/);
+  await settle(1500);
+  assert.deepEqual(navLabels(), ['Pedidos activos', 'Menú', 'Historial']);
+});
+
+test('room service: si /auth/permissions falla se muestra un error recuperable sin secciones', async () => {
+  await createRoomServiceWorkspace({ permissions: 'fail', products: rsMenuProducts });
+  await settle(1200);
+  assert.equal(sideNavCount(), 0, 'no concede secciones por defecto');
+  assert.match(text(view.root), /No pudimos verificar los permisos de tu usuario/);
+  assert.ok(!text(view.root).includes('Inventario'));
+
+  rsBackend.permissions = SESSION_PERMISSIONS.roomService;
+  await act(async () => buttons('Reintentar')[0].props.onClick());
+  await settle(1200);
+  assert.deepEqual(navLabels(), ['Pedidos activos', 'Menú', 'Historial'], 'se recupera');
+});
+
+test('room service: un usuario sin secciones asignadas ve un error, no el menú por defecto', async () => {
+  await createRoomServiceWorkspace({ permissions: ['bookings.read'] });
+  await settle(1200);
+  assert.equal(sideNavCount(), 0);
+  assert.match(text(view.root), /no tiene secciones asignadas/);
+});
+
+test('room service: con inventory.read sin inventory.write se consulta pero no se ofrece registrar', async () => {
+  await mountRoomService({
+    permissions: [...SESSION_PERMISSIONS.roomService, 'inventory.read'],
+    inventory: [rsInventoryItem('inv-1', 'Café molido', 5)],
+  });
+  await goTo('Inventario');
+  await settle();
+  assert.match(text(view.root), /Café molido5 piezas/);
+  assert.equal(buttons('Registrar insumo').length, 0, 'requiere inventory.write');
+});
+
+test('room service: si el backend niega el inventario se muestra "Sin acceso" y no afecta al Menú', async () => {
+  // Permisos de la sesión desactualizados respecto del backend: la sección maneja su 403.
+  await mountRoomService({
+    permissions: [...SESSION_PERMISSIONS.roomService, 'inventory.read', 'inventory.write'],
+    inventory: 'forbidden',
+    products: rsMenuProducts,
+  });
+  await goTo('Inventario');
+  await settle();
+  const inventory = text(view.root);
+  assert.match(inventory, /Sin acceso al inventario/);
+  assert.ok(!inventory.includes('No pudimos cargar el inventario'), 'sin error genérico');
+  assert.equal(buttons('Registrar insumo').length, 0, 'no ofrece registrar sin acceso');
+
+  await goTo('Menú');
+  await settle();
+  assert.match(text(view.root), /Club sándwich/);
+});
+
+test('room service: con inventory.read/write Inventario carga al entrar y se refresca tras registrar', async () => {
+  await mountRoomService({
+    permissions: [...SESSION_PERMISSIONS.roomService, 'inventory.read', 'inventory.write'],
+    inventory: [rsInventoryItem('inv-1', 'Café molido', 5)],
+    products: rsMenuProducts,
+  });
+  await settle();
+  assert.deepEqual(navLabels(), ['Pedidos activos', 'Menú', 'Historial', 'Inventario']);
+  assert.deepEqual(inventoryRequests(), [], 'no se pide antes de entrar a la sección');
+
+  await goTo('Inventario');
+  await settle();
+  assert.match(text(view.root), /Café molido5 piezas/);
+
+  await act(async () => buttons('Registrar insumo')[0].props.onClick());
+  const quantity = view.root.find(
+    (node) => node.type === 'input' && hasClass(node, 'rs-inventory-quantity'),
+  );
+  await act(async () => quantity.props.onChange({ target: { value: '3' } }));
+  await act(async () => buttons('Registrar movimiento')[0].props.onClick());
+  await settle(1500);
+
+  assert.deepEqual(
+    inventoryRequests().map(({ call }) => call),
+    ['GET /inventory/items', 'POST /inventory/items/inv-1/movements', 'GET /inventory/items'],
+  );
+  assert.match(text(view.root), /Café molido8 piezas/, 'muestra la existencia actualizada');
+});
+
 // --- Conserjería: backend falso de ConciergeRequestController (INT-11) -----
 //
 // Mismas reglas que ConciergeRequestServiceImpl: transiciones exactas o 400,
@@ -919,6 +1197,9 @@ function installConciergeBackend(initialStatus) {
       }
       return json(item);
     }
+    if (method === 'GET' && path === '/auth/permissions') {
+      return json({ permissions: SESSION_PERMISSIONS.concierge });
+    }
     return json({ message: `Ruta no mockeada: ${method} ${path}` }, 404);
   };
   return state;
@@ -953,6 +1234,11 @@ const confirmReason = async (actionLabel, reason, confirmLabel) => {
   await act(async () => buttons(confirmLabel)[0].props.onClick());
   await settle();
 };
+
+test('conserjería: con sus permisos reales conserva todas sus secciones', async () => {
+  await mountConcierge();
+  assert.deepEqual(navLabels(), ['Solicitudes', 'Por habitación', 'Historial']);
+});
 
 test('conserjería: las solicitudes salen del backend con habitación y huésped', async () => {
   await mountConcierge();
@@ -1316,6 +1602,9 @@ function installReceptionBackend() {
       });
       return json(state.booking);
     }
+    if (method === 'GET' && path === '/auth/permissions') {
+      return json({ permissions: SESSION_PERMISSIONS.reception });
+    }
     if (method === 'GET') return json([]);
     return json({ message: `Ruta no mockeada: ${method} ${path}` }, 404);
   };
@@ -1345,6 +1634,19 @@ const recReservation = () =>
   receptionContent().props.reservations.find((item) => item.bookingId === REC_BOOKING_ID);
 const recCalls = (suffix) =>
   recBackend.requests.filter(({ call }) => call.endsWith(suffix)).map(({ body }) => body);
+
+test('recepción: con sus permisos reales conserva todas sus secciones', async () => {
+  await mountReception();
+  assert.deepEqual(navLabels(), [
+    'Resumen',
+    'Calendario',
+    'Reservas',
+    'Huéspedes',
+    'Disponibilidad',
+    'Habitaciones',
+    'Caja',
+  ]);
+});
 
 test('recepción: carga solicitudes y finanzas globales desde el backend', async () => {
   await mountReception();

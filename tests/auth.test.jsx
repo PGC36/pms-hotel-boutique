@@ -6,6 +6,7 @@ import { router as configuredRouter } from '@/app/router';
 import {
   rolePermissionsFromBackendRoles,
   rolePermissionKeysFromUi,
+  rolePermissionsFromSessionPermissions,
 } from '@/modules/administration/utils/rolePermissions';
 import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { authService, sessionStorageKey } from '@/modules/auth/services/auth-service';
@@ -47,6 +48,24 @@ const accounts = {
   'limpieza@hotelboutique.test': ['ROLE_HOUSEKEEPING', 'housekeeping.read'],
   'conserjeria@hotelboutique.test': ['ROLE_CONCIERGE', 'concierge.read'],
   'roomservice@hotelboutique.test': ['ROLE_ROOM_SERVICE', 'room-service.read'],
+};
+
+// Respuesta de GET /auth/permissions por rol (permisos sembrados por el backend).
+const sessionPermissionsByRole = {
+  ROLE_RECEPTION: [
+    'bookings.read',
+    'bookings.write',
+    'bookings.check-in',
+    'guests.read',
+    'guests.write',
+    'rooms.read',
+    'rates.read',
+    'cash.read',
+    'cash.write',
+  ],
+  ROLE_HOUSEKEEPING: ['housekeeping.read', 'housekeeping.write', 'rooms.read'],
+  ROLE_CONCIERGE: ['bookings.read', 'concierge.read', 'concierge.write', 'guests.read'],
+  ROLE_ROOM_SERVICE: ['bookings.read', 'guests.read', 'room-service.read', 'room-service.write'],
 };
 
 function encodeBase64Url(value) {
@@ -501,6 +520,12 @@ function installFetch() {
     ) {
       return json([]);
     }
+    // El workspace operativo no se muestra sin los permisos reales de la sesión.
+    if (path === '/api/v1/auth/permissions') {
+      const role = accounts[decodeAuth(init)?.sub]?.[0];
+      if (!sessionPermissionsByRole[role]) return json({ message: 'Unauthorized' }, 401);
+      return json({ permissions: sessionPermissionsByRole[role] });
+    }
     if (path === '/api/v1/probe') {
       const payload = decodeAuth(init);
       if (!payload) return json({ message: 'Unauthorized' }, 401, 'Unauthorized');
@@ -618,7 +643,8 @@ test('each staff role only sees its menu and direct unauthorized URLs are blocke
     ['recepcion', '/pms/reception', 'Reservas', '/pms/users', 7],
     ['limpieza', '/pms/housekeeping', 'Habitaciones', '/pms/cash', 4],
     ['conserjeria', '/pms/concierge', 'Solicitudes', '/pms/cash', 3],
-    ['roomservice', '/pms/room-service', 'Pedidos activos', '/pms/users', 4],
+    // Sin inventory.read no se ofrece Inventario (el backend respondería 403).
+    ['roomservice', '/pms/room-service', 'Pedidos activos', '/pms/users', 3],
     // Incluye los catálogos administrables de Conserjería y Limpieza.
     ['admin', '/pms/dashboard', 'Administración', null, 49],
   ];
@@ -702,6 +728,96 @@ test('ADMIN keeps its administration group fixed and reads other views from navi
   assert.ok(updatedConciergeKeys.includes('concierge.read'));
   assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.por-habitacion'));
   assert.ok(!updatedConciergeKeys.includes('navigation.conserjeria.historial'));
+});
+
+test('los permisos reales de la sesión ocultan Inventario a Room Service sin inventory.read', () => {
+  const base = ['bookings.read', 'guests.read', 'room-service.read', 'room-service.write'];
+  const roomService = rolePermissionsFromSessionPermissions('roomService', base);
+  assert.equal(roomService['ROOM SERVICE::Pedidos activos'], true);
+  assert.equal(roomService['ROOM SERVICE::Menú'], true);
+  assert.equal(roomService['ROOM SERVICE::Historial'], true);
+  assert.equal(roomService['ROOM SERVICE::Inventario'], false, 'el backend responde 403');
+  assert.equal(
+    roomService['ADMINISTRACIÓN::Dashboard'],
+    false,
+    'bookings.read no abre secciones de otro grupo',
+  );
+  assert.equal(roomService['RECEPCIÓN::Reservas'], false);
+
+  const authorized = rolePermissionsFromSessionPermissions('room_service', [
+    ...base,
+    'inventory.read',
+  ]);
+  assert.equal(authorized['ROOM SERVICE::Inventario'], true, 'un rol autorizado la conserva');
+
+  const admin = rolePermissionsFromBackendRoles([
+    {
+      code: 'admin',
+      permissionIds: ['navigation.room-service.menu', 'navigation.room-service.inventario'],
+    },
+  ]).admin;
+  assert.equal(admin['ROOM SERVICE::Menú'], true, 'Administración sigue viendo el Menú');
+  assert.equal(admin['ROOM SERVICE::Inventario'], true, 'Administración sigue viendo Inventario');
+});
+
+test('con navigation.configured la sesión exige la llave navigation.* y el permiso operativo', () => {
+  const operational = [
+    'bookings.read',
+    'guests.read',
+    'room-service.read',
+    'room-service.write',
+    'inventory.read',
+  ];
+  // Administración ocultó Historial e Inventario aunque el rol conserva sus permisos operativos.
+  const configured = rolePermissionsFromSessionPermissions('roomService', [
+    ...operational,
+    'navigation.configured',
+    'navigation.room-service.pedidos-activos',
+    'navigation.room-service.menu',
+  ]);
+  assert.equal(configured['ROOM SERVICE::Pedidos activos'], true);
+  assert.equal(configured['ROOM SERVICE::Menú'], true);
+  assert.equal(configured['ROOM SERVICE::Historial'], false, 'oculta por Administración');
+  assert.equal(configured['ROOM SERVICE::Inventario'], false, 'oculta pese a inventory.read');
+
+  // La llave navigation.* sola no basta: sin inventory.read el backend respondería 403.
+  const withoutOperational = rolePermissionsFromSessionPermissions('roomService', [
+    'room-service.read',
+    'navigation.configured',
+    'navigation.room-service.menu',
+    'navigation.room-service.inventario',
+  ]);
+  assert.equal(withoutOperational['ROOM SERVICE::Menú'], true);
+  assert.equal(withoutOperational['ROOM SERVICE::Inventario'], false);
+
+  // Sin el marcador se conserva el comportamiento anterior: deciden los permisos operativos.
+  const legacy = rolePermissionsFromSessionPermissions('roomService', operational);
+  assert.equal(legacy['ROOM SERVICE::Historial'], true);
+  assert.equal(legacy['ROOM SERVICE::Inventario'], true);
+});
+
+test('lo que Administración guarda en el editor de roles es lo que ve el empleado', () => {
+  const visible = (permissions) =>
+    Object.entries(permissions)
+      .filter(([, enabled]) => enabled)
+      .map(([key]) => key)
+      .sort();
+  for (const [roleCode, selection] of [
+    ['roomService', ['ROOM SERVICE::Pedidos activos', 'ROOM SERVICE::Menú']],
+    ['roomService', ['ROOM SERVICE::Menú', 'ROOM SERVICE::Inventario']],
+    ['housekeeping', ['LIMPIEZA::Inicio', 'LIMPIEZA::Solicitudes']],
+    ['concierge', ['CONSERJERÍA::Solicitudes']],
+    ['reception', ['RECEPCIÓN::Reservas', 'RECEPCIÓN::Caja', 'RECEPCIÓN::Huéspedes']],
+  ]) {
+    const uiSelection = Object.fromEntries(selection.map((key) => [key, true]));
+    const savedKeys = rolePermissionKeysFromUi(roleCode, uiSelection);
+    assert.ok(savedKeys.includes('navigation.configured'));
+    assert.deepEqual(
+      visible(rolePermissionsFromSessionPermissions(roleCode, savedKeys)),
+      [...selection].sort(),
+      `${roleCode}: ${selection.join(', ')}`,
+    );
+  }
 });
 
 test('session survives remount; logout in another tab clears access', async () => {
