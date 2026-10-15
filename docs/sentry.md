@@ -92,8 +92,10 @@ nada. El `release` es el SHA del commit (`github.sha`) y el `environment`,
    (*Source Maps → Artifact Bundles*).
 3. En producción:
    - `curl -sI https://<dominio>/assets/<archivo>.js.map` → `404`;
-   - en DevTools → *Network*, ninguna petición a `ingest.sentry.io` mientras no
-     haya errores (sin trazas ni replay).
+   - en DevTools → *Network*, sin errores solo sale una petición
+     `envelope` a `ingest.sentry.io` por carga de página: la *session* de
+     *Release Health* (porcentaje de sesiones sin errores; sin usuario ni IP).
+     Ninguna de trazas ni de replay.
 4. Llegada de eventos: en la consola del navegador del sitio de producción,
    `setTimeout(() => { throw new Error('Prueba Sentry') })`. En Sentry →
    *Issues* aparece con `environment: production` y el release del commit (la
