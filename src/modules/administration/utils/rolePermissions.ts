@@ -157,7 +157,8 @@ const adminNavigationPermissionByAccessKey: Record<string, string> = {
   [roleAccessKey('HUÉSPED', 'Conserjería')]: 'navigation.huesped.conserjeria',
   [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: 'navigation.huesped.servicios-de-habitacion',
   [roleAccessKey('HUÉSPED', 'Room service')]: 'navigation.huesped.room-service',
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]: 'navigation.huesped.mis-solicitudes-y-pedidos',
+  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]:
+    'navigation.huesped.mis-solicitudes-y-pedidos',
   [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'navigation.huesped.notificaciones',
 };
 
