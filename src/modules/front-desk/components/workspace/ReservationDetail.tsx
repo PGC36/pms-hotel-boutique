@@ -307,7 +307,7 @@ export function ReservationDetail({
                   <DoorOpen size={16} />
                 </button>
               )}
-              {isActive && (
+              {isActive && reservation.roomNumber !== 'Sin asignar' && (
                 <button
                   className="button small secondary rc-action-icon-btn"
                   onClick={onRoomChange}

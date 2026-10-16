@@ -633,17 +633,22 @@ export function ReservationFormModal({
 export function CheckinModal({
   reservation,
   rooms,
+  hasConflict,
+  isRoomBlocked,
   onClose,
   onCheckin,
 }: {
   reservation: Reservation;
   rooms: RecRoom[];
+  hasConflict: (room: string, checkIn: string, checkOut: string, excludeId?: number) => boolean;
+  isRoomBlocked: (room: string, checkIn: string, checkOut: string) => boolean;
   onClose: () => void;
   onCheckin: (
     id: number,
     updates: Partial<GuestInfo>,
     companions: Companion[],
     res: Reservation,
+    roomId?: string,
   ) => void;
 }) {
   const [docType, setDocType] = useState(reservation.guest.docType || 'INE');
@@ -655,8 +660,25 @@ export function CheckinModal({
   const [compDoc, setCompDoc] = useState('');
   const [compAge, setCompAge] = useState('');
   const [error, setError] = useState('');
+  const [selectedRoomId, setSelectedRoomId] = useState('');
 
-  const room = rooms.find((r) => r.number === reservation.roomNumber);
+  const assignedRoomCandidate = rooms.find((r) => r.number === reservation.roomNumber);
+  const assignedRoom =
+    assignedRoomCandidate &&
+    (!reservation.roomTypeId || assignedRoomCandidate.roomTypeId === reservation.roomTypeId)
+      ? assignedRoomCandidate
+      : undefined;
+  const availableRooms = rooms.filter(
+    (candidate) =>
+      candidate.status === 'Disponible' &&
+      (reservation.roomTypeId
+        ? candidate.roomTypeId === reservation.roomTypeId
+        : candidate.type === reservation.roomType) &&
+      !hasConflict(candidate.number, reservation.checkIn, reservation.checkOut, reservation.id) &&
+      !isRoomBlocked(candidate.number, reservation.checkIn, reservation.checkOut),
+  );
+  const room =
+    assignedRoom ?? availableRooms.find((candidate) => candidate.backendRoomId === selectedRoomId);
   const capacityExceeded = room ? 1 + companions.length > room.capacity : false;
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guatemala' }).format(
     new Date(),
@@ -694,7 +716,11 @@ export function CheckinModal({
       return;
     }
     if (!room) {
-      setError('Asigna una habitación antes de hacer check-in.');
+      setError(
+        availableRooms.length > 0
+          ? 'Selecciona una habitación antes de hacer check-in.'
+          : 'No hay habitaciones compatibles disponibles para estas fechas.',
+      );
       return;
     }
     if (room.status !== 'Disponible') {
@@ -714,6 +740,7 @@ export function CheckinModal({
       { docType, docNumber, birthDate, nationality },
       companions,
       reservation,
+      assignedRoom ? undefined : room?.backendRoomId,
     );
   };
 
@@ -760,6 +787,38 @@ export function CheckinModal({
             <input value={nationality} onChange={(e) => setNationality(e.target.value)} />
           </label>
         </div>
+
+        {!assignedRoom && (
+          <>
+            <h4 className="rc-form-section-title">Asignar habitación</h4>
+            {availableRooms.length > 0 ? (
+              <div className="rc-room-select-list">
+                {availableRooms.map((candidate) => (
+                  <button
+                    key={candidate.backendRoomId}
+                    type="button"
+                    className={`rc-room-option ${selectedRoomId === candidate.backendRoomId ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedRoomId(candidate.backendRoomId);
+                      setError('');
+                    }}
+                  >
+                    <div>
+                      <strong>Hab. {candidate.number}</strong>
+                      <span>
+                        {candidate.type} · cap. {candidate.capacity} · {candidate.floor}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <small className="rc-field-error">
+                No hay habitaciones compatibles disponibles para estas fechas.
+              </small>
+            )}
+          </>
+        )}
 
         <h4 className="rc-form-section-title">Acompañantes ({companions.length})</h4>
         <div className="rc-comp-add">
@@ -1136,7 +1195,9 @@ export function RoomChangeModal({
   const compatible = rooms.filter(
     (r) =>
       r.number !== reservation.roomNumber &&
-      r.type === reservation.roomType &&
+      (reservation.roomTypeId
+        ? r.roomTypeId === reservation.roomTypeId
+        : r.type === reservation.roomType) &&
       r.status === 'Disponible',
   );
   const available = compatible.filter(

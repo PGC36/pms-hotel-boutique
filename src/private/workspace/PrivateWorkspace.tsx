@@ -273,6 +273,7 @@ export type FolioEntry = {
 export type Reservation = {
   id: number;
   bookingId?: string;
+  roomTypeId?: string;
   code: string;
   /** Código que recepción entrega al huésped para entrar a su portal (INT-12). */
   guestLinkCode?: string;
@@ -941,6 +942,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
     return {
       id: index + 1,
       bookingId: booking.id,
+      roomTypeId: booking.roomTypeId,
       code: booking.confirmationCode,
       guestLinkCode: booking.guestLinkCode,
       checkIn: toDtoCalendarDate(booking.checkIn),
@@ -2842,6 +2844,7 @@ function PrivateWorkspaceReady({
       ...reservation,
       id: Number.parseInt(confirmed.id.replace(/-/g, '').slice(-8), 16),
       bookingId: confirmed.id,
+      roomTypeId: room.roomTypeId,
       code: confirmed.confirmationCode,
       guestLinkCode: confirmed.guestLinkCode,
       guest: { ...reservation.guest, name: guest.firstName, lastName: guest.lastName },
@@ -2861,13 +2864,25 @@ function PrivateWorkspaceReady({
     _updates: Partial<GuestInfo>,
     _companions: Companion[],
     res: Reservation,
+    roomId?: string,
   ) => {
     if (!res.bookingId) {
       notify('La reserva no está vinculada al backend.');
       return;
     }
+    if (res.roomNumber === 'Sin asignar' && !roomId) {
+      notify('Selecciona una habitación compatible antes de hacer check-in.');
+      return;
+    }
+
+    const assignedRoom = roomId ? recRoomList.find((room) => room.backendRoomId === roomId) : null;
+    if (roomId && !assignedRoom) {
+      notify('La habitación seleccionada ya no está disponible. Actualiza e inténtalo de nuevo.');
+      return;
+    }
 
     try {
+      if (roomId) await bookingService.assignRoom(res.bookingId, roomId);
       await bookingService.checkIn(res.bookingId);
     } catch (cause) {
       notifyError(cause);
@@ -2884,13 +2899,15 @@ function PrivateWorkspaceReady({
               checkInTime: now,
               checkIn: res.checkIn,
               checkOut: res.checkOut,
-              roomNumber: res.roomNumber,
+              roomNumber: assignedRoom?.number ?? res.roomNumber,
             }
           : r,
       ),
     );
     setRecRoomList((current) =>
-      current.map((rm) => (rm.number === res.roomNumber ? { ...rm, status: 'Ocupada' } : rm)),
+      current.map((rm) =>
+        rm.number === (assignedRoom?.number ?? res.roomNumber) ? { ...rm, status: 'Ocupada' } : rm,
+      ),
     );
     setRecShowCheckin(null);
     notify(`Check-in realizado · ${res.code}`);
