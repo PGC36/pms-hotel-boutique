@@ -2904,6 +2904,26 @@ function PrivateWorkspaceReady({
     }
   };
 
+  const recConfirmReservation = async (id: number) => {
+    const reservation = recReservationList.find((item) => item.id === id);
+    if (!reservation?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+
+    try {
+      await bookingService.confirmBooking(reservation.bookingId);
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
+
+    setRecReservationList((current) =>
+      current.map((item) => (item.id === id ? { ...item, status: 'Confirmada' } : item)),
+    );
+    notify(`Reserva confirmada · ${reservation.code}`);
+  };
+
   const recDoCheckout = (id: number) => {
     const res = recReservationList.find((r) => r.id === id);
     const now = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
@@ -3517,6 +3537,7 @@ function PrivateWorkspaceReady({
               showCheckin={recShowCheckin}
               setShowCheckin={setRecShowCheckin}
               onCheckin={recDoCheckin}
+              onConfirmReservation={recConfirmReservation}
               showCheckout={recShowCheckout}
               setShowCheckout={setRecShowCheckout}
               onCheckout={recDoCheckout}

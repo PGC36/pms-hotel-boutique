@@ -81,6 +81,7 @@ export function ReceptionContent({
   showCheckin,
   setShowCheckin,
   onCheckin,
+  onConfirmReservation,
   showCheckout,
   setShowCheckout,
   onCheckout,
@@ -156,6 +157,7 @@ export function ReceptionContent({
     companions: Companion[],
     res: Reservation,
   ) => void;
+  onConfirmReservation: (id: number) => Promise<void>;
   showCheckout: number | null;
   setShowCheckout: (v: number | null) => void;
   onCheckout: (id: number) => void;
@@ -477,6 +479,7 @@ export function ReceptionContent({
             blocks={blocks}
             onClose={onCloseRes}
             onCheckin={() => setShowCheckin(selectedRes.id)}
+            onConfirmReservation={() => onConfirmReservation(selectedRes.id)}
             onCheckout={() => setShowCheckout(selectedRes.id)}
             onCancel={() => setShowCancel(selectedRes.id)}
             onVoid={() => setShowVoid(selectedRes.id)}
@@ -742,6 +745,7 @@ export function ReceptionContent({
             blocks={blocks}
             onClose={onCloseRes}
             onCheckin={() => setShowCheckin(selectedRes.id)}
+            onConfirmReservation={() => onConfirmReservation(selectedRes.id)}
             onCheckout={() => setShowCheckout(selectedRes.id)}
             onCancel={() => setShowCancel(selectedRes.id)}
             onVoid={() => setShowVoid(selectedRes.id)}
@@ -926,6 +930,7 @@ export function ReceptionContent({
             blocks={blocks}
             onClose={onCloseRes}
             onCheckin={() => setShowCheckin(selectedRes.id)}
+            onConfirmReservation={() => onConfirmReservation(selectedRes.id)}
             onCheckout={() => setShowCheckout(selectedRes.id)}
             onCancel={() => setShowCancel(selectedRes.id)}
             onVoid={() => setShowVoid(selectedRes.id)}
@@ -1050,6 +1055,7 @@ export function ReceptionContent({
             blocks={blocks}
             onClose={onCloseRes}
             onCheckin={() => setShowCheckin(selectedRes.id)}
+            onConfirmReservation={() => onConfirmReservation(selectedRes.id)}
             onCheckout={() => setShowCheckout(selectedRes.id)}
             onCancel={() => setShowCancel(selectedRes.id)}
             onVoid={() => setShowVoid(selectedRes.id)}
@@ -1520,6 +1526,7 @@ export function ReceptionContent({
             blocks={blocks}
             onClose={onCloseRes}
             onCheckin={() => setShowCheckin(selectedRes.id)}
+            onConfirmReservation={() => onConfirmReservation(selectedRes.id)}
             onCheckout={() => setShowCheckout(selectedRes.id)}
             onCancel={() => setShowCancel(selectedRes.id)}
             onVoid={() => setShowVoid(selectedRes.id)}
