@@ -1515,7 +1515,13 @@ test('portal del huésped: el pedido de Room Service no elige la reserva', async
 
 const REC_BOOKING_ID = '1f24bc67-4a9d-4c1d-9210-d661f60e1260';
 
-function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
+function installReceptionBackend({
+  bookingStatus = 'confirmed',
+  bookingRoomId = 'room-101',
+  checkInDate = '2026-12-10',
+  checkOutDate = '2026-12-12',
+  rooms = [hkRoom('room-101', '101', 'clean')],
+} = {}) {
   const now = '2026-10-05T10:00:00Z';
   const state = {
     booking: {
@@ -1523,11 +1529,11 @@ function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
       confirmationCode: 'BKG-126',
       guestLinkCode: 'LNK-126',
       guestId: '7d2f8f2a-0b48-47a4-9bc3-3b1b0874d126',
-      roomId: 'room-101',
+      roomId: bookingRoomId,
       roomTypeId: 'type-standard',
       rateId: null,
-      checkIn: '2026-12-10',
-      checkOut: '2026-12-12',
+      checkIn: checkInDate,
+      checkOut: checkOutDate,
       status: bookingStatus,
       adults: 2,
       children: 0,
@@ -1560,6 +1566,7 @@ function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
       return json({ message: 'Forbidden' }, 403);
     }
     if (method === 'GET' && path === '/bookings') return json([state.booking]);
+    if (method === 'GET' && path === `/bookings/${REC_BOOKING_ID}`) return json(state.booking);
     if (method === 'GET' && path === '/guests') {
       return json([
         {
@@ -1575,7 +1582,7 @@ function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
         },
       ]);
     }
-    if (method === 'GET' && path === '/rooms') return json([hkRoom('room-101', '101', 'clean')]);
+    if (method === 'GET' && path === '/rooms') return json(rooms);
     if (method === 'GET' && path === '/room-types') {
       return json([
         {
@@ -1608,6 +1615,14 @@ function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
       }
       Object.assign(state.booking, { status: 'confirmed', updatedAt: now });
       return json(state.booking);
+    }
+    if (method === 'PUT' && path === `/bookings/${REC_BOOKING_ID}`) {
+      Object.assign(state.booking, body);
+      return json(state.booking);
+    }
+    if (method === 'POST' && path === `/bookings/${REC_BOOKING_ID}/check-in`) {
+      state.booking.status = 'checked_in';
+      return json({});
     }
     if (method === 'GET' && path === '/auth/permissions') {
       return json({ permissions: SESSION_PERMISSIONS.reception });
@@ -1742,4 +1757,71 @@ test('recepción: confirma una reserva pendiente antes de habilitar check-in', a
     1,
     'el check-in queda disponible tras confirmar',
   );
+});
+
+test('recepción: asigna una habitación compatible dentro del check-in', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guatemala' }).format(
+    new Date(),
+  );
+  const tomorrowDate = new Date(`${today}T12:00:00`);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guatemala' }).format(
+    tomorrowDate,
+  );
+  await mountReception({
+    bookingRoomId: null,
+    checkInDate: today,
+    checkOutDate: tomorrow,
+    rooms: [
+      hkRoom('20000000-0000-4000-8000-000000000102', '102', 'inspected', {
+        roomTypeId: 'type-deluxe',
+      }),
+      hkRoom('20000000-0000-4000-8000-000000000201', '201', 'inspected'),
+    ],
+  });
+
+  const reservation = recReservation();
+  act(() => receptionContent().props.onSelectRes(reservation.id));
+  assert.equal(
+    view.root.findAll(
+      (node) => node.type === 'button' && node.props['aria-label'] === 'Cambiar habitación',
+    ).length,
+    0,
+    'una reserva sin habitación asignada no ofrece cambiar habitación',
+  );
+
+  const checkInButton = view.root.find(
+    (node) => node.type === 'button' && node.props['aria-label'] === 'Realizar check-in',
+  );
+  await act(async () => {
+    checkInButton.props.onClick();
+    await settle();
+  });
+
+  const roomOptions = view.root.findAll(
+    (node) => node.type === 'button' && hasClass(node, 'rc-room-option'),
+  );
+  assert.equal(roomOptions.length, 1, 'solo muestra habitaciones del mismo tipo por ID');
+  assert.ok(text(roomOptions[0]).includes('201'));
+
+  await act(async () => {
+    roomOptions[0].props.onClick();
+    await settle();
+  });
+  await act(async () => {
+    buttons('Confirmar check-in')[0].props.onClick();
+    await settle(1500);
+  });
+
+  const calls = recBackend.requests.map(({ call }) => call);
+  const assignmentIndex = calls.indexOf(`PUT /bookings/${REC_BOOKING_ID}`);
+  const checkInIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/check-in`);
+  assert.ok(assignmentIndex >= 0, 'asigna la habitación antes del check-in');
+  assert.ok(checkInIndex > assignmentIndex, 'confirma el check-in después de asignar');
+  assert.equal(
+    recBackend.requests[assignmentIndex].body.roomId,
+    '20000000-0000-4000-8000-000000000201',
+  );
+  assert.equal(recReservation().status, 'Check-in');
+  assert.equal(recReservation().roomNumber, '201');
 });

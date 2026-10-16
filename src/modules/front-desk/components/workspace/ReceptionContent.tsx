@@ -156,6 +156,7 @@ export function ReceptionContent({
     }>,
     companions: Companion[],
     res: Reservation,
+    roomId?: string,
   ) => void;
   onConfirmReservation: (id: number) => Promise<void>;
   showCheckout: number | null;
@@ -1645,6 +1646,7 @@ type ModalsArgs = {
     }>,
     companions: Companion[],
     res: Reservation,
+    roomId?: string,
   ) => void;
   onCheckout: (id: number) => void;
   onCancel: (id: number, reason: string) => void;
@@ -1686,6 +1688,8 @@ function RenderActionModals(a: ModalsArgs) {
         <CheckinModal
           reservation={checkinRes}
           rooms={a.rooms}
+          hasConflict={a.hasConflict}
+          isRoomBlocked={a.isRoomBlocked}
           onClose={() => a.setShowCheckin(null)}
           onCheckin={a.onCheckin}
         />
