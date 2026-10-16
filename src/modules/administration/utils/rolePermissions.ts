@@ -212,7 +212,11 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
       ? withFixedAdminPermissions(navigationPermissions)
       : navigationPermissions;
   }
-  const permissions = Object.fromEntries(
+  return uiPermissionsFromGrantedKeys(granted);
+};
+
+const uiPermissionsFromGrantedKeys = (granted: ReadonlySet<string>): Record<string, boolean> =>
+  Object.fromEntries(
     ALL_PERMISSIONS.map((key) => {
       const backendKeys = backendPermissionsByAccessKey[key] ?? [];
       return [
@@ -221,7 +225,33 @@ const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
       ];
     }),
   ) as Record<string, boolean>;
-  return permissions;
+
+/**
+ * Secciones visibles para un rol operativo a partir de los permisos reales de
+ * la sesión (`GET /auth/permissions`). Reemplaza el fallback por grupo, que
+ * mostraba secciones que el backend responde con 403 (p. ej. Inventario de
+ * Room Service sin `inventory.read`). Solo habilita secciones del grupo del
+ * propio rol: un permiso compartido como `bookings.read` no abre Administración.
+ * Si Administración guardó la selección del rol (`navigation.configured`), la
+ * sección además debe tener su llave `navigation.*`: ocultarla en el editor la
+ * oculta al empleado aunque conserve el permiso operativo.
+ */
+export const rolePermissionsFromSessionPermissions = (
+  roleCode: string,
+  permissionKeys: readonly string[],
+) => {
+  const fallback = getRoleDashboardPermissions(roleCode);
+  const granted = new Set(permissionKeys);
+  const operational = uiPermissionsFromGrantedKeys(granted);
+  const hasConfiguredNavigation = granted.has('navigation.configured');
+  return Object.fromEntries(
+    Object.entries(fallback).map(([key, inRoleGroup]) => {
+      const navigationKey = adminNavigationPermissionByAccessKey[key];
+      const allowedByNavigation =
+        !hasConfiguredNavigation || (navigationKey !== undefined && granted.has(navigationKey));
+      return [key, inRoleGroup && operational[key] && allowedByNavigation];
+    }),
+  ) as Record<string, boolean>;
 };
 
 export const rolePermissionsFromBackendRoles = (roles: Role[]) =>

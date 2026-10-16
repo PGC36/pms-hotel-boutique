@@ -433,6 +433,11 @@ export const authService = {
     persistSession(dto);
     return toAuthSession(dto);
   },
+  /** Permisos reales del empleado en sesión (`GET /auth/permissions`), p. ej. `inventory.read`. */
+  async getPermissions(): Promise<string[]> {
+    const response = await httpClient.get<{ permissions?: string[] }>('/auth/permissions');
+    return Array.isArray(response?.permissions) ? response.permissions : [];
+  },
   /** Recuerda que la sesión de huésped venció para pedir el código con un aviso. */
   markGuestAccessExpired(): void {
     guestAccessExpired = true;

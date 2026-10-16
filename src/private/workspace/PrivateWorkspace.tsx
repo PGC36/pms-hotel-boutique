@@ -48,9 +48,13 @@ import { routePaths } from '@/app/routes';
 import { GuestContent } from '@/modules/guest-portal/components/GuestContent';
 import { RoomServiceContent } from '@/modules/room-service/components/RoomServiceContent';
 import { AdminContent } from '@/modules/administration/components/AdminContent';
-import { rolePermissionsFromBackendRoles } from '@/modules/administration/utils/rolePermissions';
+import {
+  rolePermissionsFromBackendRoles,
+  rolePermissionsFromSessionPermissions,
+} from '@/modules/administration/utils/rolePermissions';
 import { AccountPreferencesModal, AccountProfileModal } from '@/private/workspace/AccountPanels';
 import { auditService } from '@/services/auditService';
+import { authService } from '@/services/authService';
 import { bookingService } from '@/services/bookingService';
 import { cashService } from '@/services/cashService';
 import { catalogService } from '@/services/catalogService';
@@ -269,6 +273,7 @@ export type FolioEntry = {
 export type Reservation = {
   id: number;
   bookingId?: string;
+  roomTypeId?: string;
   code: string;
   /** Código que recepción entrega al huésped para entrar a su portal (INT-12). */
   guestLinkCode?: string;
@@ -937,6 +942,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
     return {
       id: index + 1,
       bookingId: booking.id,
+      roomTypeId: booking.roomTypeId,
       code: booking.confirmationCode,
       guestLinkCode: booking.guestLinkCode,
       checkIn: toDtoCalendarDate(booking.checkIn),
@@ -1379,7 +1385,33 @@ function getErrorMessage(cause: unknown): string {
 type LoaderState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | ({ status: 'ready' } & WorkspaceState);
+  | ({ status: 'ready'; sessionPermissions: string[] | null } & WorkspaceState);
+
+const toRolePermissionCode = (role: RoleId) => (role === 'room-service' ? 'roomService' : role);
+
+/**
+ * Permisos reales del empleado (`GET /auth/permissions`). El workspace operativo
+ * no se muestra hasta tenerlos: sin ellos no hay fallback por grupo que ofrezca
+ * secciones que el backend negaría (p. ej. Inventario sin inventory.read).
+ */
+async function loadSessionPermissions(role: RoleId): Promise<string[]> {
+  let permissionKeys: string[];
+  try {
+    permissionKeys = await authService.getPermissions();
+  } catch {
+    throw new Error('No pudimos verificar los permisos de tu usuario. Intenta de nuevo.');
+  }
+  const sections = rolePermissionsFromSessionPermissions(
+    toRolePermissionCode(role),
+    permissionKeys,
+  );
+  if (!Object.values(sections).some(Boolean)) {
+    throw new Error(
+      'Tu usuario no tiene secciones asignadas en este panel. Solicita acceso a Administración.',
+    );
+  }
+  return permissionKeys;
+}
 
 /**
  * `admin` y `guest` renderizan `AdminContent`/`GuestContent`, que hacen su
@@ -1408,12 +1440,14 @@ export function PrivateWorkspace(props: PrivateWorkspaceProps) {
   const skipLoad = role === 'admin' || role === 'guest';
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [screen, setScreen] = useState<LoaderState>(
-    skipLoad ? { status: 'ready', ...EMPTY_WORKSPACE_DATA } : { status: 'loading' },
+    skipLoad
+      ? { status: 'ready', sessionPermissions: null, ...EMPTY_WORKSPACE_DATA }
+      : { status: 'loading' },
   );
 
   useEffect(() => {
     if (skipLoad) {
-      setScreen({ status: 'ready', ...EMPTY_WORKSPACE_DATA });
+      setScreen({ status: 'ready', sessionPermissions: null, ...EMPTY_WORKSPACE_DATA });
       return;
     }
     let active = true;
@@ -1421,8 +1455,11 @@ export function PrivateWorkspace(props: PrivateWorkspaceProps) {
     async function load() {
       setScreen({ status: 'loading' });
       try {
-        const data = await loadWorkspaceDataWithTimeout(role, 20000);
-        if (active) setScreen({ status: 'ready', ...data });
+        const [data, sessionPermissions] = await Promise.all([
+          loadWorkspaceDataWithTimeout(role, 20000),
+          loadSessionPermissions(role),
+        ]);
+        if (active) setScreen({ status: 'ready', sessionPermissions, ...data });
       } catch (cause) {
         if (active) setScreen({ status: 'error', message: getErrorMessage(cause) });
       }
@@ -1448,7 +1485,13 @@ export function PrivateWorkspace(props: PrivateWorkspaceProps) {
     );
   }
 
-  return <PrivateWorkspaceReady {...props} initialData={screen} />;
+  return (
+    <PrivateWorkspaceReady
+      {...props}
+      initialData={screen}
+      sessionPermissions={screen.sessionPermissions}
+    />
+  );
 }
 
 function PrivateWorkspaceReady({
@@ -1460,7 +1503,12 @@ function PrivateWorkspaceReady({
   sessionRoleLabel,
   onLogout,
   initialData,
-}: PrivateWorkspaceProps & { initialData: WorkspaceState }) {
+  sessionPermissions,
+}: PrivateWorkspaceProps & {
+  initialData: WorkspaceState;
+  /** Permisos reales de un rol operativo; `null` para admin y huésped. */
+  sessionPermissions: string[] | null;
+}) {
   const activeRole = workspaceRole;
   const navigate = useNavigate();
   const [activeNav, setActiveNav] = useState(() => getInitialNav(workspaceRole, initialNav));
@@ -1475,7 +1523,19 @@ function PrivateWorkspaceReady({
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerScrolled, setHeaderScrolled] = useState(false);
-  const [rolePermissions, setRolePermissions] = useState(defaultRolePermissions);
+  const [rolePermissions, setRolePermissions] = useState(() =>
+    sessionPermissions
+      ? {
+          ...defaultRolePermissions,
+          [toRolePermissionCode(workspaceRole)]: rolePermissionsFromSessionPermissions(
+            toRolePermissionCode(workspaceRole),
+            sessionPermissions,
+          ),
+        }
+      : defaultRolePermissions,
+  );
+  const canWriteInventory =
+    workspaceRole === 'admin' || Boolean(sessionPermissions?.includes('inventory.write'));
   const [adminStockNotifications, setAdminStockNotifications] = useState<NotificationItem[]>([]);
   const [hkRooms, setHkRooms] = useState(initialData.cleaningRooms);
   const [hkRequests, setHkRequests] = useState(initialData.guestRequests);
@@ -1618,7 +1678,7 @@ function PrivateWorkspaceReady({
     };
   }, [activeRole]);
 
-  const rolePermissionCode = activeRole === 'room-service' ? 'roomService' : activeRole;
+  const rolePermissionCode = toRolePermissionCode(activeRole);
   const baseNav = activeRole ? navByRole.admin : [];
   const filteredNav = filterNavByPermissions(baseNav, rolePermissions[rolePermissionCode] ?? {});
   const permittedNav =
@@ -2784,6 +2844,7 @@ function PrivateWorkspaceReady({
       ...reservation,
       id: Number.parseInt(confirmed.id.replace(/-/g, '').slice(-8), 16),
       bookingId: confirmed.id,
+      roomTypeId: room.roomTypeId,
       code: confirmed.confirmationCode,
       guestLinkCode: confirmed.guestLinkCode,
       guest: { ...reservation.guest, name: guest.firstName, lastName: guest.lastName },
@@ -2803,13 +2864,25 @@ function PrivateWorkspaceReady({
     _updates: Partial<GuestInfo>,
     _companions: Companion[],
     res: Reservation,
+    roomId?: string,
   ) => {
     if (!res.bookingId) {
       notify('La reserva no está vinculada al backend.');
       return;
     }
+    if (res.roomNumber === 'Sin asignar' && !roomId) {
+      notify('Selecciona una habitación compatible antes de hacer check-in.');
+      return;
+    }
+
+    const assignedRoom = roomId ? recRoomList.find((room) => room.backendRoomId === roomId) : null;
+    if (roomId && !assignedRoom) {
+      notify('La habitación seleccionada ya no está disponible. Actualiza e inténtalo de nuevo.');
+      return;
+    }
 
     try {
+      if (roomId) await bookingService.assignRoom(res.bookingId, roomId);
       await bookingService.checkIn(res.bookingId);
     } catch (cause) {
       notifyError(cause);
@@ -2826,13 +2899,15 @@ function PrivateWorkspaceReady({
               checkInTime: now,
               checkIn: res.checkIn,
               checkOut: res.checkOut,
-              roomNumber: res.roomNumber,
+              roomNumber: assignedRoom?.number ?? res.roomNumber,
             }
           : r,
       ),
     );
     setRecRoomList((current) =>
-      current.map((rm) => (rm.number === res.roomNumber ? { ...rm, status: 'Ocupada' } : rm)),
+      current.map((rm) =>
+        rm.number === (assignedRoom?.number ?? res.roomNumber) ? { ...rm, status: 'Ocupada' } : rm,
+      ),
     );
     setRecShowCheckin(null);
     notify(`Check-in realizado · ${res.code}`);
@@ -2844,6 +2919,26 @@ function PrivateWorkspaceReady({
     } catch (cause) {
       notifyError(cause);
     }
+  };
+
+  const recConfirmReservation = async (id: number) => {
+    const reservation = recReservationList.find((item) => item.id === id);
+    if (!reservation?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+
+    try {
+      await bookingService.confirmBooking(reservation.bookingId);
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
+
+    setRecReservationList((current) =>
+      current.map((item) => (item.id === id ? { ...item, status: 'Confirmada' } : item)),
+    );
+    notify(`Reserva confirmada · ${reservation.code}`);
   };
 
   const recDoCheckout = (id: number) => {
@@ -3459,6 +3554,7 @@ function PrivateWorkspaceReady({
               showCheckin={recShowCheckin}
               setShowCheckin={setRecShowCheckin}
               onCheckin={recDoCheckin}
+              onConfirmReservation={recConfirmReservation}
               showCheckout={recShowCheckout}
               setShowCheckout={setRecShowCheckout}
               onCheckout={recDoCheckout}
@@ -3513,6 +3609,7 @@ function PrivateWorkspaceReady({
               onReject={rejectRoomServiceOrder}
               onCancel={cancelRoomServiceOrder}
               onRefreshOrders={refreshRoomServiceOrders}
+              canWriteInventory={canWriteInventory}
               onAction={notify}
               search={rsSearch}
               setSearch={setRsSearch}

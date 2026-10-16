@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import {
   Ban,
+  BadgeCheck,
   BedDouble,
   Check,
   DoorOpen,
@@ -50,6 +51,7 @@ export function ReservationDetail({
   blocks,
   onClose,
   onCheckin,
+  onConfirmReservation,
   onCheckout,
   onCancel,
   onVoid,
@@ -69,6 +71,7 @@ export function ReservationDetail({
   blocks: RoomBlock[];
   onClose: () => void;
   onCheckin: () => void;
+  onConfirmReservation: () => Promise<void>;
   onCheckout: () => void;
   onCancel: () => void;
   onVoid: () => void;
@@ -85,6 +88,7 @@ export function ReservationDetail({
 }) {
   const [tab, setTab] = useState<'info' | 'folio'>('info');
   const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const t = folioTotals(reservation.folio);
   const nights = Math.max(
     1,
@@ -93,7 +97,8 @@ export function ReservationDetail({
         86400000,
     ),
   );
-  const canCheckin = reservation.status === 'Confirmada' || reservation.status === 'Pendiente';
+  const canConfirm = reservation.status === 'Pendiente';
+  const canCheckin = reservation.status === 'Confirmada';
   const canCheckout = reservation.status === 'Check-in';
   const isActive = !['Cancelada', 'Anulada', 'Check-out'].includes(reservation.status);
 
@@ -264,6 +269,24 @@ export function ReservationDetail({
                   <Pencil size={16} />
                 </button>
               )}
+              {canConfirm && (
+                <button
+                  className="button small primary rc-action-icon-btn"
+                  onClick={async () => {
+                    setConfirming(true);
+                    try {
+                      await onConfirmReservation();
+                    } finally {
+                      setConfirming(false);
+                    }
+                  }}
+                  aria-label="Confirmar reserva"
+                  title="Confirmar reserva"
+                  disabled={confirming}
+                >
+                  <BadgeCheck size={16} />
+                </button>
+              )}
               {canCheckin && (
                 <button
                   className="button small primary rc-action-icon-btn"
@@ -284,7 +307,7 @@ export function ReservationDetail({
                   <DoorOpen size={16} />
                 </button>
               )}
-              {isActive && (
+              {isActive && reservation.roomNumber !== 'Sin asignar' && (
                 <button
                   className="button small secondary rc-action-icon-btn"
                   onClick={onRoomChange}
