@@ -776,6 +776,8 @@ button {
 }
 .metric-card p {
   margin: var(--size-legacy-1) 0 var(--size-legacy-7);
+  /* Reserva el espacio del botón ··· (absoluto) para que el título no choque con él. */
+  padding-right: var(--size-legacy-22);
   font-size: var(--font-size-sm);
   color: var(--color-legacy-93867d);
 }
@@ -3010,6 +3012,16 @@ button {
     margin-right: var(--size-legacy-30);
   }
 }
+/* En móvil el panel tiene ancho fijo (regla de 768px, declarada antes); sumado a
+   los márgenes de 30px de arriba quedaba pegado al borde derecho. Se centra con
+   el mismo margen lateral de las tarjetas de habitaciones. */
+@media (max-width: 768px) {
+  .search-panel {
+    margin-left: auto;
+    margin-right: auto;
+    width: calc(100% - var(--size-legacy-30) * 2);
+  }
+}
 @media (max-width: 960px) {
   .room-cards {
     grid-template-columns: 1fr 1fr;
@@ -3042,6 +3054,14 @@ button {
   }
   .visitor-header {
     padding: 0 var(--space-9);
+  }
+}
+/* Móvil: la barra de secciones ocupa una fila propia; sus íconos van centrados.
+   Va después de las reglas de 1180px y 960px, que le añadían margen izquierdo. */
+@media (max-width: 768px) {
+  .visitor-tabs {
+    margin-left: 0;
+    justify-content: center;
   }
 }
 @media print {
@@ -3762,6 +3782,12 @@ button {
     gap: var(--space-4);
   }
 }
+/* Por debajo de 360px dos tarjetas por fila no caben (desbordaban a ~332px en 320px). */
+@media (max-width: 359px) {
+  .metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 .hk-dashboard-grid {
   display: grid;
@@ -4341,6 +4367,13 @@ button {
   grid-template-columns: minmax(0, 1.6fr) minmax(var(--size-legacy-280), 0.8fr);
   gap: var(--size-legacy-22);
 }
+/* La regla móvil de 768px (bloque de .dashboard-grid) queda antes que esta base
+   y no se aplicaba: Pedidos activos se comprimía a ~44px junto al resumen. */
+@media (max-width: 768px) {
+  .rs-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .rs-view {
   min-height: var(--size-legacy-320);
 }
@@ -4387,6 +4420,22 @@ button {
   font-size: var(--font-size-legacy-22);
   color: var(--color-text-primary);
   margin-top: var(--space-3);
+}
+/* En móviles estrechos las tres cajas se encogen en lugar de desbordar; por
+   debajo de 375px se apilan para no partir las etiquetas a mitad de palabra. */
+@media (max-width: 400px) {
+  .rs-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+  .rs-summary > div {
+    padding: var(--space-4) var(--space-2);
+  }
+}
+@media (max-width: 374px) {
+  .rs-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .rs-order-list {
@@ -4609,6 +4658,26 @@ button {
   font-size: var(--font-size-legacy-13);
   color: var(--color-brand-gold-dark);
   white-space: nowrap;
+}
+/* Columna de texto: ocupa el espacio libre y puede encogerse sin empujar el precio. */
+.rs-menu-item > div:not(.rs-menu-icon) {
+  flex: 1;
+  min-width: 0;
+}
+.rs-menu-item strong,
+.rs-menu-item p {
+  overflow-wrap: anywhere;
+}
+.rs-menu-stock {
+  display: block;
+  margin-top: var(--size-legacy-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+@media (max-width: 600px) {
+  .rs-menu-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .rs-inventory-grid {

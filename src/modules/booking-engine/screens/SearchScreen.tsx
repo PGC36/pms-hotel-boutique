@@ -594,7 +594,7 @@ export function SearchScreen() {
       </section>
 
       <footer className="visitor-footer">
-        <span>© 2024 Aurora Hotel Group</span>
+        <span>© 2026 Aurora Hotel Group</span>
         <span>Privacidad · Términos · Contacto</span>
       </footer>
     </section>
