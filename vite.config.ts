@@ -10,10 +10,17 @@ export default defineConfig(({ mode }) => {
   // Source maps solo si se pueden subir a Sentry (docs/sentry.md). Sin los tres datos,
   // el build no genera .map ni contacta a Sentry.
   const uploadSourceMaps = Boolean(env.SENTRY_AUTH_TOKEN && env.SENTRY_ORG && env.SENTRY_PROJECT);
+  // Dominio de las etiquetas Open Graph de index.html: Meta exige URLs absolutas.
+  // Se cambia solo para probar la vista previa con un túnel (docs/open-graph.md).
+  const siteUrl = (env.VITE_PUBLIC_SITE_URL || 'https://aurora.codisea.tech').replace(/\/+$/, '');
 
   return {
     plugins: [
       react(),
+      {
+        name: 'open-graph-site-url',
+        transformIndexHtml: (html: string) => html.replaceAll('%SITE_URL%', siteUrl),
+      },
       uploadSourceMaps &&
         sentryVitePlugin({
           org: env.SENTRY_ORG,
