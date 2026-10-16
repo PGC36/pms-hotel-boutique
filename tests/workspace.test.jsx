@@ -1515,7 +1515,7 @@ test('portal del huésped: el pedido de Room Service no elige la reserva', async
 
 const REC_BOOKING_ID = '1f24bc67-4a9d-4c1d-9210-d661f60e1260';
 
-function installReceptionBackend() {
+function installReceptionBackend({ bookingStatus = 'confirmed' } = {}) {
   const now = '2026-10-05T10:00:00Z';
   const state = {
     booking: {
@@ -1528,7 +1528,7 @@ function installReceptionBackend() {
       rateId: null,
       checkIn: '2026-12-10',
       checkOut: '2026-12-12',
-      status: 'confirmed',
+      status: bookingStatus,
       adults: 2,
       children: 0,
       totalAmountCents: 100000,
@@ -1602,6 +1602,13 @@ function installReceptionBackend() {
       });
       return json(state.booking);
     }
+    if (method === 'POST' && path === `/bookings/${REC_BOOKING_ID}/confirm`) {
+      if (state.booking.status !== 'pending') {
+        return json({ message: 'Only pending bookings can be confirmed' }, 400);
+      }
+      Object.assign(state.booking, { status: 'confirmed', updatedAt: now });
+      return json(state.booking);
+    }
     if (method === 'GET' && path === '/auth/permissions') {
       return json({ permissions: SESSION_PERMISSIONS.reception });
     }
@@ -1612,8 +1619,8 @@ function installReceptionBackend() {
 }
 
 let recBackend;
-async function mountReception() {
-  recBackend = installReceptionBackend();
+async function mountReception(options) {
+  recBackend = installReceptionBackend(options);
   await act(async () => {
     view = create(
       <MemoryRouter>
@@ -1697,5 +1704,42 @@ test('recepción: si el backend rechaza la cancelación la reserva no cambia', a
   assert.equal(recReservation().status, 'Confirmada', 'no se marca cancelada sin el backend');
   assert.ok(
     toasts().some((toast) => toast.includes('Only pending or confirmed bookings can be cancelled')),
+  );
+});
+
+test('recepción: confirma una reserva pendiente antes de habilitar check-in', async () => {
+  await mountReception({ bookingStatus: 'pending' });
+  const reservation = recReservation();
+  assert.equal(reservation.status, 'Pendiente');
+
+  act(() => receptionContent().props.onSelectRes(reservation.id));
+  const confirmButton = view.root.find(
+    (node) => node.type === 'button' && node.props['aria-label'] === 'Confirmar reserva',
+  );
+  assert.ok(confirmButton, 'el detalle muestra la acción explícita de confirmar');
+  assert.equal(
+    view.root.findAll(
+      (node) => node.type === 'button' && node.props['aria-label'] === 'Realizar check-in',
+    ).length,
+    0,
+    'no ofrece check-in para una reserva pendiente',
+  );
+
+  await act(async () => {
+    await confirmButton.props.onClick();
+    await settle();
+  });
+
+  assert.ok(
+    recBackend.requests.some(({ call }) => call === `POST /bookings/${REC_BOOKING_ID}/confirm`),
+    'confirma con el backend',
+  );
+  assert.equal(recReservation().status, 'Confirmada');
+  assert.equal(
+    view.root.findAll(
+      (node) => node.type === 'button' && node.props['aria-label'] === 'Realizar check-in',
+    ).length,
+    1,
+    'el check-in queda disponible tras confirmar',
   );
 });
