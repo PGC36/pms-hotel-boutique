@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ReservationFormModal } from '@/modules/front-desk/components/workspace/ReceptionModals';
 import { PrivateWorkspace } from '@/private/workspace/PrivateWorkspace';
 import { calculateNights } from '@/shared/utils/date';
-import { toDomainCalendarDate } from '@/shared/types/common';
+import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
 
 // Entorno mínimo para los servicios mock (mismo patrón que tests/auth.test.jsx).
 const values = new Map();
@@ -1521,6 +1521,8 @@ function installReceptionBackend({
   checkInDate = '2026-12-10',
   checkOutDate = '2026-12-12',
   rooms = [hkRoom('room-101', '101', 'clean')],
+  payments = [],
+  paymentsForbidden = false,
 } = {}) {
   const now = '2026-10-05T10:00:00Z';
   const state = {
@@ -1583,6 +1585,9 @@ function installReceptionBackend({
       ]);
     }
     if (method === 'GET' && path === '/rooms') return json(rooms);
+    if (method === 'GET' && path === '/payments') {
+      return paymentsForbidden ? json({ message: 'Forbidden' }, 403) : json(payments);
+    }
     if (method === 'GET' && path === '/room-types') {
       return json([
         {
@@ -1824,4 +1829,226 @@ test('recepción: asigna una habitación compatible dentro del check-in', async 
   );
   assert.equal(recReservation().status, 'Check-in');
   assert.equal(recReservation().roomNumber, '201');
+});
+
+// --- Recepción · Resumen (subfase 1A) ---------------------------------------
+
+const localDay = (offsetDays = 0) => {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  return toDtoCalendarDate(date);
+};
+const localNoonIso = (offsetDays = 0) => {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  date.setHours(12, 0, 0, 0);
+  return date.toISOString();
+};
+const metric = (label) => {
+  const card = view.root.find(
+    (node) =>
+      hasClass(node, 'metric-card') &&
+      node.findAll((child) => child.type === 'p' && text(child) === label).length > 0,
+  );
+  return {
+    value: text(card.findByType('h2')),
+    change: text(card.findByType('span')),
+  };
+};
+const statCard = (label) =>
+  text(
+    view.root
+      .find(
+        (node) =>
+          hasClass(node, 'rc-stat-card') &&
+          node.findAll((child) => child.type === 'small' && text(child) === label).length > 0,
+      )
+      .findByType('strong'),
+  );
+const backendPayment = (id, amountCents, status, offsetDays = 0) => ({
+  id,
+  bookingId: REC_BOOKING_ID,
+  amountCents,
+  currency: 'GTQ',
+  method: 'cash',
+  status,
+  transactionReference: null,
+  paidAt: localNoonIso(offsetDays),
+  createdAt: localNoonIso(offsetDays),
+});
+
+test('recepción · resumen: llegadas con el mismo criterio en métricas y tarjetas', async () => {
+  await mountReception({ checkInDate: localDay(0), checkOutDate: localDay(2) });
+  assert.deepEqual(metric('Llegadas de hoy'), {
+    value: '1',
+    change: '1 por llegar · 0 con check-in',
+  });
+  assert.equal(statCard('Llegadas hoy'), '1');
+  assert.equal(metric('Salidas de hoy').value, '0');
+  assert.equal(statCard('Salidas hoy'), '0');
+});
+
+test('recepción · resumen: salidas con el mismo criterio en métricas y tarjetas', async () => {
+  await mountReception({
+    bookingStatus: 'checked_in',
+    checkInDate: localDay(-2),
+    checkOutDate: localDay(0),
+  });
+  assert.deepEqual(metric('Salidas de hoy'), {
+    value: '1',
+    change: '1 por salir · 0 con check-out',
+  });
+  assert.equal(statCard('Salidas hoy'), '1');
+  assert.equal(metric('Llegadas de hoy').value, '0');
+  assert.equal(statCard('Llegadas hoy'), '0');
+});
+
+test('recepción · resumen: "Pagos de hoy" solo suma pagos completados del backend', async () => {
+  await mountReception({
+    payments: [
+      backendPayment('pay-1', 15000, 'completed'),
+      backendPayment('pay-2', 5050, 'completed'),
+      backendPayment('pay-3', 9999, 'refunded'),
+      backendPayment('pay-4', 7000, 'completed', -1),
+    ],
+  });
+  assert.deepEqual(metric('Pagos de hoy'), {
+    value: 'Q200.50',
+    change: '2 pagos registrados',
+  });
+
+  // Un pago que solo existe en el folio local no altera la métrica.
+  await act(async () =>
+    receptionContent().props.onAddPayment(recReservation().id, 500, 'Efectivo', 'LOCAL-1'),
+  );
+  assert.equal(metric('Pagos de hoy').value, 'Q200.50');
+});
+
+test('recepción · resumen: sin acceso a pagos muestra un estado claro, no Q0.00', async () => {
+  await mountReception({ paymentsForbidden: true });
+  assert.deepEqual(metric('Pagos de hoy'), {
+    value: 'Sin datos',
+    change: 'No hay acceso a los pagos registrados',
+  });
+});
+
+test('recepción · resumen: sin habitaciones no muestra NaN%', async () => {
+  await mountReception({ rooms: [], bookingRoomId: null });
+  assert.equal(metric('Ocupación actual').value, '—');
+  assert.ok(!text(view.root).includes('NaN'), 'ningún indicador muestra NaN');
+});
+
+test('recepción · resumen: las filas se abren con Enter y Espacio', async () => {
+  await mountReception({ checkInDate: localDay(0), checkOutDate: localDay(2) });
+  const rows = () =>
+    view.root.findAll((node) => hasClass(node, 'rc-dash-row') && node.props.role === 'button');
+  assert.ok(rows().length > 0, 'las filas exponen role="button"');
+  assert.ok(
+    rows().every((row) => row.props.tabIndex === 0),
+    'todas reciben foco con Tab',
+  );
+
+  const detailOpen = () => view.root.findAll((node) => hasClass(node, 'rc-detail-modal')).length;
+  act(() => rows()[0].props.onKeyDown({ key: 'a', preventDefault() {} }));
+  assert.equal(detailOpen(), 0, 'otras teclas no abren el detalle');
+
+  let prevented = false;
+  act(() =>
+    rows()[0].props.onKeyDown({
+      key: 'Enter',
+      preventDefault() {
+        prevented = true;
+      },
+    }),
+  );
+  assert.equal(detailOpen(), 1, 'Enter abre el detalle');
+  assert.ok(prevented);
+
+  act(() => receptionContent().props.onCloseRes());
+  act(() => rows()[0].props.onKeyDown({ key: ' ', preventDefault() {} }));
+  assert.equal(detailOpen(), 1, 'Espacio abre el detalle');
+});
+
+test('recepción · resumen: fechas de reservas pendientes en formato de Guatemala', async () => {
+  await mountReception();
+  assert.ok(text(view.root).includes('10-12-2026 – 12-12-2026'), text(view.root));
+});
+
+test('recepción · resumen: "Bloquear habitación" no simula un bloqueo guardado', async () => {
+  await mountReception();
+  const quickBlock = view.root
+    .find((node) => hasClass(node, 'rc-quick-actions'))
+    .findAll((node) => node.type === 'button' && text(node).includes('Bloquear habitación'))[0];
+  await act(async () => quickBlock.props.onClick());
+
+  assert.ok(
+    toasts().some((toast) => toast.includes('aún no está disponible')),
+    'informa que el bloqueo no está disponible',
+  );
+  assert.ok(!toasts().some((toast) => toast.includes('bloqueada')), 'no confirma un bloqueo');
+  assert.ok(!text(view.root).includes('BLOQUEAR HABITACIÓN'), 'no abre el modal de bloqueo');
+  assert.equal(
+    recBackend.requests.filter(({ call }) => !call.startsWith('GET ')).length,
+    0,
+    'no envía cambios al backend',
+  );
+});
+
+// --- Auditoría administrativa: solo la pide quien tiene ROLE_ADMIN ----------------
+
+const AUDIT_PATH = '/admin/audit-logs';
+
+test('auditoría: recepción no solicita /admin/audit-logs', async () => {
+  await mountReception();
+  assert.ok(
+    recBackend.requests.some(({ call }) => call === 'GET /bookings'),
+    'el panel cargó',
+  );
+  assert.equal(
+    recBackend.requests.filter(({ call }) => call.includes(AUDIT_PATH)).length,
+    0,
+    'recepción no pide auditoría (el backend respondería 403)',
+  );
+});
+
+test('auditoría: limpieza tampoco solicita /admin/audit-logs', async () => {
+  await mountHousekeeping();
+  assert.equal(hkBackend.requests.filter((call) => call.includes(AUDIT_PATH)).length, 0);
+});
+
+test('auditoría: administración conserva la consulta en su panel y al ver Recepción', async () => {
+  const calls = [];
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const path = new URL(String(input)).pathname.replace(/^\/api\/v1/, '');
+    calls.push(`${init.method ?? 'GET'} ${path}`);
+    return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const auditCalls = () => calls.filter((call) => call === `GET ${AUDIT_PATH}`).length;
+
+  await act(async () => {
+    view = create(
+      <MemoryRouter>
+        <PrivateWorkspace role="admin" sessionName="Admin Test" />
+      </MemoryRouter>,
+    );
+  });
+  for (let i = 0; i < 20 && auditCalls() === 0; i++) await settle(300);
+  assert.ok(auditCalls() >= 1, 'el panel de administración consulta la auditoría');
+
+  const before = auditCalls();
+  const subitems = () =>
+    view.root
+      .findAll((node) => node.type === 'button' && hasClass(node, 'nav-subitem'))
+      .map((node) => text(node));
+  if (navItem('Recepción').props['aria-expanded'] !== true) {
+    await act(async () => navItem('Recepción').props.onClick());
+  }
+  const resumen = view.root.findAll(
+    (node) => node.type === 'button' && hasClass(node, 'nav-subitem') && text(node) === 'Resumen',
+  )[0];
+  assert.ok(resumen, `submenú de Recepción visible: ${subitems().join(', ')}`);
+  await act(async () => resumen.props.onClick());
+  for (let i = 0; i < 20 && auditCalls() === before; i++) await settle(300);
+  assert.ok(auditCalls() > before, 'el administrador sigue consultando auditoría al ver Recepción');
 });

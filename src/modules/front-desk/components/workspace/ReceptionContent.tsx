@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight,
   Ban,
@@ -26,7 +26,13 @@ import type {
   ReservationStatus,
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
-import { toDtoCalendarDate } from '@/shared/types/common';
+import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import { formatStayRange } from '@/shared/utils/date';
+import {
+  getArrivalsForDay,
+  getDeparturesForDay,
+  getOccupancyPercent,
+} from '@/modules/front-desk/utils/receptionSummary';
 import { ReservationDetail } from './ReservationDetail';
 import {
   BlockModal,
@@ -43,6 +49,15 @@ import {
 const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
 const fmtDate = (d: string) =>
   new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+
+/** Estadía en formato de Guatemala (dd-mm-aaaa – dd-mm-aaaa); un dato inválido no tumba la pantalla. */
+const stayRangeLabel = (checkIn: string, checkOut: string) => {
+  try {
+    return formatStayRange(toDomainCalendarDate(checkIn), toDomainCalendarDate(checkOut));
+  } catch {
+    return `${checkIn} – ${checkOut}`;
+  }
+};
 
 type Totals = { charges: number; deposits: number; payments: number; balance: number };
 
@@ -230,12 +245,9 @@ export function ReceptionContent({
   /* ---------- Dashboard / Resumen ---------- */
   if (nav === 'Resumen') {
     const today = toDtoCalendarDate(new Date());
-    const arrivals = reservations.filter(
-      (r) => r.checkIn === today && !['Cancelada', 'Anulada'].includes(r.status),
-    );
-    const departures = reservations.filter(
-      (r) => r.checkOut === today && !['Cancelada', 'Anulada'].includes(r.status),
-    );
+    // Mismos criterios que las métricas de la cabecera (receptionSummary).
+    const arrivals = getArrivalsForDay(reservations, today).all;
+    const departures = getDeparturesForDay(reservations, today).all;
     const inHouse = reservations.filter((r) => r.status === 'Check-in');
     const available = rooms.filter((r) => r.status === 'Disponible');
     const occupied = rooms.filter((r) => r.status === 'Ocupada');
@@ -245,6 +257,19 @@ export function ReceptionContent({
     const pending = reservations.filter(
       (r) => r.status === 'Pendiente' || r.status === 'Confirmada',
     );
+    const occupancyPercent = getOccupancyPercent(occupied.length, rooms.length);
+    // Filas clicables accesibles con teclado (Enter/Espacio), sin cambiar su aspecto.
+    const reservationRowProps = (id: number) => ({
+      role: 'button',
+      tabIndex: 0,
+      onClick: () => onSelectRes(id),
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelectRes(id);
+        }
+      },
+    });
 
     return (
       <>
@@ -324,7 +349,7 @@ export function ReceptionContent({
                     </div>
                   )}
                   {arrivals.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
@@ -348,7 +373,7 @@ export function ReceptionContent({
                     </div>
                   )}
                   {departures.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
@@ -372,14 +397,12 @@ export function ReceptionContent({
                     </div>
                   )}
                   {pending.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
                         </strong>
-                        <span>
-                          {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}
-                        </span>
+                        <span>{stayRangeLabel(r.checkIn, r.checkOut)}</span>
                       </div>
                       <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
                     </div>
@@ -420,13 +443,22 @@ export function ReceptionContent({
             </div>
             <div className="rc-progress-block">
               <span>Ocupación general</span>
-              <strong>{Math.round((occupied.length / rooms.length) * 100)}%</strong>
+              <strong>{occupancyPercent === null ? '—' : `${occupancyPercent}%`}</strong>
               <div className="progress-line">
-                <i style={{ width: `${Math.round((occupied.length / rooms.length) * 100)}%` }} />
+                <i style={{ width: `${occupancyPercent ?? 0}%` }} />
               </div>
             </div>
             <div className="rc-quick-actions">
-              <button onClick={() => setShowBlock(true)}>
+              {/* R-05: el bloqueo aún no se guarda en el backend (subfase 1C); no se simula. */}
+              <button
+                type="button"
+                title="Disponible en una próxima fase"
+                onClick={() =>
+                  onAction(
+                    'El bloqueo de habitaciones aún no está disponible. No se registró ningún cambio.',
+                  )
+                }
+              >
                 <Ban size={16} /> Bloquear habitación
               </button>
               <button onClick={() => onNavigate('Caja')}>

@@ -44,6 +44,12 @@ import {
   X,
 } from 'lucide-react';
 import { ReceptionContent } from '@/modules/front-desk/components/workspace/ReceptionContent';
+import {
+  getArrivalsForDay,
+  getDeparturesForDay,
+  getOccupancyPercent,
+  summarizePaymentsForDay,
+} from '@/modules/front-desk/utils/receptionSummary';
 import { routePaths } from '@/app/routes';
 import { GuestContent } from '@/modules/guest-portal/components/GuestContent';
 import { RoomServiceContent } from '@/modules/room-service/components/RoomServiceContent';
@@ -74,6 +80,7 @@ import { HttpError } from '@/services/http-client';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights } from '@/shared/utils/date';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
 import type {
@@ -86,6 +93,7 @@ import type { Booking } from '@/shared/types/entities/booking';
 import type { Charge } from '@/shared/types/entities/charge';
 import type { Guest } from '@/shared/types/entities/guest';
 import type { Order } from '@/shared/types/entities/order';
+import type { Payment } from '@/shared/types/entities/payment';
 import type { Product } from '@/shared/types/entities/product';
 import type { Room } from '@/shared/types/entities/room';
 import type { RoomFeature } from '@/shared/types/entities/room-feature';
@@ -675,6 +683,8 @@ type WorkspaceState = {
   recRoomTypeOptions: RoomType[];
   recReservations: Reservation[];
   recRoomBlocks: RoomBlock[];
+  /** Pagos registrados en el backend; `null` si el rol no puede leerlos. */
+  recPayments: Payment[] | null;
   recentActivity: { time: string; text: string; tone: string }[];
 };
 
@@ -783,6 +793,11 @@ const GUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 const SERVICE_REQUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
 /** `folios.read`, `charges.read`, `payments.read` y `deposits.read`. */
 const FINANCE_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
+/**
+ * `GET /admin/audit-logs` exige ROLE_ADMIN (SecurityConfig): para cualquier otro
+ * rol responde 403, y el navegador lo registra en consola aunque se ignore.
+ */
+const AUDIT_READ_ROLES: readonly RoleId[] = ['admin'];
 
 async function safeList<T>(load: () => Promise<T[]>): Promise<T[]> {
   try {
@@ -792,24 +807,37 @@ async function safeList<T>(load: () => Promise<T[]>): Promise<T[]> {
   }
 }
 
+function isPermissionDenied(error: unknown): boolean {
+  if (error instanceof HttpError && error.status === 403) return true;
+  // Some services translate 403s into a localized Error before returning it.
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    return (
+      message === 'Forbidden' ||
+      /^HTTP 403\b/i.test(message) ||
+      message.startsWith('No tienes permisos para operar ')
+    );
+  }
+  return false;
+}
+
 async function permissionAwareList<T>(load: () => Promise<T[]>): Promise<T[]> {
   try {
     return await load();
   } catch (error) {
     // Role permissions can be customized per hotel. A denied optional dataset
     // must not prevent the rest of the employee workspace from loading.
-    if (error instanceof HttpError && error.status === 403) return [];
-    // Some services translate 403s into a localized Error before returning it.
-    if (error instanceof Error) {
-      const message = error.message.trim();
-      if (
-        message === 'Forbidden' ||
-        /^HTTP 403\b/i.test(message) ||
-        message.startsWith('No tienes permisos para operar ')
-      ) {
-        return [];
-      }
-    }
+    if (isPermissionDenied(error)) return [];
+    throw error;
+  }
+}
+
+/** Como `permissionAwareList`, pero devuelve `null` si no hay permiso: "sin acceso" no es "vacío". */
+async function permissionAwareListOrNull<T>(load: () => Promise<T[]>): Promise<T[] | null> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isPermissionDenied(error)) return null;
     throw error;
   }
 }
@@ -857,9 +885,9 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         ? safeList(() => serviceRequestService.getRequests())
         : permissionAwareList(() => serviceRequestService.getRequests())
       : [],
-    safeList(() => auditService.getLogs()),
+    AUDIT_READ_ROLES.includes(role) ? safeList(() => auditService.getLogs()) : [],
     canReadFinance ? permissionAwareList(() => guestAccountService.getCharges()) : [],
-    canReadFinance ? permissionAwareList(() => guestAccountService.getPayments()) : [],
+    canReadFinance ? permissionAwareListOrNull(() => guestAccountService.getPayments()) : null,
     canReadFinance ? permissionAwareList(() => guestAccountService.getDeposits()) : [],
     // Solo el rol de Limpieza tiene `housekeeping.read` en el backend.
     role === 'housekeeping' ? fetchHousekeepingData() : null,
@@ -902,7 +930,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
     const nights = Math.max(1, calculateNights(booking.checkIn, booking.checkOut));
     const status = mapReservationStatus(booking.status);
     const bookingCharges = charges.filter((charge) => charge.bookingId === booking.id);
-    const bookingPayments = payments.filter((payment) => payment.bookingId === booking.id);
+    const bookingPayments = (payments ?? []).filter((payment) => payment.bookingId === booking.id);
     const bookingDeposits = deposits.filter((deposit) => deposit.bookingId === booking.id);
     const folio: FolioEntry[] = [
       ...bookingCharges.map((charge, chargeIndex): FolioEntry => ({
@@ -1065,6 +1093,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
     recRoomTypeOptions,
     recReservations,
     recRoomBlocks,
+    recPayments: payments,
     recentActivity,
   };
 }
@@ -1432,6 +1461,7 @@ const EMPTY_WORKSPACE_DATA: WorkspaceState = {
   recRoomTypeOptions: [],
   recReservations: [],
   recRoomBlocks: [],
+  recPayments: null,
   recentActivity: [],
 };
 
@@ -1559,6 +1589,7 @@ function PrivateWorkspaceReady({
   );
   const [recRoomList, setRecRoomList] = useState<RecRoom[]>(initialData.recRooms);
   const [recBlockList, setRecBlockList] = useState<RoomBlock[]>(initialData.recRoomBlocks);
+  const [recPayments, setRecPayments] = useState<Payment[] | null>(initialData.recPayments);
   const [recentActivity] = useState(initialData.recentActivity);
   const [recSelectedResId, setRecSelectedResId] = useState<number | null>(null);
   const [recShowNewRes, setRecShowNewRes] = useState(false);
@@ -1724,13 +1755,11 @@ function PrivateWorkspaceReady({
   const greetingName = accountName.trim().split(/\s+/)[0] || role.person;
   const preferenceViews = nav.map((item) => item.label);
   const today = toDtoCalendarDate(new Date());
-  const arrivalsToday = recReservationList.filter(
-    (reservation) =>
-      reservation.checkIn === today && ['Pendiente', 'Confirmada'].includes(reservation.status),
-  ).length;
-  const departuresToday = recReservationList.filter(
-    (reservation) => reservation.checkOut === today && reservation.status === 'Check-in',
-  ).length;
+  const recArrivalsToday = getArrivalsForDay(recReservationList, today);
+  const recDeparturesToday = getDeparturesForDay(recReservationList, today);
+  // El badge de Calendario sigue contando solo lo que falta por atender hoy.
+  const arrivalsToday = recArrivalsToday.pending;
+  const departuresToday = recDeparturesToday.pending;
   const openConciergeRequests = cgRequests.filter((request) => !isClosedConcierge(request.status));
   const navBadge = (roleId: RoleId, label: string) => {
     if (roleId === 'housekeeping' && label === 'Habitaciones') {
@@ -1800,38 +1829,46 @@ function PrivateWorkspaceReady({
   const occupancyCount = recRoomList.filter((room) => room.status === 'Ocupada').length;
   const occupancyRate =
     recRoomList.length > 0 ? Math.round((occupancyCount / recRoomList.length) * 100) : 0;
-  const paymentsToday = recReservationList
-    .flatMap((reservation) => reservation.folio)
-    .filter((entry) => entry.date === today && entry.type === 'Pago' && entry.status === 'Activo');
-  const paymentsTodayTotal = paymentsToday.reduce((total, entry) => total + entry.amount, 0);
+  const recOccupancyPercent = getOccupancyPercent(occupancyCount, recRoomList.length);
+  // Solo pagos completados en el backend: los del folio local no cuentan.
+  const recPaymentsToday = summarizePaymentsForDay(recPayments, today);
   const currentMetrics =
     contentRole === 'reception'
       ? [
           {
             label: 'Ocupación actual',
-            value: `${occupancyRate}%`,
-            change: `${occupancyCount} de ${recRoomList.length} habitaciones ocupadas`,
+            value: recOccupancyPercent === null ? '—' : `${recOccupancyPercent}%`,
+            change:
+              recOccupancyPercent === null
+                ? 'Sin habitaciones registradas'
+                : `${occupancyCount} de ${recRoomList.length} habitaciones ocupadas`,
             icon: BedDouble,
             tone: 'sage',
           },
           {
-            label: 'Entradas de hoy',
-            value: String(arrivalsToday),
-            change: 'Reservas pendientes o confirmadas',
+            label: 'Llegadas de hoy',
+            value: String(recArrivalsToday.all.length),
+            change: `${recArrivalsToday.pending} por llegar · ${recArrivalsToday.done} con check-in`,
             icon: DoorOpen,
             tone: 'gold',
           },
           {
             label: 'Salidas de hoy',
-            value: String(departuresToday),
-            change: 'Huéspedes con check-in activo',
+            value: String(recDeparturesToday.all.length),
+            change: `${recDeparturesToday.pending} por salir · ${recDeparturesToday.done} con check-out`,
             icon: ClipboardList,
             tone: 'terracotta',
           },
           {
             label: 'Pagos de hoy',
-            value: formatGTQ(paymentsTodayTotal),
-            change: `${paymentsToday.length} pagos registrados`,
+            value:
+              recPaymentsToday === null
+                ? 'Sin datos'
+                : formatCurrency(recPaymentsToday.totalCents, 'GTQ'),
+            change:
+              recPaymentsToday === null
+                ? 'No hay acceso a los pagos registrados'
+                : `${recPaymentsToday.count} ${recPaymentsToday.count === 1 ? 'pago registrado' : 'pagos registrados'}`,
             icon: Wallet,
             tone: 'blue',
           },
@@ -2026,6 +2063,7 @@ function PrivateWorkspaceReady({
 
         if (contentRole === 'reception') {
           setRecReservationList(data.recReservations);
+          setRecPayments(data.recPayments);
           setRecRoomList(data.recRooms);
           setRecBlockList(data.recRoomBlocks);
         }
@@ -2100,6 +2138,7 @@ function PrivateWorkspaceReady({
     try {
       const data = await loadWorkspaceData(workspaceDataRole);
       setRecReservationList(data.recReservations);
+      setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
       setRecBlockList(data.recRoomBlocks);
       notify('Calendario actualizado');
@@ -2915,6 +2954,7 @@ function PrivateWorkspaceReady({
     try {
       const data = await loadWorkspaceData(workspaceDataRole);
       setRecReservationList(data.recReservations);
+      setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
     } catch (cause) {
       notifyError(cause);
@@ -2975,6 +3015,7 @@ function PrivateWorkspaceReady({
     try {
       const data = await loadWorkspaceData(workspaceDataRole);
       setRecReservationList(data.recReservations);
+      setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
     } catch (cause) {
       notifyError(cause);
@@ -3002,6 +3043,7 @@ function PrivateWorkspaceReady({
       await bookingService.assignRoom(res.bookingId, targetRoom.backendRoomId);
       const data = await loadWorkspaceData(workspaceDataRole);
       setRecReservationList(data.recReservations);
+      setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
       setRecShowRoomChange(null);
       notify(`Habitación ${newRoomNumber} asignada correctamente`);
@@ -3398,7 +3440,7 @@ function PrivateWorkspaceReady({
           <section className="welcome-row">
             <div>
               <p className="eyebrow">
-                {new Date().toLocaleDateString('es-MX', {
+                {new Date().toLocaleDateString('es-GT', {
                   weekday: 'long',
                   day: 'numeric',
                   month: 'long',
