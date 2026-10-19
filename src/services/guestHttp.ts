@@ -1,4 +1,4 @@
-import { HttpError } from './http-client';
+import { getControlledBackendMessage, HttpError } from './http-client';
 
 /**
  * Errores de las rutas `/guest/...` (INT-12). La reserva siempre sale del JWT de
@@ -7,7 +7,8 @@ import { HttpError } from './http-client';
  */
 export function guestErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
-  const backendMsg = (error.data as { message?: string } | undefined)?.message;
+  if (error.status >= 500) return error.message;
+  const backendMsg = getControlledBackendMessage(error.data);
   if (error.status === 401)
     return 'Tu acceso de huésped venció. Ingresa de nuevo tus credenciales.';
   if (error.status === 403) {

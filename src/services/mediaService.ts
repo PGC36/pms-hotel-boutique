@@ -119,8 +119,11 @@ export function validateImageFile(file: Pick<File, 'type' | 'size'>): string | n
 export function getMediaErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) {
     // fetch rechazado: red caída o backend apagado.
-    return error instanceof TypeError ? MEDIA_ERROR_MESSAGES.unavailable : fallback;
+    return error instanceof TypeError || error instanceof Error && error.message.startsWith('No pudimos conectar')
+      ? MEDIA_ERROR_MESSAGES.unavailable
+      : fallback;
   }
+  if (error.status >= 500 && error.status !== 503) return error.message;
   const message = backendMessage(error);
   switch (error.status) {
     case 400:

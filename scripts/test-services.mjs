@@ -70,6 +70,7 @@ await build({
       export { serviceRequestService } from './src/services/serviceRequestService';
       export { notificationService } from './src/services/notificationService';
       export { guestPortalService } from './src/services/guestPortalService';
+      export { catalogNameError } from './src/shared/utils/catalogName';
       export { mockUtils } from './src/services/mockUtils';
     `,
     resolveDir: '.',
@@ -123,8 +124,16 @@ const {
   serviceRequestService,
   notificationService,
   guestPortalService,
+  catalogNameError,
   mockUtils,
 } = require(require.resolve('../.cache/services-harness.cjs'));
+
+test('catalogos: acepta nombres legibles y rechaza texto aleatorio', () => {
+  assert.equal(catalogNameError('Limpieza completa'), null);
+  assert.equal(catalogNameError('Spa'), null);
+  assert.ok(catalogNameError('hcGCDS'));
+  assert.ok(catalogNameError('hbsahvbhjabvabaaksdvbvh'));
+});
 
 const reportingNow = '2026-10-02T12:00:00.000-06:00';
 const reportingBookingId = '11111111-1111-4111-8111-111111111111';
@@ -2775,6 +2784,38 @@ test('administracion: promociones, tarifas, inventario y caja persisten operacio
   assert.equal((await cashService.getMovements()).length, beforeCashMovements.length + 1);
 });
 
+test('promociones: valida inicio, rango y porcentaje antes de llamar a la API', async () => {
+  const validPromotion = {
+    code: 'BUENFIN10',
+    name: 'Buen fin',
+    description: '',
+    discount_percent: 10,
+    valid_from: '',
+    valid_to: '',
+  };
+
+  await assert.rejects(() => promotionService.createPromotion(validPromotion), /fecha de inicio/i);
+  await assert.rejects(
+    () =>
+      promotionService.createPromotion({
+        ...validPromotion,
+        valid_from: '2026-10-20',
+        valid_to: '2026-10-19',
+      }),
+    /fecha de fin no puede ser anterior/i,
+  );
+  await assert.rejects(
+    () =>
+      promotionService.createPromotion({
+        ...validPromotion,
+        valid_from: '2026-10-19',
+        valid_to: '2026-10-20',
+        discount_percent: 101,
+      }),
+    /entre 1 y 100/i,
+  );
+});
+
 test.skip('legacy mock: check-out local cerraba folio y ensuciaba habitacion', async () => {
   const overpaid = await assertServiceCall(
     'guestAccountService.getAccountByBookingId BKG-002',
@@ -3240,7 +3281,7 @@ test('orderService: el ciclo de Room Service va al backend y no crea cargos loca
 
   await assert.rejects(
     () => orderService.updateOrderStatus(created.id, 'delivered'),
-    /rechazó la operación/,
+    /No se pudo cambiar el estado/,
     'un pedido entregado es terminal: el backend decide',
   );
   assert.equal(
@@ -3298,7 +3339,7 @@ test('orderService: motivos y observaciones se guardan en el backend', async (t)
 
   await assert.rejects(
     () => orderService.updateOrderNotes(toReject.id, 'Otra nota'),
-    /rechazó la operación/,
+    /No se pudo cambiar el estado/,
     'un pedido terminal conserva su motivo',
   );
 
@@ -3309,6 +3350,43 @@ test('orderService: motivos y observaciones se guardan en el backend', async (t)
   );
   assert.equal(calls.at(-1).call, 'GET /room-service/orders?status=pending');
   assert.equal(await orderService.getOrderById('9c8b7a6d-0000-4000-8000-999999999999'), undefined);
+});
+
+test('orderService: explica claramente cuando el backend rechaza un pedido por falta de stock', async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = previousFetch));
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: 400,
+        message: 'Insufficient stock for product Club sándwich: available 1, requested 3',
+      }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    );
+
+  await assert.rejects(
+    () => orderService.updateOrderStatus(RS_PRODUCT_ID, 'delivered'),
+    /No hay stock suficiente de Club sándwich\. Disponibles: 1; solicitados: 3\./,
+  );
+});
+
+test('orderService: conserva un motivo controlado del backend ante un error 500', async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = previousFetch));
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: 500,
+        error: 'Internal Server Error',
+        message: 'La caja de esta reserva fue cerrada por otro usuario.',
+      }),
+      { status: 500, headers: { 'content-type': 'application/json' } },
+    );
+
+  await assert.rejects(
+    () => orderService.updateOrderStatus(RS_PRODUCT_ID, 'delivered'),
+    /La caja de esta reserva fue cerrada por otro usuario\./,
+  );
 });
 
 const CG_BOOKING_ID = '6d5c4b3a-0000-4000-8000-000000000001';
@@ -3718,7 +3796,7 @@ test('#126: mantenimiento usa /service-requests para crear, filtrar y cambiar es
   );
 });
 
-test('#126: listados financieros globales propagan el error real sin fallback', async (t) => {
+test('#126: listados financieros globales muestran errores comprensibles sin fallback vacio', async (t) => {
   const previousFetch = globalThis.fetch;
   t.after(() => (globalThis.fetch = previousFetch));
   const calls = [];
@@ -3731,14 +3809,14 @@ test('#126: listados financieros globales propagan el error real sin fallback', 
     });
   };
 
-  for (const [label, call, path] of [
-    ['getAccounts', () => guestAccountService.getAccounts(), '/guest-accounts'],
-    ['getCharges', () => guestAccountService.getCharges(), '/charges'],
-    ['getPayments', () => guestAccountService.getPayments(), '/payments'],
-    ['getDeposits', () => guestAccountService.getDeposits(), '/deposits'],
-    ['getRequests', () => serviceRequestService.getRequests(), '/service-requests'],
+  for (const [label, call, path, expectedMessage] of [
+    ['getAccounts', () => guestAccountService.getAccounts(), '/guest-accounts', /No tienes permisos para operar el folio/],
+    ['getCharges', () => guestAccountService.getCharges(), '/charges', /No tienes permisos para operar el folio/],
+    ['getPayments', () => guestAccountService.getPayments(), '/payments', /No tienes permisos para operar el folio/],
+    ['getDeposits', () => guestAccountService.getDeposits(), '/deposits', /No tienes permisos para operar el folio/],
+    ['getRequests', () => serviceRequestService.getRequests(), '/service-requests', /No tienes permisos para operar solicitudes/],
   ]) {
-    await assert.rejects(call, new RegExp(`Access denied: ${path}`), `${label} no devuelve []`);
+    await assert.rejects(call, expectedMessage, `${label} no devuelve [] ni filtra rutas internas`);
     assert.equal(calls.at(-1), path, `${label} consulta ${path}`);
   }
 });

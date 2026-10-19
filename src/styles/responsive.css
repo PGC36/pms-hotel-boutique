@@ -1,0 +1,615 @@
+/* Shared responsive behavior for the public site and back-office screens. */
+@media (max-width: 1200px) {
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+  }
+
+  body {
+    overflow-x: clip;
+  }
+
+  .main-area,
+  .content,
+  .panel,
+  .dashboard-grid > *,
+  .bottom-grid > *,
+  .hk-dashboard-grid > *,
+  .rs-layout > *,
+  .cg-layout > *,
+  .adm-dashboard-grid > *,
+  .adm-report-grid > * {
+    min-width: 0;
+  }
+
+  .hk-dashboard-grid,
+  .rs-layout,
+  .cg-layout,
+  .dashboard-grid,
+  .bottom-grid,
+  .adm-report-grid,
+  .adm-dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .content {
+    width: 100%;
+    padding: 24px 20px 32px;
+  }
+
+  .adm-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .adm-table {
+    min-width: 680px;
+  }
+
+  .visitor-header {
+    padding-inline: 24px;
+  }
+
+  .visitor-content,
+  .booking-experience {
+    width: min(calc(100% - 40px), 1100px);
+  }
+
+  .booking-search-panel {
+    width: min(calc(100% - 40px), 1060px);
+  }
+}
+
+@media (max-width: 680px) {
+  .visitor-content .room-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hk-room-grid,
+  .rs-menu-grid,
+  .rs-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hk-req-summary,
+  .rs-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hk-room-card,
+  .rs-order-card,
+  .rs-menu-item,
+  .rs-inventory-item,
+  .cg-room-group {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .hk-room-head,
+  .rs-order-head,
+  .cg-room-group-head {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .hk-room-head > *,
+  .hk-room-meta > *,
+  .rs-menu-item > *,
+  .rs-inventory-item > *,
+  .cg-room-group-item > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .rs-menu-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .hk-room-actions .button,
+  .rs-order-actions .button {
+    min-height: 40px;
+  }
+}
+
+@media (max-width: 420px) {
+  .metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .adm-cash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-cash-grid > .metric-card,
+  .adm-cash-grid .metric-card > div:last-child {
+    min-width: 0;
+  }
+
+  .adm-cash-grid .metric-card h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .visitor-page > .visitor-header {
+    position: relative;
+    top: auto;
+  }
+
+  .booking-search-page > .search-panel.booking-search-panel {
+    width: min(calc(100% - 24px), 480px);
+    max-width: none;
+    margin: -20px auto 0;
+    justify-self: center;
+  }
+
+  .modal-backdrop,
+  .modal-overlay {
+    width: 100vw;
+    max-width: 100vw;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    overflow-y: auto;
+  }
+
+  .modal,
+  .adm-modal,
+  .modal-dialog {
+    width: min(calc(100vw - 32px), 600px) !important;
+    max-width: 100%;
+    max-height: calc(100dvh - 32px);
+    margin: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .modal-backdrop > .modal,
+  .modal-backdrop > .adm-modal,
+  .modal-overlay > .modal,
+  .modal-overlay > .adm-modal {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: calc(100vw - 32px);
+  }
+
+  .adm-role-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-role-card,
+  .adm-role-head > div,
+  .adm-role-permission-group {
+    min-width: 0;
+  }
+
+  .adm-role-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .adm-role-head > div,
+  .adm-perm-item > span:last-child {
+    overflow-wrap: anywhere;
+  }
+
+  .adm-role-permission-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-perm-editor-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .adm-perm-bulk-actions {
+    width: 100%;
+  }
+
+  .adm-perm-bulk-actions .button {
+    flex: 1 1 140px;
+    height: auto;
+    min-height: 42px;
+    white-space: normal;
+  }
+
+  .adm-perm-toggle {
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+  }
+}
+
+@media (max-width: 600px) {
+  .main-area,
+  .content,
+  .panel,
+  .public-page-shell,
+  .public-page-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .content {
+    padding: 18px 12px 28px;
+  }
+
+  .topbar {
+    min-width: 0;
+    padding-inline: 12px;
+  }
+
+  .welcome-row,
+  .front-desk-header,
+  .rooms-header,
+  .occupancy-header {
+    min-width: 0;
+  }
+
+  .welcome-row h1,
+  .front-desk-header h1,
+  .rooms-header h1,
+  .occupancy-header h1 {
+    overflow-wrap: anywhere;
+    font-size: var(--font-size-3xl);
+  }
+
+  .welcome-actions,
+  .toolbar,
+  .adm-heading-actions,
+  .front-desk-actions,
+  .rooms-actions,
+  .occupancy-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .toolbar .search-box {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .panel-heading,
+  .adm-panel-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .room-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .room-stat {
+    min-width: 0;
+    padding: 10px;
+  }
+
+  .room-stat > div {
+    min-width: 0;
+  }
+
+  .room-stat small {
+    overflow-wrap: anywhere;
+  }
+
+  .panel-heading > button,
+  .adm-panel-heading > button {
+    align-self: flex-start;
+    max-width: 100%;
+  }
+
+  .modal-backdrop,
+  .modal-overlay {
+    width: 100vw;
+    max-width: 100vw;
+    align-items: center;
+    justify-content: center;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    overflow-y: auto;
+  }
+
+  .modal,
+  .adm-modal,
+  .modal-dialog {
+    width: min(calc(100vw - 24px), 560px) !important;
+    max-width: 100%;
+    max-height: calc(100dvh - 24px);
+    margin: auto;
+    padding: 18px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .modal-head,
+  .modal-header {
+    gap: 12px;
+  }
+
+  .modal-foot .button {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    height: auto;
+    padding-block: 10px;
+  }
+
+  .modal-foot {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .modal-foot .button {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .adm-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .adm-actions .button {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 44px;
+    height: auto;
+    padding-block: 10px;
+  }
+
+  .rs-inventory-modal .modal-foot .button {
+    width: 100%;
+  }
+
+  .modal-foot,
+  .adm-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .modal-foot .button,
+  .adm-actions .button {
+    min-height: 44px;
+  }
+
+  .modal-foot .button {
+    flex: 0 1 auto;
+    height: auto;
+    padding-block: 10px;
+  }
+
+  .adm-table-wrap {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .adm-table {
+    display: table;
+    min-width: 680px;
+    width: max-content;
+    max-width: none;
+  }
+
+  .adm-table thead {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  .adm-table tbody {
+    display: table-row-group;
+  }
+
+  .adm-table tbody tr {
+    display: table-row;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .adm-table td {
+    display: table-cell;
+    padding: 10px 12px;
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+
+  .adm-table td.adm-actions {
+    display: table-cell !important;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .adm-table td.adm-actions > * {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 0;
+    min-height: 40px;
+    margin: 0 6px 0 0;
+    vertical-align: middle;
+    flex: 0 0 auto !important;
+  }
+
+  .adm-table td.adm-actions .adm-status-switch {
+    width: 44px !important;
+    min-width: 44px;
+    height: 24px;
+    min-height: 24px;
+    margin-right: 0;
+  }
+
+  .adm-table td::before {
+    content: none !important;
+  }
+
+  .adm-table-main {
+    min-width: 220px;
+  }
+
+  .hk-dashboard-grid,
+  .rs-layout,
+  .cg-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hk-room-grid,
+  .rs-menu-grid,
+  .rs-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hk-req-summary,
+  .rs-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .notification-menu {
+    position: fixed;
+    top: 108px;
+    right: 12px;
+    width: min(380px, calc(100vw - 24px));
+    max-height: calc(100dvh - 124px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .notification-row {
+    min-width: 0;
+  }
+
+  .notification-row > span:last-child,
+  .notification-row strong,
+  .notification-row small {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .visitor-page > .visitor-header {
+    position: relative;
+    top: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
+    padding: 10px 14px;
+  }
+
+  .visitor-brand,
+  .visitor-auth,
+  .visitor-tabs {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .visitor-tabs {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .visitor-tab {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+  .visitor-hero {
+    margin-top: 0;
+    padding: 36px 20px 44px;
+  }
+
+  .visitor-hero h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .booking-search-page {
+    gap: 0;
+  }
+
+  .booking-search-panel,
+  .visitor-content,
+  .booking-experience {
+    width: calc(100% - 24px);
+  }
+
+  .booking-search-panel {
+    margin-top: -20px;
+    padding: 16px;
+  }
+
+  .booking-search-panel .search-title,
+  .booking-search-panel .search-fields {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .booking-search-panel .search-fields {
+    align-items: stretch;
+  }
+
+  .booking-search-panel label {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .booking-amenity-grid,
+  .booking-promo-grid,
+  .booking-experience-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .booking-policy-section {
+    padding: 18px;
+  }
+
+  .booking-roomtype-card,
+  .booking-detail-heading,
+  .booking-confirmation-heading {
+    min-width: 0;
+  }
+
+  .booking-roomtype-card > *,
+  .booking-detail-page,
+  .booking-confirmation-page {
+    min-width: 0;
+  }
+
+  .public-page-shell {
+    min-height: 100dvh;
+    padding: 16px;
+  }
+
+  .public-page-card {
+    padding: 22px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visitor-header,
+  .sidebar,
+  .modal-overlay,
+  .modal-backdrop {
+    scroll-behavior: auto;
+    transition-duration: 0.01ms !important;
+  }
+}

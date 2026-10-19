@@ -20,7 +20,7 @@ import {
 } from '@/shared/types/entities/room-type';
 import type { ID } from '@/shared/types/common';
 import { mockUtils, simulateLatency } from './mockUtils';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import {
   describeImageAssignmentError,
   toImagesRequest,
@@ -218,8 +218,11 @@ function toRateRequest(data: SaveRateDto | Partial<SaveRateDto>) {
 
 function getHttpErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
+  if (error.status >= 500) return error.message;
   const imageMessage = describeImageAssignmentError(error);
   if (imageMessage) return imageMessage;
+  const backendMessage = getControlledBackendMessage(error.data);
+  if (backendMessage) return backendMessage;
   if (error.status === 400) return `${fallback} Revisa los datos enviados.`;
   if (error.status === 401) return 'Tu sesion expiro. Inicia sesion nuevamente.';
   if (error.status === 403) return 'No tienes permisos para operar habitaciones, tipos o tarifas.';

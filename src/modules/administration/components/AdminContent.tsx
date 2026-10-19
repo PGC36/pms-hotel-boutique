@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import {
   Activity,
   ArrowRight,
@@ -19,6 +28,7 @@ import {
   Search,
   Sparkles,
   Star,
+  Trash2,
   TriangleAlert,
   TrendingUp,
   Users as UsersIcon,
@@ -40,8 +50,9 @@ import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
 import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
-import { HttpError } from '@/services/http-client';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { ConciergeCatalogPanel } from './ConciergeCatalogPanel';
 import { HousekeepingCatalogPanel } from './HousekeepingCatalogPanel';
 import { HousekeepingChecklistTemplatePanel } from './HousekeepingChecklistTemplatePanel';
@@ -49,6 +60,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { ImageGalleryField } from '@/shared/components/ImageGalleryField';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { toDtoCalendarDate } from '@/shared/types/common';
+import { catalogNameError } from '@/shared/utils/catalogName';
 import { formatAmenitySchedule, parseAmenityScheduleInput } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
@@ -78,7 +90,8 @@ import {
   type MediaImage,
   type MediaImageAssignmentDto,
 } from '@/shared/types/entities/media-image';
-import type { Product } from '@/shared/types/entities/product';
+import type { Product, ProductDto } from '@/shared/types/entities/product';
+import type { RoomFeature } from '@/shared/types/entities/room-feature';
 import type { Role } from '@/shared/types/entities/role';
 import type { Room, RoomStatusDto } from '@/shared/types/entities/room';
 import type { RoomType } from '@/shared/types/entities/room-type';
@@ -169,8 +182,9 @@ type RoomServiceItem = {
   dbId: string;
   name: string;
   description: string;
-  /** Etiqueta de la categoría real del producto (solo lectura en este modal). */
+  /** Etiqueta y valor persistido de la categoría real del producto. */
   category: string;
+  categoryCode: Product['category'];
   price: number;
   available: boolean;
   status: 'Activo' | 'Inactivo';
@@ -677,12 +691,20 @@ const PRODUCT_CATEGORY_LABELS: Record<Product['category'], string> = {
   other: 'Otros',
 };
 
+const PRODUCT_CATEGORY_DTO: Record<Product['category'], ProductDto['category']> = {
+  foodAndBeverage: 'food_and_beverage',
+  minibar: 'minibar',
+  shop: 'shop',
+  other: 'other',
+};
+
 const adminProductFromDomain = (product: Product, index: number): RoomServiceItem => ({
   id: parseDbId(product.id, index + 1),
   dbId: product.id,
   name: product.name,
   description: product.description ?? '',
   category: PRODUCT_CATEGORY_LABELS[product.category] ?? product.category,
+  categoryCode: product.category,
   price: centsToAmount(product.priceCents),
   available: product.active,
   status: product.active ? 'Activo' : 'Inactivo',
@@ -700,13 +722,7 @@ const productSkuFromName = (name: string) => {
 };
 
 const serviceErrorMessage = (error: unknown) => {
-  if (error instanceof HttpError && error.data && typeof error.data === 'object') {
-    const data = error.data as { message?: unknown; error?: unknown; detail?: unknown };
-    if (typeof data.message === 'string' && data.message.trim()) return data.message;
-    if (typeof data.detail === 'string' && data.detail.trim()) return data.detail;
-    if (typeof data.error === 'string' && data.error.trim()) return data.error;
-  }
-  return error instanceof Error ? error.message : 'No fue posible completar la operacion.';
+  return getUserFacingErrorMessage(error, 'No fue posible completar la operación.');
 };
 
 /**
@@ -1016,12 +1032,31 @@ function AdminModal({
         ) : null}
         {onSubmit && (
           <div className="modal-foot">
-            <button className="button secondary" onClick={close} disabled={submitting}>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={close}
+              disabled={submitting}
+            >
               Cancelar
             </button>
             <button
+              type="button"
               className="button primary"
-              onClick={onSubmit}
+              onClick={(event) => {
+                const fields = event.currentTarget
+                  .closest('.adm-modal')
+                  ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+                    'input, select, textarea',
+                  );
+                for (const field of fields ?? []) {
+                  if (!field.checkValidity()) {
+                    field.reportValidity();
+                    return;
+                  }
+                }
+                onSubmit?.();
+              }}
               disabled={submitting}
               aria-busy={submitting || undefined}
             >
@@ -1086,6 +1121,17 @@ function AdminToolbar({
 }
 
 function AdminTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
+  const labeledRows = Children.map(children, (row) => {
+    if (!isValidElement<{ children?: ReactNode }>(row) || row.type !== 'tr') return row;
+
+    const cells = Children.map(row.props.children, (cell, index) => {
+      if (!isValidElement(cell) || cell.type !== 'td') return cell;
+      return cloneElement(cell, { 'data-label': headers[index] } as typeof cell.props);
+    });
+
+    return cloneElement(row as ReactElement<{ children?: ReactNode }>, { children: cells });
+  });
+
   return (
     <div className="adm-table-wrap">
       <table className="adm-table">
@@ -1096,7 +1142,7 @@ function AdminTable({ headers, children }: { headers: string[]; children: React.
             ))}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody>{labeledRows}</tbody>
       </table>
     </div>
   );
@@ -1219,6 +1265,7 @@ type AdminData = {
   roles: AdminRole[];
   rooms: AdminRoom[];
   roomTypes: AdminRoomType[];
+  roomFeatures: RoomFeature[];
   seasonRates: SeasonRate[];
   promos: Promo[];
   amenities: Amenity[];
@@ -1241,9 +1288,7 @@ type OperationalReportState =
   | { status: 'ready'; data: OperationalReport };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error
-    ? cause.message
-    : 'No fue posible cargar el panel de administración.';
+  return getUserFacingErrorMessage(cause, 'No fue posible cargar el panel de administración.');
 }
 
 function buildAuditEntries(logs: AuditLog[], users: User[]): AuditEntry[] {
@@ -1383,9 +1428,7 @@ export function AdminContent({
 
         const amenities: Amenity[] = amenitiesData.map(adminAmenityFromDomain);
 
-        const roomServiceItems: RoomServiceItem[] = products
-          .filter((product: Product) => product.category === 'foodAndBeverage')
-          .map(adminProductFromDomain);
+        const roomServiceItems: RoomServiceItem[] = products.map(adminProductFromDomain);
 
         const inventory: InventoryProduct[] = inventoryItems.map((item, index) => {
           const product = products.find((productItem) => productItem.id === item.productId);
@@ -1443,6 +1486,7 @@ export function AdminContent({
             roles: adminRoles,
             rooms: adminRooms,
             roomTypes: adminRoomTypes,
+            roomFeatures,
             seasonRates,
             promos,
             amenities,
@@ -1506,6 +1550,7 @@ export function AdminContent({
       initialAdminRoles={screen.roles}
       initialAdminRooms={screen.rooms}
       initialAdminRoomTypes={screen.roomTypes}
+      initialRoomFeatures={screen.roomFeatures}
       initialSeasonRates={screen.seasonRates}
       initialPromos={screen.promos}
       initialAmenities={screen.amenities}
@@ -1531,6 +1576,7 @@ function AdminContentReady({
   initialAdminRoles,
   initialAdminRooms,
   initialAdminRoomTypes,
+  initialRoomFeatures,
   initialSeasonRates,
   initialPromos,
   initialAmenities,
@@ -1552,6 +1598,7 @@ function AdminContentReady({
   initialAdminRoles: AdminRole[];
   initialAdminRooms: AdminRoom[];
   initialAdminRoomTypes: AdminRoomType[];
+  initialRoomFeatures: RoomFeature[];
   initialSeasonRates: SeasonRate[];
   initialPromos: Promo[];
   initialAmenities: Amenity[];
@@ -1568,10 +1615,13 @@ function AdminContentReady({
   const [roles, setRoles] = useState(initialAdminRoles);
   const [rooms, setRooms] = useState(initialAdminRooms);
   const [roomTypes, setRoomTypes] = useState(initialAdminRoomTypes);
+  const [roomFeatures] = useState(initialRoomFeatures);
   const [seasonRates, setSeasonRates] = useState(initialSeasonRates);
   const [promos, setPromos] = useState(initialPromos);
   const [amenities, setAmenities] = useState(initialAmenities);
   const [rsItems, setRsItems] = useState(initialRoomServiceItems);
+  const [deletingRsId, setDeletingRsId] = useState<string | null>(null);
+  const [pendingDeleteRsItem, setPendingDeleteRsItem] = useState<RoomServiceItem | null>(null);
   const [inventory, setInventory] = useState(initialInventory);
   const [movements, setMovements] = useState(initialMovements);
   const [cashMovements, setCashMovements] = useState(initialCashMovements);
@@ -1651,6 +1701,11 @@ function AdminContentReady({
     setSearch('');
     setFilter('Todos');
   };
+
+  useEffect(() => {
+    setSearch('');
+    setFilter('Todos');
+  }, [nav]);
 
   const notifyError = (cause: unknown) => {
     onAction(getErrorMessage(cause));
@@ -1899,7 +1954,7 @@ function AdminContentReady({
               <button
                 className="text-button"
                 onClick={() => {
-                  if (onNavigate) onNavigate('Reportes');
+                  if (onNavigate) onNavigate('Resumen operativo');
                   else onAction('Reportes seleccionado');
                 }}
               >
@@ -2016,7 +2071,7 @@ function AdminContentReady({
               <button
                 className="button small secondary"
                 onClick={() => {
-                  if (onNavigate) onNavigate('Habitaciones');
+                  if (onNavigate) onNavigate('Gestión de habitaciones');
                   else onAction('Habitaciones seleccionado');
                 }}
               >
@@ -2275,6 +2330,7 @@ function AdminContentReady({
                   email: u.email,
                   roleId: roleIdFromDisplay(roles, u.role),
                   status: u.status === 'Activo' ? 'active' : 'inactive',
+                  ...(u.password?.trim() ? { password: u.password } : {}),
                 } as const;
                 let saved = editUser
                   ? await personnelService.updateUser(editUser.dbId, payload)
@@ -2371,7 +2427,16 @@ function AdminContentReady({
       const ms = `${r.number} ${r.floor} ${r.type} ${r.status}`
         .toLowerCase()
         .includes(search.toLowerCase());
-      const mf = filter === 'Todos' || r.status === filter || r.type === filter;
+      const normalize = (value: string) =>
+        value
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLocaleLowerCase('es');
+      const selectedFilter = normalize(filter);
+      const mf =
+        filter === 'Todos' ||
+        normalize(r.status) === selectedFilter ||
+        normalize(r.type).includes(selectedFilter);
       return ms && mf;
     });
     return (
@@ -2634,6 +2699,7 @@ function AdminContentReady({
         {showRoomTypeModal && (
           <RoomTypeModal
             roomType={editRoomType}
+            roomFeatures={roomFeatures}
             onClose={() => setShowRoomTypeModal(false)}
             onSave={async (rt, images) => {
               if (editRoomType) {
@@ -2641,7 +2707,7 @@ function AdminContentReady({
                   name: rt.name,
                   description: rt.description,
                   capacity: rt.capacity,
-                  bed_configuration: editRoomType.features.join(', ') || rt.name,
+                  bed_configuration: rt.features.join(', ') || rt.name,
                   room_feature_ids: rt.roomFeatureIds,
                   active: rt.status === 'Activo',
                   images,
@@ -3166,6 +3232,16 @@ function AdminContentReady({
                           })();
                         }}
                       />
+                      <button
+                        className="icon-btn danger"
+                        type="button"
+                        aria-label={`Eliminar ${item.name} del catálogo`}
+                        title="Eliminar del catálogo"
+                        disabled={deletingRsId === item.dbId}
+                        onClick={() => setPendingDeleteRsItem(item)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -3216,6 +3292,29 @@ function AdminContentReady({
             }}
           />
         )}
+        <ConfirmDialog
+          open={pendingDeleteRsItem !== null}
+          title="Eliminar producto de Room Service"
+          description={`¿Seguro que quieres eliminar “${pendingDeleteRsItem?.name ?? ''}” del catálogo? Se conservará en el historial de pedidos.`}
+          pending={pendingDeleteRsItem !== null && deletingRsId === pendingDeleteRsItem.dbId}
+          onClose={() => setPendingDeleteRsItem(null)}
+          onConfirm={async () => {
+            if (!pendingDeleteRsItem) return;
+            setDeletingRsId(pendingDeleteRsItem.dbId);
+            try {
+              await catalogService.deleteAdminProduct(pendingDeleteRsItem.dbId);
+              setRsItems((current) =>
+                current.filter((entry) => entry.dbId !== pendingDeleteRsItem.dbId),
+              );
+              setPendingDeleteRsItem(null);
+              onAction('Producto eliminado del catálogo; se conserva en el historial.');
+            } catch (error) {
+              onAction(serviceErrorMessage(error));
+            } finally {
+              setDeletingRsId(null);
+            }
+          }}
+        />
         {showRsItemModal && (
           <RsItemModal
             item={editRsItem}
@@ -3226,8 +3325,8 @@ function AdminContentReady({
                 sku: editRsItem?.dbId ? undefined : productSkuFromName(item.name),
                 name: item.name,
                 description: item.description,
-                // Al editar se conserva la categoría guardada; uno nuevo del menú es de alimentos y bebidas.
-                category: editRsItem ? undefined : ('food_and_beverage' as const),
+                // La categoría seleccionada se mantiene tanto al crear como al editar.
+                category: PRODUCT_CATEGORY_DTO[item.categoryCode],
                 priceCents: amountToCents(item.price),
                 currency: 'GTQ' as const,
                 active: item.status === 'Activo',
@@ -3238,7 +3337,7 @@ function AdminContentReady({
                 : await catalogService.createAdminProduct({
                     ...payload,
                     sku: payload.sku ?? productSkuFromName(item.name),
-                    category: 'food_and_beverage',
+                    category: PRODUCT_CATEGORY_DTO[item.categoryCode],
                   });
               setRsItems((current) =>
                 editRsItem
@@ -3379,7 +3478,7 @@ function AdminContentReady({
                         {officialReport ? officialReport.occupancyNights : `${occupancyPercent}%`}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API' : 'Datos actuales'}
+                        {officialReport ? 'Datos del periodo' : 'Datos actuales'}
                       </span>
                     </div>
                   </div>
@@ -3397,7 +3496,7 @@ function AdminContentReady({
                             : 'Sin ocupacion'}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API no expone tendencia' : reportFilter}
+                        {officialReport ? 'Tendencia no disponible' : reportFilter}
                       </span>
                     </div>
                   </div>
@@ -3426,7 +3525,7 @@ function AdminContentReady({
                       <p>Ingresos del periodo</p>
                       <h2>{money(totalIncome)}</h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API' : 'Caja registrada'}
+                        {officialReport ? 'Datos del periodo' : 'Caja registrada'}
                       </span>
                     </div>
                   </div>
@@ -3444,7 +3543,7 @@ function AdminContentReady({
                             : money(0)}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API no expone cortes' : reportFilter}
+                        {officialReport ? 'Sin cortes disponibles' : reportFilter}
                       </span>
                     </div>
                   </div>
@@ -3484,7 +3583,7 @@ function AdminContentReady({
                     <div>
                       <p>Cancelaciones</p>
                       <h2>{cancelledReservations}</h2>
-                      <span>{officialReport ? 'Reporting API' : 'Datos actuales'}</span>
+                      <span>{officialReport ? 'Datos del periodo' : 'Datos actuales'}</span>
                     </div>
                   </div>
                   <div className="metric-card">
@@ -4099,7 +4198,7 @@ function UserModal({
           dbId: user?.dbId ?? '',
           name,
           email,
-          password: user ? undefined : password,
+          password: password.trim() ? password : undefined,
           role,
           status,
           lastAccess: user?.lastAccess ?? 'Sin acceso',
@@ -4111,6 +4210,10 @@ function UserModal({
         Nombre completo
         <input
           className="hk-form-select"
+          required
+          minLength={2}
+          maxLength={100}
+          pattern="[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.'’ -]{1,99}"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Nombre del usuario"
@@ -4120,6 +4223,9 @@ function UserModal({
         Correo electrónico
         <input
           className="hk-form-select"
+          type="email"
+          required
+          maxLength={254}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="correo@aurorahotel.com"
@@ -4135,18 +4241,19 @@ function UserModal({
           ))}
         </select>
       </label>
-      {!user && (
-        <label className="hk-form-label">
-          Contrasena temporal
-          <input
-            className="hk-form-select"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Contrasena inicial"
-          />
-        </label>
-      )}
+      <label className="hk-form-label">
+        {user ? 'Nueva contraseña (opcional)' : 'Contraseña temporal'}
+        <input
+          className="hk-form-select"
+          type="password"
+          value={password}
+          minLength={8}
+          required={!user}
+          autoComplete="new-password"
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={user ? 'Dejar en blanco para conservarla' : 'Mínimo 8 caracteres'}
+        />
+      </label>
       <label className="hk-form-label">
         Estado
         <select
@@ -4320,7 +4427,7 @@ function RoomModal({
           capacity,
           rate,
           status,
-          features: room?.features ?? ['Cama king', 'Wi-Fi', 'Desayuno'],
+          features: selectedRoomType?.features ?? room?.features ?? [],
         })
       }
       submitLabel={room ? 'Guardar cambios' : 'Crear habitación'}
@@ -4330,6 +4437,9 @@ function RoomModal({
           Número
           <input
             className="hk-form-select"
+            required
+            maxLength={20}
+            pattern="[A-Za-z0-9-]+"
             value={number}
             onChange={(e) => setNumber(e.target.value)}
             placeholder="Ej. 101"
@@ -4339,6 +4449,8 @@ function RoomModal({
           Piso
           <input
             className="hk-form-select"
+            required
+            maxLength={30}
             value={floor}
             onChange={(e) => setFloor(e.target.value)}
             placeholder="Ej. Piso 1"
@@ -4359,6 +4471,9 @@ function RoomModal({
           <input
             className="hk-form-select"
             type="number"
+            min={1}
+            max={20}
+            required
             value={capacity}
             onChange={(e) => setCapacity(Number(e.target.value))}
           />
@@ -4368,6 +4483,9 @@ function RoomModal({
           <input
             className="hk-form-select"
             type="number"
+            min={0}
+            step="0.01"
+            required
             value={rate}
             onChange={(e) => setRate(Number(e.target.value))}
           />
@@ -4386,16 +4504,22 @@ function RoomModal({
           </select>
         </label>
       </div>
+      <p className="adm-room-feature-note">
+        Las características se configuran en Tipos de habitación y se comparten entre las
+        habitaciones de ese tipo.
+      </p>
     </AdminModal>
   );
 }
 
 function RoomTypeModal({
   roomType,
+  roomFeatures,
   onClose,
   onSave,
 }: {
   roomType: AdminRoomType | null;
+  roomFeatures: RoomFeature[];
   onClose: () => void;
   onSave: (rt: AdminRoomType, images: MediaImageAssignmentDto[]) => Promise<void>;
 }) {
@@ -4404,6 +4528,9 @@ function RoomTypeModal({
   const [description, setDescription] = useState(roomType?.description ?? '');
   const [basePrice, setBasePrice] = useState(roomType?.basePrice ?? 1850);
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(roomType?.status ?? 'Activo');
+  const [selectedFeatureIds, setSelectedFeatureIds] = useState<string[]>(
+    roomType?.roomFeatureIds ?? [],
+  );
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(roomType?.images ?? []),
   );
@@ -4425,8 +4552,10 @@ function RoomTypeModal({
               name,
               capacity,
               description,
-              roomFeatureIds: roomType?.roomFeatureIds ?? [],
-              features: roomType?.features ?? ['Cama king', 'Wi-Fi'],
+              roomFeatureIds: selectedFeatureIds,
+              features: roomFeatures
+                .filter((feature) => selectedFeatureIds.includes(feature.id))
+                .map((feature) => feature.name),
               basePrice,
               status,
               images: roomType?.images ?? [],
@@ -4442,6 +4571,10 @@ function RoomTypeModal({
           Nombre
           <input
             className="hk-form-select"
+            required
+            minLength={2}
+            maxLength={80}
+            pattern="[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9'’ -]{1,79}"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Deluxe"
@@ -4452,6 +4585,9 @@ function RoomTypeModal({
           <input
             className="hk-form-select"
             type="number"
+            min={1}
+            max={20}
+            required
             value={capacity}
             onChange={(e) => setCapacity(Number(e.target.value))}
           />
@@ -4466,12 +4602,40 @@ function RoomTypeModal({
           placeholder="Descripción del tipo de habitación"
         />
       </label>
+      <fieldset className="adm-room-feature-picker">
+        <legend>Características</legend>
+        {roomFeatures.length === 0 ? (
+          <p className="muted">No hay características configuradas.</p>
+        ) : (
+          <div>
+            {roomFeatures.map((feature) => (
+              <label key={feature.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedFeatureIds.includes(feature.id)}
+                  onChange={(event) =>
+                    setSelectedFeatureIds((current) =>
+                      event.target.checked
+                        ? [...current, feature.id]
+                        : current.filter((id) => id !== feature.id),
+                    )
+                  }
+                />
+                <span>{feature.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </fieldset>
       <div className="rc-form-grid">
         <label className="hk-form-label">
           Precio base
           <input
             className="hk-form-select"
             type="number"
+            min={0}
+            step="0.01"
+            required
             value={basePrice}
             onChange={(e) => setBasePrice(Number(e.target.value))}
           />
@@ -4682,6 +4846,10 @@ function PromoModal({
           Nombre
           <input
             className="hk-form-select"
+            required
+            minLength={2}
+            maxLength={100}
+            pattern="[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ -]{1,99}"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Estancia extendida"
@@ -4691,6 +4859,9 @@ function PromoModal({
           Código
           <input
             className="hk-form-select"
+            required
+            minLength={2}
+            maxLength={50}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Ej. AURORA15"
@@ -4701,6 +4872,10 @@ function PromoModal({
           <input
             className="hk-form-select"
             type="number"
+            required
+            min={1}
+            max={100}
+            step={1}
             value={percentage}
             onChange={(e) => setPercentage(Number(e.target.value))}
           />
@@ -4721,6 +4896,8 @@ function PromoModal({
           <input
             className="hk-form-select"
             type="date"
+            required
+            max={endDate || undefined}
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
           />
@@ -4730,6 +4907,7 @@ function PromoModal({
           <input
             className="hk-form-select"
             type="date"
+            min={startDate || undefined}
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
           />
@@ -4760,7 +4938,8 @@ function AmenityModal({
   const [name, setName] = useState(amenity?.name ?? '');
   const [description, setDescription] = useState(amenity?.description ?? '');
   const [category, setCategory] = useState<AmenityCategory>(amenity?.category ?? 'hotel');
-  const [schedule, setSchedule] = useState(amenity?.schedule ?? '');
+  const [opensAt, setOpensAt] = useState(() => amenity?.schedule.split(' - ')[0] ?? '');
+  const [closesAt, setClosesAt] = useState(() => amenity?.schedule.split(' - ')[1] ?? '');
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(amenity?.status ?? 'Activo');
   const [icon, setIcon] = useState(amenity?.icon ?? 'Sparkles');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
@@ -4783,7 +4962,7 @@ function AmenityModal({
               name,
               description,
               category,
-              schedule,
+              schedule: opensAt || closesAt ? `${opensAt} - ${closesAt}` : '',
               // La disponibilidad sale del estado: el backend solo guarda `active`.
               available: status === 'Activo',
               status,
@@ -4801,8 +4980,17 @@ function AmenityModal({
           Nombre
           <input
             className="hk-form-select"
+            required
+            minLength={2}
+            maxLength={120}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              e.currentTarget.setCustomValidity('');
+            }}
+            onBlur={(e) =>
+              e.currentTarget.setCustomValidity(catalogNameError(e.target.value) ?? '')
+            }
             placeholder="Ej. Piscina"
           />
         </label>
@@ -4819,18 +5007,34 @@ function AmenityModal({
           </select>
         </label>
         <label className="hk-form-label">
-          Horario
+          Abre
           <input
             className="hk-form-select"
-            value={schedule}
-            onChange={(e) => setSchedule(e.target.value)}
-            placeholder="Ej. 07:00 - 21:00"
+            type="time"
+            step={60}
+            value={opensAt}
+            required={Boolean(closesAt)}
+            max={closesAt || undefined}
+            onChange={(e) => setOpensAt(e.target.value)}
             aria-describedby="amenity-schedule-help"
           />
-          <small id="amenity-schedule-help" className="adm-field-help">
-            Formato HH:mm - HH:mm. Déjalo vacío si está disponible todo el día.
-          </small>
         </label>
+        <label className="hk-form-label">
+          Cierra
+          <input
+            className="hk-form-select"
+            type="time"
+            step={60}
+            value={closesAt}
+            required={Boolean(opensAt)}
+            min={opensAt || undefined}
+            onChange={(e) => setClosesAt(e.target.value)}
+            aria-describedby="amenity-schedule-help"
+          />
+        </label>
+        <small id="amenity-schedule-help" className="adm-field-help">
+          Elige ambas horas o déjalas vacías si está disponible todo el día.
+        </small>
         <label className="hk-form-label">
           Ícono
           <select className="hk-form-select" value={icon} onChange={(e) => setIcon(e.target.value)}>
@@ -4889,6 +5093,9 @@ function RsItemModal({
 }) {
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
+  const [categoryCode, setCategoryCode] = useState<Product['category']>(
+    item?.categoryCode ?? 'foodAndBeverage',
+  );
   const [price, setPrice] = useState(item?.price ?? 0);
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(item?.status ?? 'Activo');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
@@ -4910,7 +5117,8 @@ function RsItemModal({
               dbId: item?.dbId ?? '',
               name,
               description,
-              category: item?.category ?? 'Alimentos y bebidas',
+              category: PRODUCT_CATEGORY_LABELS[categoryCode],
+              categoryCode,
               price,
               // La disponibilidad sale del estado: el backend solo guarda `active`.
               available: status === 'Activo',
@@ -4928,8 +5136,17 @@ function RsItemModal({
           Nombre
           <input
             className="hk-form-select"
+            required
+            minLength={2}
+            maxLength={120}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              e.currentTarget.setCustomValidity('');
+            }}
+            onBlur={(e) =>
+              e.currentTarget.setCustomValidity(catalogNameError(e.target.value) ?? '')
+            }
             placeholder="Ej. Desayuno Aurora"
           />
         </label>
@@ -4938,6 +5155,9 @@ function RsItemModal({
           <input
             className="hk-form-select"
             type="number"
+            min={0}
+            step="0.01"
+            required
             value={price}
             onChange={(e) => setPrice(Number(e.target.value))}
           />
@@ -4951,6 +5171,20 @@ function RsItemModal({
           >
             <option value="Activo">Activo</option>
             <option value="Inactivo">Inactivo</option>
+          </select>
+        </label>
+        <label className="hk-form-label">
+          Categoría
+          <select
+            className="hk-form-select"
+            value={categoryCode}
+            onChange={(event) => setCategoryCode(event.target.value as Product['category'])}
+          >
+            {Object.entries(PRODUCT_CATEGORY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
       </div>

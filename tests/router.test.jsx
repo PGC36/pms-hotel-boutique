@@ -8,6 +8,8 @@ import { RoomListScreen } from '@/modules/rooms/screens/RoomListScreen';
 import { RoomTypeListScreen } from '@/modules/rooms/screens/RoomTypeListScreen';
 import { OccupancyScreen } from '@/modules/occupancy/screens/OccupancyScreen';
 import { PrivateSessionWorkspace } from '@/private/workspace/PrivateSessionWorkspace';
+import { RequirePermission } from '@/private/guards/RequirePermission';
+import { PmsSubrouteBoundary } from '@/private/guards/PmsSubrouteBoundary';
 
 /**
  * React Router no rechaza dos rutas hijas con el mismo `path`: cuando
@@ -55,19 +57,33 @@ function leafElementType(pathname) {
   return matches[matches.length - 1].route.element?.type;
 }
 
+function leafElement(pathname) {
+  const matches = matchRoutes(configuredRouter.routes, pathname);
+  return matches?.[matches.length - 1].route.element;
+}
+
 test('rooms, tipos de habitación y ocupación resuelven a su pantalla real, no al placeholder', () => {
   assert.equal(leafElementType('/pms/rooms'), RoomListScreen);
   assert.equal(leafElementType('/pms/room-types'), RoomTypeListScreen);
   assert.equal(leafElementType('/pms/occupancy'), OccupancyScreen);
 });
 
-test('recepción abre su workspace al entrar directamente, no la pantalla diaria antigua', () => {
-  assert.equal(leafElementType('/pms/reception'), PrivateSessionWorkspace);
+test('recepción abre su workspace protegido al entrar directamente', () => {
+  const element = leafElement('/pms/reception');
+  assert.equal(element.type, RequirePermission);
+  assert.equal(element.props.permission, 'reception:view');
+  assert.equal(element.props.children.type, PrivateSessionWorkspace);
 });
 
 test('los módulos web de Ronda 1 sin pantalla propia todavía siguen mostrando el placeholder', () => {
   assert.equal(leafElementType('/pms/cash'), ModuleHomePage);
   assert.equal(leafElementType('/pms/users'), ModuleHomePage);
+});
+
+test('rutas anidadas de otro módulo pasan por el límite de permisos', () => {
+  assert.equal(leafElementType('/pms/reception/admin'), PmsSubrouteBoundary);
+  assert.equal(leafElementType('/pms/reception/roomservice'), PmsSubrouteBoundary);
+  assert.equal(leafElementType('/pms/housekeeping/room-service/orders'), PmsSubrouteBoundary);
 });
 
 /**
@@ -76,7 +92,14 @@ test('los módulos web de Ronda 1 sin pantalla propia todavía siguen mostrando 
  * internos por rol.
  */
 test('limpieza, room service y conserjeria resuelven al workspace privado dedicado', () => {
-  assert.equal(leafElementType('/pms/housekeeping'), PrivateSessionWorkspace);
-  assert.equal(leafElementType('/pms/room-service'), PrivateSessionWorkspace);
-  assert.equal(leafElementType('/pms/concierge'), PrivateSessionWorkspace);
+  for (const [path, permission] of [
+    ['/pms/housekeeping', 'housekeeping:view'],
+    ['/pms/room-service', 'room-service:view'],
+    ['/pms/concierge', 'concierge:view'],
+  ]) {
+    const element = leafElement(path);
+    assert.equal(element.type, RequirePermission);
+    assert.equal(element.props.permission, permission);
+    assert.equal(element.props.children.type, PrivateSessionWorkspace);
+  }
 });

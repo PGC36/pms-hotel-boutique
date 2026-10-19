@@ -38,9 +38,91 @@ export class HttpError extends Error {
     public readonly statusText: string,
     public readonly data?: unknown,
   ) {
-    super(`HTTP ${status}: ${statusText}`);
+    super(getUserFacingHttpErrorMessage(status, data));
     this.name = 'HttpError';
   }
+}
+
+const TECHNICAL_ERROR_TEXT =
+  /^(?:http\s*\d{3}|(?:type|reference|syntax|range|uri|aggregate)?error:|internal server error|internal error|bad gateway|service unavailable|gateway timeout|bad request|forbidden|unauthorized|access denied|not authorized|authentication required|not found|conflict|unprocessable entity|(?:an? )?unexpected error occurred|(?:an? )?error occurred while processing the request|something went wrong|fetch failed|networkerror|request failed with status code|cannot (?:read|access) properties of|unexpected token|invalid .* (?:character|json|token))|\b(?:access denied:\s*\/|endpoint not found|no handler found for|exception|stacktrace|stack trace|sqlstate|hibernate|jdbc|org\.springframework|java\.[a-z]+\.|could not execute|failed to execute|constraint violation|transaction rollback| at [\w$.]+\()/i;
+
+function isSafeBackendMessage(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const message = value.trim();
+  return (
+    message.length > 0 &&
+    message.length <= 500 &&
+    !TECHNICAL_ERROR_TEXT.test(message) &&
+    !/[<>]/.test(message)
+  );
+}
+
+/** Read supported API error envelopes without exposing framework/exception text. */
+export function getControlledBackendMessage(data: unknown, depth = 0): string | undefined {
+  if (depth > 3) return undefined;
+  if (typeof data === 'string') return isSafeBackendMessage(data) ? data.trim() : undefined;
+  if (!data || typeof data !== 'object') return undefined;
+
+  const body = data as Record<string, unknown>;
+  for (const key of ['message', 'detail', 'userMessage', 'description', 'title']) {
+    if (isSafeBackendMessage(body[key])) return body[key].trim();
+  }
+
+  for (const key of ['errors', 'violations']) {
+    const errors = body[key];
+    if (Array.isArray(errors)) {
+      const messages = errors
+        .map((entry) => {
+          if (typeof entry === 'string') return isSafeBackendMessage(entry) ? entry.trim() : '';
+          if (!entry || typeof entry !== 'object') return '';
+          const value = entry as Record<string, unknown>;
+          const message = value.message ?? value.defaultMessage ?? value.detail;
+          return isSafeBackendMessage(message) ? message.trim() : '';
+        })
+        .filter(Boolean);
+      if (messages.length) return [...new Set(messages)].join(' ');
+    }
+    if (errors && typeof errors === 'object') {
+      const messages = Object.entries(errors as Record<string, unknown>)
+        .flatMap(([field, value]) => {
+          const values = Array.isArray(value) ? value : [value];
+          return values
+            .filter(isSafeBackendMessage)
+            .map((message) => `${field}: ${message.trim()}`);
+        });
+      if (messages.length) return [...new Set(messages)].join(' ');
+    }
+  }
+
+  if (isSafeBackendMessage(body.error)) return body.error.trim();
+  for (const key of ['error', 'data', 'payload', 'response']) {
+    const nested = getControlledBackendMessage(body[key], depth + 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function getUserFacingHttpErrorMessage(status: number, data?: unknown): string {
+  const controlled = getControlledBackendMessage(data);
+  if (controlled) return controlled;
+  if (status === 400 || status === 422) return 'Revisa los datos ingresados e intenta de nuevo.';
+  if (status === 401) return 'Tu sesión expiró. Inicia sesión nuevamente.';
+  if (status === 403) return 'No tienes permiso para realizar esta acción.';
+  if (status === 404) return 'No encontramos la información solicitada. Actualiza e inténtalo de nuevo.';
+  if (status === 409) return 'La información cambió. Actualiza e inténtalo de nuevo.';
+  if (status === 429) return 'Hay muchas solicitudes en curso. Espera un momento e inténtalo de nuevo.';
+  if (status >= 500) return 'No pudimos completar la operación. Intenta nuevamente.';
+  return 'No pudimos completar la solicitud. Intenta nuevamente.';
+}
+
+/** Converts transport and HTTP failures into readable, non-technical UI copy. */
+export function getUserFacingErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof HttpError) {
+    return getControlledBackendMessage(error.data) ?? getUserFacingHttpErrorMessage(error.status);
+  }
+  if (error instanceof TypeError) return 'No pudimos conectar con el servicio. Intenta nuevamente.';
+  if (error instanceof Error && isSafeBackendMessage(error.message)) return error.message.trim();
+  return fallback;
 }
 
 export class HttpClient {
@@ -129,13 +211,20 @@ export class HttpClient {
     const requestInit: RequestInit = { ...(init ?? {}) };
     delete (requestInit as HttpClientInit).auth;
     delete (requestInit as HttpClientInit).responseType;
-    return fetch(url, {
-      ...requestInit,
-      credentials: requestInit.credentials ?? 'include',
-      method,
-      headers,
-      body: body === undefined ? requestInit.body : isFormData ? body : JSON.stringify(body),
-    });
+    try {
+      return await fetch(url, {
+        ...requestInit,
+        credentials: requestInit.credentials ?? 'include',
+        method,
+        headers,
+        body: body === undefined ? requestInit.body : isFormData ? body : JSON.stringify(body),
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new Error('No pudimos conectar con el servicio. Intenta nuevamente.');
+      }
+      throw error;
+    }
   }
 
   private async parseResponse(response: Response): Promise<unknown> {

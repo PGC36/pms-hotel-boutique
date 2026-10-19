@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { Badge, type BadgeTone } from '@/shared/components/Badge';
 import { Button } from '@/shared/components/Button';
 import { DataTable, type DataTableColumn } from '@/shared/components/DataTable';
@@ -74,7 +75,7 @@ function isBookingActiveOn(booking: Booking, selectedDate: string): boolean {
 }
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos cargar la ocupación. Intenta nuevamente.');
 }
 
 export function OccupancyScreen() {

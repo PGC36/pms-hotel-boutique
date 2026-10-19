@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { bookingService } from '@/services/bookingService';
 import { guestAccountService } from '@/services/guestAccountService';
 import { guestService } from '@/services/guestService';
@@ -57,7 +58,7 @@ const BOOKING_STATUS_TONES: Record<Booking['status'], BadgeTone> = {
 };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos cargar recepción. Intenta nuevamente.');
 }
 
 export function ReceptionScreen() {
