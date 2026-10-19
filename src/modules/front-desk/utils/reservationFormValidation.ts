@@ -338,3 +338,43 @@ export function validateEditedNotes(
   }
   return { error: validateNotes(value), warning: null };
 }
+
+// --- Disponibilidad -----------------------------------------------------------
+//
+// Consulta sin datos guardados: las dos fechas se validan siempre como nuevas
+// (desde hoy en Guatemala, salida posterior y máximo 90 noches) y la cantidad de
+// huéspedes es un entero de al menos 1, sin máximo fijo.
+
+export const AVAIL_GUESTS_REQUIRED = 'Ingresa la cantidad de huéspedes.';
+export const AVAIL_GUESTS_MIN = 'Mínimo 1 huésped.';
+export const AVAIL_FIX_FIELDS = 'Corrige los campos marcados para ver la disponibilidad.';
+
+export type AvailabilityErrors = { checkIn?: string; checkOut?: string; guests?: string };
+
+export function isCalendarDate(value: string): boolean {
+  return CALENDAR_DATE.test(value);
+}
+
+export function validateAvailabilityQuery(
+  checkIn: string,
+  checkOut: string,
+  guests: string,
+  today: string = hotelToday(),
+): AvailabilityErrors {
+  const errors: AvailabilityErrors = {
+    ...validateEditedStay(checkIn, checkOut, { checkIn: '', checkOut: '' }, today),
+  };
+  if (!guests) errors.guests = AVAIL_GUESTS_REQUIRED;
+  else if (!isDigitsOnly(guests)) errors.guests = WHOLE_NUMBER_INVALID;
+  else if (/^0+$/.test(guests)) errors.guests = AVAIL_GUESTS_MIN;
+  return errors;
+}
+
+/**
+ * Aviso cuando ninguna habitación cargada admite tantos huéspedes. La cantidad
+ * se muestra como la escribió el usuario (sin ceros a la izquierda): con
+ * `Number` un valor enorme se vería en notación exponencial.
+ */
+export function availabilityCapacityMessage(guests: string, maxCapacity: number): string {
+  return `Ninguna habitación admite ${guests.replace(/^0+(?=\d)/, '')} huéspedes (máximo ${maxCapacity}).`;
+}

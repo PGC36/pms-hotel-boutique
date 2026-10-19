@@ -33,6 +33,16 @@ import {
   getDeparturesForDay,
   getOccupancyPercent,
 } from '@/modules/front-desk/utils/receptionSummary';
+import {
+  AVAIL_FIX_FIELDS,
+  availabilityCapacityMessage,
+  editCheckOutMin,
+  hotelToday,
+  isCalendarDate,
+  isDigitsOnly,
+  nextCalendarDay,
+  validateAvailabilityQuery,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import { ReservationDetail } from './ReservationDetail';
 import {
   BlockModal,
@@ -227,10 +237,19 @@ export function ReceptionContent({
   onRefresh: () => Promise<void>;
 }) {
   const [refreshingCalendar, setRefreshingCalendar] = useState(false);
-  const [availCheckIn, setAvailCheckIn] = useState('2024-08-31');
-  const [availCheckOut, setAvailCheckOut] = useState('2024-09-02');
-  const [availGuests, setAvailGuests] = useState(2);
+  // Disponibilidad parte de hoy → mañana en Guatemala.
+  const [availCheckIn, setAvailCheckIn] = useState(() => hotelToday());
+  const [availCheckOut, setAvailCheckOut] = useState(() => nextCalendarDay(hotelToday()));
+  // Texto, no número: vacío y 0 se informan en lugar de convertirse en 1.
+  const [availGuests, setAvailGuests] = useState('2');
   const [availType, setAvailType] = useState('Todos');
+  // Buscar fuerza un nuevo render para revalidar con la fecha de hoy (p. ej. tras la medianoche).
+  const [, setAvailSearches] = useState(0);
+  // Tipos de las habitaciones cargadas, sin duplicados ni opciones que no existen.
+  const availTypeOptions = Array.from(new Set(rooms.map((room) => room.type)));
+  if (availType !== 'Todos' && !availTypeOptions.some((type) => type === availType)) {
+    setAvailType('Todos');
+  }
 
   const refreshCalendar = async () => {
     if (refreshingCalendar) return;
@@ -1146,14 +1165,47 @@ export function ReceptionContent({
 
   /* ---------- Disponibilidad ---------- */
   if (nav === 'Disponibilidad') {
-    const available = rooms.filter((r) => {
-      if (r.status !== 'Disponible') return false;
-      if (availType !== 'Todos' && r.type !== availType) return false;
-      if (r.capacity < availGuests) return false;
-      if (hasConflict(r.number, availCheckIn, availCheckOut)) return false;
-      if (isRoomBlocked(r.number, availCheckIn, availCheckOut)) return false;
-      return true;
+    const today = hotelToday();
+    const availErrors = validateAvailabilityQuery(availCheckIn, availCheckOut, availGuests, today);
+    // Con campos inválidos no se muestra ninguna habitación: un rango invertido o
+    // vacío no tiene cruces y las daría todas por disponibles.
+    const availValid = Object.keys(availErrors).length === 0;
+    // Valores enormes pasan a Infinity: la comparación con la capacidad sigue siendo correcta.
+    const guestCount = Number(availGuests);
+    const maxCapacity = rooms.length > 0 ? Math.max(...rooms.map((r) => r.capacity)) : 0;
+    const overCapacity = availValid && rooms.length > 0 && guestCount > maxCapacity;
+    const available = !availValid
+      ? []
+      : rooms.filter((r) => {
+          if (r.status !== 'Disponible') return false;
+          if (availType !== 'Todos' && r.type !== availType) return false;
+          if (r.capacity < guestCount) return false;
+          if (hasConflict(r.number, availCheckIn, availCheckOut)) return false;
+          if (isRoomBlocked(r.number, availCheckIn, availCheckOut)) return false;
+          return true;
+        });
+    const availCountLabel = `${available.length} ${
+      available.length === 1 ? 'habitación disponible' : 'habitaciones disponibles'
+    }`;
+    const availInputClass = (error?: string) => `rc-input${error ? ' error' : ''}`;
+    const availErrorProps = (field: keyof typeof availErrors) => ({
+      'aria-invalid': Boolean(availErrors[field]),
+      'aria-describedby': availErrors[field] ? `avail-${field}-error` : undefined,
     });
+    const changeAvailCheckIn = (value: string) => {
+      setAvailCheckIn(value);
+      // Si la salida deja de ser posterior a la entrada, pasa al día siguiente;
+      // si sigue siendo válida, se conserva.
+      if (isCalendarDate(value) && isCalendarDate(availCheckOut) && availCheckOut <= value) {
+        setAvailCheckOut(nextCalendarDay(value));
+      }
+    };
+    const searchAvailability = () => {
+      setAvailSearches((count) => count + 1);
+      const errors = validateAvailabilityQuery(availCheckIn, availCheckOut, availGuests);
+      if (Object.keys(errors).length > 0) return;
+      onAction(`Disponibilidad ${stayRangeLabel(availCheckIn, availCheckOut)}: ${availCountLabel}`);
+    };
 
     return (
       <div className="panel">
@@ -1168,54 +1220,96 @@ export function ReceptionContent({
             <span>Entrada</span>
             <input
               type="date"
+              name="avail-check-in"
+              className={availInputClass(availErrors.checkIn)}
+              min={today}
               value={availCheckIn}
-              onChange={(e) => setAvailCheckIn(e.target.value)}
+              onChange={(e) => changeAvailCheckIn(e.target.value)}
+              {...availErrorProps('checkIn')}
             />
+            {availErrors.checkIn && (
+              <small id="avail-checkIn-error" className="rc-field-error">
+                {availErrors.checkIn}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Salida</span>
             <input
               type="date"
+              name="avail-check-out"
+              className={availInputClass(availErrors.checkOut)}
+              min={editCheckOutMin(availCheckIn, today)}
               value={availCheckOut}
               onChange={(e) => setAvailCheckOut(e.target.value)}
+              {...availErrorProps('checkOut')}
             />
+            {availErrors.checkOut && (
+              <small id="avail-checkOut-error" className="rc-field-error">
+                {availErrors.checkOut}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Huéspedes</span>
+            {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
             <input
-              type="number"
-              min={1}
+              type="text"
+              name="avail-guests"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className={availInputClass(availErrors.guests)}
               value={availGuests}
-              onChange={(e) => setAvailGuests(Number(e.target.value) || 1)}
+              onChange={(e) => {
+                // Signos, letras, decimales o espacios (también pegados) no se guardan.
+                if (isDigitsOnly(e.target.value)) setAvailGuests(e.target.value);
+              }}
+              {...availErrorProps('guests')}
             />
+            {availErrors.guests && (
+              <small id="avail-guests-error" className="rc-field-error">
+                {availErrors.guests}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Tipo</span>
-            <select value={availType} onChange={(e) => setAvailType(e.target.value)}>
+            <select
+              name="avail-type"
+              value={availType}
+              onChange={(e) => setAvailType(e.target.value)}
+            >
               <option>Todos</option>
-              <option>Estándar</option>
-              <option>Deluxe</option>
-              <option>Suite</option>
+              {availTypeOptions.map((type) => (
+                <option key={type}>{type}</option>
+              ))}
             </select>
           </label>
-          <button
-            className="button primary"
-            onClick={() =>
-              onAction(`Disponibilidad consultada del ${availCheckIn} al ${availCheckOut}`)
-            }
-          >
-            <Search size={16} /> Buscar
-          </button>
+          {/* Encabezado vacío: alinea el botón con los campos aunque estos muestren errores. */}
+          <div className="rc-field rc-avail-action">
+            <span aria-hidden="true">&nbsp;</span>
+            <button className="button primary" onClick={searchAvailability} disabled={!availValid}>
+              <Search size={16} /> Buscar
+            </button>
+          </div>
         </div>
         <div className="rc-avail-results">
-          <div className="rc-avail-count">
-            {available.length}{' '}
-            {available.length === 1 ? 'habitación disponible' : 'habitaciones disponibles'}
-          </div>
-          {available.length === 0 ? (
-            <div className="hk-empty">
+          {!availValid ? (
+            <div className="hk-empty" role="status">
+              <Search size={22} />
+              <p>{AVAIL_FIX_FIELDS}</p>
+            </div>
+          ) : (
+            <div className="rc-avail-count">{availCountLabel}</div>
+          )}
+          {!availValid ? null : available.length === 0 ? (
+            <div className="hk-empty" role="status">
               <BedDouble size={22} />
-              <p>No hay habitaciones disponibles para esas fechas</p>
+              <p>
+                {overCapacity
+                  ? availabilityCapacityMessage(availGuests, maxCapacity)
+                  : 'No hay habitaciones disponibles para esas fechas'}
+              </p>
             </div>
           ) : (
             available.map((r) => (

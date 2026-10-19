@@ -22,6 +22,7 @@ import {
   validatePhone,
   validateStayDates,
 } from '@/modules/front-desk/utils/reservationFormValidation';
+import { ReceptionContent } from '@/modules/front-desk/components/workspace/ReceptionContent';
 import { PrivateWorkspace } from '@/private/workspace/PrivateWorkspace';
 import { calculateNights } from '@/shared/utils/date';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
@@ -2963,4 +2964,270 @@ test('editar reserva: la propia reserva no genera un falso conflicto', async () 
   assert.equal(putCalls().length, 1);
   assert.equal(calls.saved, 1);
   assert.equal(recBackend.booking.checkIn, '2026-12-11');
+});
+
+// --- Recepción: Disponibilidad (formulario 3) ----------------------------------
+
+// 12:00 del 18-10-2026 en Guatemala (UTC−6).
+const AVAIL_NOW = Date.parse('2026-10-18T18:00:00Z');
+const availRoom = (id, number, type, capacity) => ({
+  id,
+  backendRoomId: `room-${number}`,
+  roomTypeId: `type-${type}`,
+  number,
+  floor: 'Piso 1',
+  type,
+  capacity,
+  rate: 500,
+  status: 'Disponible',
+  features: [],
+});
+const availRooms = [
+  availRoom(1, '101', 'Estándar', 2),
+  availRoom(2, '102', 'Estándar', 2),
+  availRoom(3, '201', 'Deluxe', 4),
+];
+// Props reales del workspace de Recepción (se toman una vez), con Disponibilidad abierta.
+let availBaseProps;
+async function renderAvailability({
+  roomList = availRooms,
+  now = AVAIL_NOW,
+  conflicts = [],
+  blocked = [],
+} = {}) {
+  if (!availBaseProps) {
+    await mountReception();
+    availBaseProps = { ...receptionContent().props };
+    act(() => view.unmount());
+    view = undefined;
+  }
+  mock.timers.enable({ apis: ['Date'], now });
+  const actions = [];
+  const element = (list) => (
+    <MemoryRouter>
+      <ReceptionContent
+        {...availBaseProps}
+        nav="Disponibilidad"
+        rooms={list}
+        showNewRes={false}
+        hasConflict={(room) => conflicts.includes(room)}
+        isRoomBlocked={(room) => blocked.includes(room)}
+        onAction={(message) => actions.push(message)}
+      />
+    </MemoryRouter>
+  );
+  act(() => {
+    view = create(element(roomList));
+  });
+  return { actions, setRooms: (list) => act(() => view.update(element(list))) };
+}
+const availInput = (name) =>
+  view.root.find((node) => ['input', 'select'].includes(node.type) && node.props.name === name);
+const availSet = (name, value) => act(() => availInput(name).props.onChange({ target: { value } }));
+const availCount = () =>
+  view.root.findAll((node) => hasClass(node, 'rc-avail-count')).map(text)[0] ?? null;
+const availCards = () =>
+  view.root
+    .findAll((node) => hasClass(node, 'rc-avail-card'))
+    .map((card) => text(card.findAll((node) => node.type === 'strong')[0]));
+const availStatus = () =>
+  view.root.findAll((node) => node.props?.role === 'status').map((node) => text(node));
+const availSearch = () => buttons('Buscar')[0];
+const availTypeOptions = () =>
+  availInput('avail-type')
+    .findAll((node) => node.type === 'option')
+    .map((node) => text(node));
+const AVAIL_FIX = 'Corrige los campos marcados para ver la disponibilidad.';
+
+test('disponibilidad: parte de hoy y mañana en Guatemala, sin fechas fijas', async () => {
+  await renderAvailability();
+  assert.equal(availInput('avail-check-in').props.value, '2026-10-18');
+  assert.equal(availInput('avail-check-out').props.value, '2026-10-19');
+  assert.equal(availInput('avail-check-in').props.min, '2026-10-18');
+  assert.equal(availInput('avail-check-out').props.min, '2026-10-19');
+  assert.equal(availInput('avail-guests').props.value, '2');
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(availCount(), '3 habitaciones disponibles');
+});
+
+test('disponibilidad: cerca de medianoche usa el día de Guatemala y revalida al buscar', async () => {
+  // 23:50 del 18-10-2026 en Guatemala = 05:50 UTC del 19: sigue siendo el 18.
+  const { actions } = await renderAvailability({ now: Date.parse('2026-10-19T05:50:00Z') });
+  assert.equal(availInput('avail-check-in').props.value, '2026-10-18');
+  assert.equal(availInput('avail-check-out').props.value, '2026-10-19');
+  // Pasa la medianoche: al buscar, la entrada del 18 ya es pasada.
+  mock.timers.setTime(Date.parse('2026-10-19T06:10:00Z'));
+  act(() => availSearch().props.onClick());
+  assert.deepEqual(fieldErrors(), ['No puede ser anterior a hoy.']);
+  assert.deepEqual(actions, [], 'no informa una consulta inválida');
+  assert.deepEqual(availCards(), []);
+});
+
+test('disponibilidad: entrada anterior a hoy no muestra resultados', async () => {
+  await renderAvailability();
+  availSet('avail-check-in', '2026-10-17');
+  assert.deepEqual(fieldErrors(), ['No puede ser anterior a hoy.']);
+  assert.equal(availInput('avail-check-out').props.value, '2026-10-19', 'la salida sigue válida');
+  assert.deepEqual(availCards(), []);
+  assert.equal(availCount(), null);
+  assert.ok(availStatus().includes(AVAIL_FIX));
+  assert.equal(availSearch().props.disabled, true);
+});
+
+test('disponibilidad: fechas vacías se informan sin rellenarlas', async () => {
+  await renderAvailability();
+  availSet('avail-check-in', '');
+  assert.equal(availInput('avail-check-out').props.value, '2026-10-19', 'no cambia la salida');
+  availSet('avail-check-out', '');
+  assert.equal(availInput('avail-check-in').props.value, '');
+  assert.equal(availInput('avail-check-out').props.value, '');
+  assert.deepEqual(fieldErrors(), ['Ingresa la fecha de entrada.', 'Ingresa la fecha de salida.']);
+  assert.deepEqual(availCards(), [], 'sin resultados falsos');
+});
+
+test('disponibilidad: salida igual o anterior a la entrada', async () => {
+  await renderAvailability();
+  availSet('avail-check-out', '2026-10-18');
+  assert.deepEqual(fieldErrors(), ['La salida debe ser posterior a la entrada.']);
+  assert.deepEqual(availCards(), []);
+  availSet('avail-check-in', '2026-11-10');
+  availSet('avail-check-out', '2026-11-05');
+  assert.deepEqual(fieldErrors(), ['La salida debe ser posterior a la entrada.']);
+  assert.deepEqual(availCards(), []);
+  assert.equal(availSearch().props.disabled, true);
+});
+
+test('disponibilidad: al cambiar la entrada ajusta solo una salida que deja de ser válida', async () => {
+  await renderAvailability();
+  availSet('avail-check-in', '2026-11-10');
+  assert.equal(availInput('avail-check-out').props.value, '2026-11-11', 'entrada + 1 día');
+  assert.equal(availInput('avail-check-out').props.min, '2026-11-11');
+  availSet('avail-check-out', '2026-11-20');
+  availSet('avail-check-in', '2026-11-12');
+  assert.equal(availInput('avail-check-out').props.value, '2026-11-20', 'se conserva');
+  assert.deepEqual(fieldErrors(), []);
+});
+
+test('disponibilidad: acepta 90 noches y rechaza 91', async () => {
+  await renderAvailability();
+  availSet('avail-check-in', '2026-11-01');
+  availSet('avail-check-out', '2027-01-30');
+  assert.deepEqual(fieldErrors(), [], '90 noches');
+  assert.equal(availCount(), '3 habitaciones disponibles');
+  availSet('avail-check-out', '2027-01-31');
+  assert.deepEqual(fieldErrors(), ['Máximo 90 noches.']);
+  assert.deepEqual(availCards(), []);
+});
+
+test('disponibilidad: huéspedes solo admite dígitos, también al pegar', async () => {
+  await renderAvailability();
+  const guests = availInput('avail-guests');
+  assert.equal(guests.props.type, 'text');
+  assert.equal(guests.props.inputMode, 'numeric');
+  for (const rejected of ['-1', '1.5', '1,5', 'abc', '2e1', '+3', '#', ' 2', '3 ', 'abc123']) {
+    availSet('avail-guests', rejected);
+    assert.equal(availInput('avail-guests').props.value, '2', `"${rejected}" no se guarda`);
+  }
+  assert.deepEqual(fieldErrors(), []);
+});
+
+test('disponibilidad: huéspedes vacío o cero se informan sin convertirse en 1', async () => {
+  await renderAvailability();
+  availSet('avail-guests', '');
+  assert.deepEqual(fieldErrors(), ['Ingresa la cantidad de huéspedes.']);
+  assert.deepEqual(availCards(), []);
+  for (const zero of ['0', '00']) {
+    availSet('avail-guests', zero);
+    assert.equal(availInput('avail-guests').props.value, zero);
+    assert.deepEqual(fieldErrors(), ['Mínimo 1 huésped.']);
+    assert.deepEqual(availCards(), []);
+  }
+  availSet('avail-guests', '3');
+  assert.deepEqual(fieldErrors(), []);
+  assert.deepEqual(availCards(), ['Hab. 201'], 'solo la de capacidad 4');
+});
+
+test('disponibilidad: avisa cuando ninguna habitación admite tantos huéspedes', async () => {
+  await renderAvailability();
+  availSet('avail-guests', '5');
+  assert.deepEqual(fieldErrors(), [], 'no es un error del campo');
+  assert.ok(availStatus().includes('Ninguna habitación admite 5 huéspedes (máximo 4).'));
+  assert.equal(availCount(), '0 habitaciones disponibles');
+  availSet('avail-guests', '005');
+  assert.ok(availStatus().includes('Ninguna habitación admite 5 huéspedes (máximo 4).'));
+  // Valor enorme: sin notación exponencial ni resultados por pérdida de precisión.
+  const huge = '9'.repeat(40);
+  availSet('avail-guests', huge);
+  assert.ok(availStatus().includes(`Ninguna habitación admite ${huge} huéspedes (máximo 4).`));
+  assert.deepEqual(availCards(), []);
+});
+
+test('disponibilidad: los tipos salen de las habitaciones cargadas, sin duplicados', async () => {
+  await renderAvailability();
+  assert.deepEqual(availTypeOptions(), ['Todos', 'Estándar', 'Deluxe'], 'sin Suite');
+  availSet('avail-type', 'Deluxe');
+  assert.deepEqual(availCards(), ['Hab. 201']);
+  availSet('avail-type', 'Estándar');
+  assert.deepEqual(availCards(), ['Hab. 101', 'Hab. 102']);
+});
+
+test('disponibilidad: si desaparece el tipo elegido vuelve a Todos', async () => {
+  const { setRooms } = await renderAvailability();
+  availSet('avail-type', 'Deluxe');
+  setRooms(availRooms.filter((room) => room.type !== 'Deluxe'));
+  assert.equal(availInput('avail-type').props.value, 'Todos');
+  assert.deepEqual(availTypeOptions(), ['Todos', 'Estándar']);
+  assert.deepEqual(availCards(), ['Hab. 101', 'Hab. 102']);
+});
+
+test('disponibilidad: resultados en vivo con el mismo filtro de conflictos y bloqueos', async () => {
+  await renderAvailability({ conflicts: ['101'], blocked: ['102'] });
+  assert.deepEqual(availCards(), ['Hab. 201']);
+  assert.equal(availCount(), '1 habitación disponible');
+  availSet('avail-guests', '1');
+  assert.deepEqual(availCards(), ['Hab. 201'], 'conflictos y bloqueos se siguen respetando');
+});
+
+test('disponibilidad: Buscar revalida e informa el rango con formato de Guatemala', async () => {
+  const { actions } = await renderAvailability();
+  assert.equal(availSearch().props.disabled, false);
+  act(() => availSearch().props.onClick());
+  assert.deepEqual(actions, ['Disponibilidad 18-10-2026 – 19-10-2026: 3 habitaciones disponibles']);
+  availSet('avail-guests', '');
+  assert.equal(availSearch().props.disabled, true);
+  availSet('avail-guests', '4');
+  assert.equal(availSearch().props.disabled, false);
+  act(() => availSearch().props.onClick());
+  assert.equal(actions.at(-1), 'Disponibilidad 18-10-2026 – 19-10-2026: 1 habitación disponible');
+  assert.equal(actions.length, 2, 'una sola notificación por búsqueda');
+});
+
+test('disponibilidad: errores accesibles que desaparecen al corregir', async () => {
+  await renderAvailability();
+  availSet('avail-guests', '0');
+  const guests = availInput('avail-guests');
+  assert.equal(guests.props['aria-invalid'], true);
+  assert.ok(guests.props.className.includes('error'));
+  const message = view.root.find((node) => node.props?.id === guests.props['aria-describedby']);
+  assert.equal(text(message), 'Mínimo 1 huésped.');
+  assert.equal(availInput('avail-check-in').props['aria-invalid'], false);
+  assert.equal(availInput('avail-check-in').props['aria-describedby'], undefined);
+  availSet('avail-guests', '2');
+  assert.equal(availInput('avail-guests').props['aria-invalid'], false);
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(availCount(), '3 habitaciones disponibles', 'los resultados vuelven solos');
+});
+
+test('disponibilidad: en el workspace real respeta las reservas existentes', async () => {
+  mock.timers.enable({ apis: ['Date'], now: AVAIL_NOW });
+  // Reserva confirmada en la 101 del 10 al 12-12-2026.
+  await mountReception();
+  await goTo('Disponibilidad');
+  assert.equal(availInput('avail-check-in').props.value, '2026-10-18');
+  assert.deepEqual(availCards(), ['Hab. 101']);
+  availSet('avail-check-in', '2026-12-10');
+  assert.equal(availInput('avail-check-out').props.value, '2026-12-11');
+  assert.deepEqual(availCards(), [], 'ocupada por la reserva');
+  availSet('avail-check-in', '2026-12-12');
+  assert.deepEqual(availCards(), ['Hab. 101'], 'libre desde la salida de la reserva');
 });
