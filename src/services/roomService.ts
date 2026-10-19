@@ -82,6 +82,11 @@ type ApiRoomFeature = {
   updatedAt?: string | null;
 };
 
+export type SaveRoomFeature = {
+  name: string;
+  description?: string;
+};
+
 type ApiRate = {
   id: string;
   roomTypeId?: string;
@@ -248,6 +253,26 @@ export const roomService = {
       'No fue posible cargar las caracteristicas.',
     );
     return features.map(toRoomFeatureDto).map(toRoomFeature);
+  },
+  async createRoomFeature(data: SaveRoomFeature): Promise<RoomFeature> {
+    const feature = await request(
+      () => httpClient.post<ApiRoomFeature>('/room-features', data),
+      'No fue posible crear la característica.',
+    );
+    return toRoomFeature(toRoomFeatureDto(feature));
+  },
+  async updateRoomFeature(id: ID, data: SaveRoomFeature): Promise<RoomFeature> {
+    const feature = await request(
+      () => httpClient.put<ApiRoomFeature>(`/room-features/${id}`, data),
+      'No fue posible actualizar la característica.',
+    );
+    return toRoomFeature(toRoomFeatureDto(feature));
+  },
+  async deleteRoomFeature(id: ID): Promise<void> {
+    await request(
+      () => httpClient.delete<void>(`/room-features/${id}`),
+      'No fue posible eliminar la característica.',
+    );
   },
   async getRates(): Promise<Rate[]> {
     await simulateLatency();

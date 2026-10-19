@@ -1615,7 +1615,7 @@ function AdminContentReady({
   const [roles, setRoles] = useState(initialAdminRoles);
   const [rooms, setRooms] = useState(initialAdminRooms);
   const [roomTypes, setRoomTypes] = useState(initialAdminRoomTypes);
-  const [roomFeatures] = useState(initialRoomFeatures);
+  const [roomFeatures, setRoomFeatures] = useState(initialRoomFeatures);
   const [seasonRates, setSeasonRates] = useState(initialSeasonRates);
   const [promos, setPromos] = useState(initialPromos);
   const [amenities, setAmenities] = useState(initialAmenities);
@@ -1639,6 +1639,7 @@ function AdminContentReady({
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [editRoom, setEditRoom] = useState<AdminRoom | null>(null);
   const [showRoomTypeModal, setShowRoomTypeModal] = useState(false);
+  const [showRoomFeatureCatalog, setShowRoomFeatureCatalog] = useState(false);
   const [editRoomType, setEditRoomType] = useState<AdminRoomType | null>(null);
   const [showSeasonRateModal, setShowSeasonRateModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
@@ -2547,15 +2548,23 @@ function AdminContentReady({
                 <h3>Tipos de habitación</h3>
                 <p>Configura los tipos y sus características</p>
               </div>
-              <button
-                className="button primary"
-                onClick={() => {
-                  setEditRoomType(null);
-                  setShowRoomTypeModal(true);
-                }}
-              >
-                <Plus size={17} /> Nuevo tipo
-              </button>
+              <div className="adm-heading-actions">
+                <button
+                  className="button secondary"
+                  onClick={() => setShowRoomFeatureCatalog(true)}
+                >
+                  <Sparkles size={17} /> Características
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => {
+                    setEditRoomType(null);
+                    setShowRoomTypeModal(true);
+                  }}
+                >
+                  <Plus size={17} /> Nuevo tipo
+                </button>
+              </div>
             </div>
             {roomTypes.length === 0 ? (
               <div className="hk-empty">
@@ -2765,6 +2774,45 @@ function AdminContentReady({
                 onAction('Tipo de habitación creado correctamente');
               }
               setShowRoomTypeModal(false);
+            }}
+          />
+        )}
+        {showRoomFeatureCatalog && (
+          <RoomFeatureCatalogModal
+            features={roomFeatures}
+            onClose={() => setShowRoomFeatureCatalog(false)}
+            onCreate={async (data) => {
+              const created = await roomService.createRoomFeature(data);
+              setRoomFeatures((current) =>
+                [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
+              );
+              onAction('Característica creada correctamente');
+            }}
+            onUpdate={async (featureId, data) => {
+              const updated = await roomService.updateRoomFeature(featureId, data);
+              setRoomFeatures((current) =>
+                current
+                  .map((feature) => (feature.id === featureId ? updated : feature))
+                  .sort((a, b) => a.name.localeCompare(b.name)),
+              );
+              setRoomTypes((current) =>
+                current.map((type) => ({
+                  ...type,
+                  features: type.roomFeatureIds
+                    .map((id) =>
+                      id === featureId
+                        ? updated.name
+                        : roomFeatures.find((item) => item.id === id)?.name,
+                    )
+                    .filter((name): name is string => Boolean(name)),
+                })),
+              );
+              onAction('Característica actualizada correctamente');
+            }}
+            onDelete={async (featureId) => {
+              await roomService.deleteRoomFeature(featureId);
+              setRoomFeatures((current) => current.filter((feature) => feature.id !== featureId));
+              onAction('Característica eliminada correctamente');
             }}
           />
         )}
@@ -4512,6 +4560,237 @@ function RoomModal({
   );
 }
 
+function RoomFeatureCatalogModal({
+  features,
+  onClose,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  features: RoomFeature[];
+  onClose: () => void;
+  onCreate: (data: { name: string; description?: string }) => Promise<void>;
+  onUpdate: (id: string, data: { name: string; description?: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<RoomFeature | null>(null);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<RoomFeature | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const resetForm = () => {
+    setEditing(null);
+    setName('');
+    setDescription('');
+    setError('');
+  };
+
+  const startEdit = (feature: RoomFeature) => {
+    setEditing(feature);
+    setName(feature.name);
+    setDescription(feature.description ?? '');
+    setError('');
+  };
+
+  const save = async () => {
+    const cleanName = name.trim().replace(/\s+/g, ' ');
+    if (!cleanName) {
+      setError('Escribe el nombre de la característica.');
+      return;
+    }
+    if (
+      features.some(
+        (feature) =>
+          feature.id !== editing?.id &&
+          feature.name.localeCompare(cleanName, undefined, { sensitivity: 'accent' }) === 0,
+      )
+    ) {
+      setError('Ya existe una característica con ese nombre.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const data = { name: cleanName, description: description.trim() || undefined };
+      if (editing) await onUpdate(editing.id, data);
+      else await onCreate(data);
+      resetForm();
+    } catch (cause) {
+      setError(getErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onDelete(pendingDelete.id);
+      setPendingDelete(null);
+      if (editing?.id === pendingDelete.id) resetForm();
+    } catch (cause) {
+      const message = getErrorMessage(cause);
+      setError(
+        /assigned|room types/i.test(message)
+          ? 'No se puede eliminar porque está asignada a uno o más tipos de habitación.'
+          : message,
+      );
+      setPendingDelete(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <AdminModal
+        title="Características de habitación"
+        eyebrow="CATÁLOGO DE HABITACIONES"
+        width={600}
+        onClose={onClose}
+      >
+        <p className="muted">
+          Administra las características que puedes asignar a cada tipo de habitación.
+        </p>
+        <div className="room-feature-catalog-list">
+          {features.length === 0 ? (
+            <p className="muted">Todavía no hay características registradas.</p>
+          ) : (
+            features.map((feature) => (
+              <div className="room-feature-catalog-row" key={feature.id}>
+                <div>
+                  <strong>{feature.name}</strong>
+                  <span>{feature.description || 'Sin descripción'}</span>
+                </div>
+                <div className="adm-heading-actions">
+                  <EditIconButton
+                    label={`Editar ${feature.name}`}
+                    onClick={() => startEdit(feature)}
+                  />
+                  <button
+                    className="button small secondary adm-icon-action"
+                    type="button"
+                    aria-label={`Eliminar ${feature.name}`}
+                    title={`Eliminar ${feature.name}`}
+                    onClick={() => setPendingDelete(feature)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="room-feature-catalog-form">
+          <h3>{editing ? 'Editar característica' : 'Nueva característica'}</h3>
+          <label className="hk-form-label">
+            Nombre
+            <input
+              className="hk-form-select"
+              maxLength={80}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Ej. Balcón privado"
+            />
+          </label>
+          <label className="hk-form-label">
+            Descripción <span className="muted">(opcional)</span>
+            <textarea
+              className="hk-form-textarea"
+              maxLength={300}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Describe brevemente la característica"
+            />
+          </label>
+          {error && (
+            <p className="adm-modal-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="modal-foot">
+            {editing && (
+              <button
+                className="button secondary"
+                type="button"
+                onClick={resetForm}
+                disabled={busy}
+              >
+                Cancelar edición
+              </button>
+            )}
+            <button
+              className="button primary"
+              type="button"
+              onClick={() => void save()}
+              disabled={busy}
+            >
+              {busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Agregar característica'}
+            </button>
+          </div>
+        </div>
+      </AdminModal>
+      {pendingDelete && (
+        <div
+          className="modal-backdrop room-feature-confirm-backdrop"
+          onMouseDown={() => !busy && setPendingDelete(null)}
+        >
+          <div
+            className="modal adm-modal room-feature-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="room-feature-delete-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">CONFIRMAR ELIMINACIÓN</p>
+                <h2 id="room-feature-delete-title">¿Eliminar característica?</h2>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setPendingDelete(null)}
+                disabled={busy}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p>
+              Se eliminará “{pendingDelete.name}”. No se puede eliminar si está asignada a un tipo
+              de habitación.
+            </p>
+            <div className="modal-foot">
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={busy}
+              >
+                Cancelar
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                onClick={() => void confirmDelete()}
+                disabled={busy}
+              >
+                {busy ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function RoomTypeModal({
   roomType,
   roomFeatures,
@@ -4528,9 +4807,7 @@ function RoomTypeModal({
   const [description, setDescription] = useState(roomType?.description ?? '');
   const [basePrice, setBasePrice] = useState(roomType?.basePrice ?? 1850);
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(roomType?.status ?? 'Activo');
-  const [selectedFeatureIds, setSelectedFeatureIds] = useState<string[]>(
-    roomType?.roomFeatureIds ?? [],
-  );
+  const [roomFeatureIds, setRoomFeatureIds] = useState(roomType?.roomFeatureIds ?? []);
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(roomType?.images ?? []),
   );
@@ -4552,9 +4829,9 @@ function RoomTypeModal({
               name,
               capacity,
               description,
-              roomFeatureIds: selectedFeatureIds,
+              roomFeatureIds,
               features: roomFeatures
-                .filter((feature) => selectedFeatureIds.includes(feature.id))
+                .filter((feature) => roomFeatureIds.includes(feature.id))
                 .map((feature) => feature.name),
               basePrice,
               status,
@@ -4605,16 +4882,16 @@ function RoomTypeModal({
       <fieldset className="adm-room-feature-picker">
         <legend>Características</legend>
         {roomFeatures.length === 0 ? (
-          <p className="muted">No hay características configuradas.</p>
+          <p className="muted">Agrega características desde el catálogo.</p>
         ) : (
           <div>
             {roomFeatures.map((feature) => (
               <label key={feature.id}>
                 <input
                   type="checkbox"
-                  checked={selectedFeatureIds.includes(feature.id)}
+                  checked={roomFeatureIds.includes(feature.id)}
                   onChange={(event) =>
-                    setSelectedFeatureIds((current) =>
+                    setRoomFeatureIds((current) =>
                       event.target.checked
                         ? [...current, feature.id]
                         : current.filter((id) => id !== feature.id),
