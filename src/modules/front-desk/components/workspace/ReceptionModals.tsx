@@ -11,17 +11,39 @@ import type {
 } from '@/private/workspace/PrivateWorkspace';
 import { bookingService } from '@/services/bookingService';
 import { toDtoCalendarDate } from '@/shared/types/common';
+import { formatCurrency } from '@/shared/utils/currency';
+import {
+  EMAIL_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  NOTES_MAX_LENGTH,
+  PHONE_MAX_DIGITS,
+  hotelToday,
+  isDigitsOnly,
+  keepPhoneDigits,
+  nextCalendarDay,
+  normalizeChildren,
+  normalizePersonName,
+  validateEmail,
+  validateGuestCounts,
+  validateNotes,
+  validatePersonName,
+  validatePhone,
+  validateStayDates,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 
 const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+/** Montos de Nueva reserva en quetzales (los importes del workspace están en Q, no en centavos). */
+const moneyGTQ = (amount: number) => formatCurrency(Math.round(amount * 100), 'GTQ');
+// Nacionalidad y documento se piden en el check-in: sin valores por defecto.
 const emptyGuest: GuestInfo = {
   name: '',
   lastName: '',
   phone: '',
   email: '',
-  docType: 'INE',
+  docType: '',
   docNumber: '',
   birthDate: '',
-  nationality: 'Mexicana',
+  nationality: '',
 };
 
 type Totals = { charges: number; deposits: number; payments: number; balance: number };
@@ -38,12 +60,6 @@ const stayRangeError = (checkIn: string, checkOut: string) => {
   if (!CALENDAR_DATE.test(checkIn) || !CALENDAR_DATE.test(checkOut) || checkOut <= checkIn)
     return INVALID_STAY_RANGE;
   return '';
-};
-const localDateInput = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 };
 
 export function ReservationEditModal({
@@ -244,21 +260,18 @@ export function ReservationFormModal({
   nights: (ci: string, co: string) => number;
   folioTotals: (folio: FolioEntry[]) => Totals;
 }) {
+  // "Hoy" es el día civil de Guatemala, no el del navegador. Se recalcula en cada
+  // render y otra vez al validar: el formulario puede quedar abierto pasada la medianoche.
+  const today = hotelToday();
   const [guest, setGuest] = useState<GuestInfo>({ ...emptyGuest });
-  const [checkIn, setCheckIn] = useState(() => localDateInput(new Date()));
-  const [checkOut, setCheckOut] = useState(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return localDateInput(tomorrow);
-  });
+  const [checkIn, setCheckIn] = useState(() => hotelToday());
+  const [checkOut, setCheckOut] = useState(() => nextCalendarDay(hotelToday()));
   const [roomNumber, setRoomNumber] = useState('');
-  const [guestCount, setGuestCount] = useState(1);
+  // Texto, no número: así se detectan vacíos, signos y decimales en lugar de corregirlos en silencio.
+  const [adults, setAdults] = useState('1');
+  const [children, setChildren] = useState('0');
   const [origin, setOrigin] = useState(walkin ? 'Walk-in' : 'Teléfono');
   const [observations, setObservations] = useState('');
-  const [companions, setCompanions] = useState<Companion[]>([]);
-  const [compName, setCompName] = useState('');
-  const [compDoc, setCompDoc] = useState('');
-  const [compAge, setCompAge] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -266,65 +279,74 @@ export function ReservationFormModal({
   const availableRooms = rooms.filter((r) => r.status === 'Disponible');
   const selectedRoom = rooms.find((r) => r.number === roomNumber);
   // Con un rango inválido no se calculan noches: calculateNights lanza ante él y tumbaría el render.
-  const dateError = stayRangeError(checkIn, checkOut);
+  const dateError = validateStayDates(checkIn, checkOut, today) ?? '';
   const n = dateError ? null : nights(checkIn, checkOut);
   const total = selectedRoom && n !== null ? selectedRoom.rate * n : 0;
+  const checkOutMin = /^\d{4}-\d{2}-\d{2}$/.test(checkIn) && checkIn >= today ? checkIn : today;
 
   const conflict = roomNumber && hasConflict(roomNumber, checkIn, checkOut);
   const blocked = roomNumber && isRoomBlocked(roomNumber, checkIn, checkOut);
-  const capacityExceeded = selectedRoom
-    ? guestCount + companions.length > selectedRoom.capacity
-    : false;
-
-  const addCompanion = () => {
-    if (!compName.trim()) return;
-    setCompanions((c) => [
-      ...c,
-      {
-        id: Date.now() + c.length,
-        name: compName.split(' ')[0],
-        lastName: compName.split(' ')[1] ?? '',
-        document: compDoc,
-        age: Number(compAge) || 0,
-      },
-    ]);
-    setCompName('');
-    setCompDoc('');
-    setCompAge('');
-  };
-  const removeCompanion = (id: number) => setCompanions((c) => c.filter((x) => x.id !== id));
 
   const validate = () => {
     const e: Record<string, string> = {};
-    if (!guest.name.trim()) e.name = 'Nombre obligatorio';
-    if (!guest.lastName.trim()) e.lastName = 'Apellido obligatorio';
-    if (!guest.phone.trim()) e.phone = 'Teléfono obligatorio';
-    if (dateError) e.dates = dateError;
-    if (!roomNumber) e.room = 'Selecciona una habitación';
-    if (conflict) e.room = 'La habitación ya tiene una reserva en esas fechas';
-    if (blocked) e.room = 'La habitación está bloqueada en esas fechas';
-    if (capacityExceeded) e.capacity = `Excede la capacidad (${selectedRoom?.capacity})`;
+    const nameError = validatePersonName(guest.name, 'nombre');
+    if (nameError) e.name = nameError;
+    const lastNameError = validatePersonName(guest.lastName, 'apellido');
+    if (lastNameError) e.lastName = lastNameError;
+    const phoneError = validatePhone(guest.phone);
+    if (phoneError) e.phone = phoneError;
+    const emailError = validateEmail(guest.email);
+    if (emailError) e.email = emailError;
+    // Fecha de Guatemala en el momento de comprobar, no la del render anterior.
+    const stayError = validateStayDates(checkIn, checkOut, hotelToday());
+    if (stayError) e.dates = stayError;
+    // Menores vacíos vuelven a 0 al comprobar (sin error por campo vacío).
+    const childrenValue = normalizeChildren(children);
+    if (childrenValue !== children) setChildren(childrenValue);
+    const counts = validateGuestCounts(adults, childrenValue, selectedRoom?.capacity);
+    if (counts.adults) e.adults = counts.adults;
+    if (counts.children) e.children = counts.children;
+    if (counts.capacity) e.capacity = counts.capacity;
+    if (!roomNumber) e.room = 'Selecciona una habitación.';
+    if (conflict) e.room = 'La habitación ya tiene una reserva en esas fechas.';
+    if (blocked) e.room = 'La habitación está bloqueada en esas fechas.';
+    const notesError = validateNotes(observations);
+    if (notesError) e.observations = notesError;
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const handleSave = async () => {
-    if (!validate() || n === null) return;
+    // Se vuelve a validar al guardar (p. ej. cambió el día): si falla, se regresa al
+    // formulario, que es donde se muestran los errores de cada campo.
+    if (!validate() || n === null) {
+      setShowSummary(false);
+      return;
+    }
     const room = rooms.find((r) => r.number === roomNumber)!;
+    const adultCount = Number(adults);
+    const childCount = Number(normalizeChildren(children));
     setSaving(true);
     setErrors((current) => ({ ...current, submit: '' }));
     try {
       await onSave({
         id: Date.now(),
         code: nextCode,
-        guest,
-        companions,
+        guest: {
+          ...guest,
+          name: normalizePersonName(guest.name),
+          lastName: normalizePersonName(guest.lastName),
+        },
+        // Los acompañantes se registran en el check-in.
+        companions: [],
         checkIn,
         checkOut,
         roomNumber: room.number,
         roomType: room.type,
         rate: room.rate,
-        guestCount,
+        guestCount: adultCount + childCount,
+        adults: adultCount,
+        children: childCount,
         status: 'Confirmada',
         origin,
         observations,
@@ -361,7 +383,7 @@ export function ReservationFormModal({
           <div className="modal-head">
             <div>
               <p className="eyebrow">RESUMEN DE RESERVA</p>
-              <h2>{nextCode}</h2>
+              <h2>{walkin ? 'Registro walk-in' : 'Nueva reserva'}</h2>
             </div>
             <button className="icon-btn" onClick={onClose}>
               <X size={18} />
@@ -369,9 +391,14 @@ export function ReservationFormModal({
           </div>
           <div className="rc-summary-box">
             <div>
+              <small>Código</small>
+              {/* El código real (BKG-…) lo genera el backend al guardar. */}
+              <span>Se asignará al confirmar</span>
+            </div>
+            <div>
               <small>Huésped</small>
               <span>
-                {guest.name} {guest.lastName}
+                {normalizePersonName(guest.name)} {normalizePersonName(guest.lastName)}
               </span>
             </div>
             <div>
@@ -388,15 +415,19 @@ export function ReservationFormModal({
             </div>
             <div>
               <small>Huéspedes</small>
-              <span>{guestCount + companions.length}</span>
+              <span>
+                {adults} {Number(adults) === 1 ? 'adulto' : 'adultos'} · {children}{' '}
+                {Number(children) === 1 ? 'menor' : 'menores'}
+              </span>
             </div>
             <div>
               <small>Origen</small>
               <span>{origin}</span>
             </div>
             <div className="rc-summary-total">
-              <small>Total alojamiento</small>
-              <strong>{money(total)}</strong>
+              {/* Estimado: la tarifa real por noche la calculará el backend (subfase 1B, etapa 2). */}
+              <small>Total estimado</small>
+              <strong>{moneyGTQ(total)}</strong>
             </div>
           </div>
           {errors.submit && (
@@ -439,6 +470,8 @@ export function ReservationFormModal({
             <label className="rc-field">
               <span>Nombre</span>
               <input
+                autoComplete="given-name"
+                maxLength={NAME_MAX_LENGTH}
                 className={fieldClass(errors.name)}
                 value={guest.name}
                 onChange={(e) => setGuest({ ...guest, name: e.target.value })}
@@ -448,6 +481,8 @@ export function ReservationFormModal({
             <label className="rc-field">
               <span>Apellido</span>
               <input
+                autoComplete="family-name"
+                maxLength={NAME_MAX_LENGTH}
                 className={fieldClass(errors.lastName)}
                 value={guest.lastName}
                 onChange={(e) => setGuest({ ...guest, lastName: e.target.value })}
@@ -457,18 +492,32 @@ export function ReservationFormModal({
             <label className="rc-field">
               <span>Teléfono</span>
               <input
+                type="text"
+                name="phone"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="tel"
+                maxLength={PHONE_MAX_DIGITS}
+                placeholder="55550000"
                 className={fieldClass(errors.phone)}
                 value={guest.phone}
-                onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
+                // Solo dígitos y como máximo 20, también al pegar ("+502 5555-0000" → "50255550000").
+                onChange={(e) => setGuest({ ...guest, phone: keepPhoneDigits(e.target.value) })}
               />
               {errors.phone && <small className="rc-field-error">{errors.phone}</small>}
             </label>
             <label className="rc-field">
               <span>Correo</span>
               <input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                maxLength={EMAIL_MAX_LENGTH}
+                className={fieldClass(errors.email)}
                 value={guest.email}
                 onChange={(e) => setGuest({ ...guest, email: e.target.value })}
               />
+              {errors.email && <small className="rc-field-error">{errors.email}</small>}
             </label>
           </div>
 
@@ -478,6 +527,7 @@ export function ReservationFormModal({
               <span>Entrada</span>
               <input
                 type="date"
+                min={today}
                 className={fieldClass(dateError)}
                 value={checkIn}
                 onChange={(e) => setCheckIn(e.target.value)}
@@ -487,19 +537,44 @@ export function ReservationFormModal({
               <span>Salida</span>
               <input
                 type="date"
+                min={nextCalendarDay(checkOutMin)}
                 className={fieldClass(dateError)}
                 value={checkOut}
                 onChange={(e) => setCheckOut(e.target.value)}
               />
             </label>
             <label className="rc-field">
-              <span>Huéspedes</span>
+              <span>Adultos</span>
+              {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
               <input
-                type="number"
-                min={1}
-                value={guestCount}
-                onChange={(e) => setGuestCount(Number(e.target.value) || 1)}
+                type="text"
+                name="adults"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className={fieldClass(errors.adults)}
+                value={adults}
+                onChange={(e) => {
+                  // Un valor con signos, letras, decimales o espacios no se guarda en el estado.
+                  if (isDigitsOnly(e.target.value)) setAdults(e.target.value);
+                }}
               />
+              {errors.adults && <small className="rc-field-error">{errors.adults}</small>}
+            </label>
+            <label className="rc-field">
+              <span>Menores</span>
+              <input
+                type="text"
+                name="children"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className={fieldClass(errors.children)}
+                value={children}
+                onChange={(e) => {
+                  if (isDigitsOnly(e.target.value)) setChildren(e.target.value);
+                }}
+                onBlur={() => setChildren(normalizeChildren(children))}
+              />
+              {errors.children && <small className="rc-field-error">{errors.children}</small>}
             </label>
             <label className="rc-field">
               <span>Origen / canal</span>
@@ -539,7 +614,7 @@ export function ReservationFormModal({
                   <div>
                     <strong>Hab. {r.number}</strong>
                     <span>
-                      {r.type} · cap. {r.capacity} · {money(r.rate)}/noche
+                      {r.type} · cap. {r.capacity} · {moneyGTQ(r.rate)}/noche (estimado)
                     </span>
                   </div>
                   {disabled && (
@@ -558,56 +633,24 @@ export function ReservationFormModal({
           )}
           {selectedRoom && n !== null && (
             <div className="rc-rate-preview">
-              Tarifa: {money(selectedRoom.rate)} × {n} {n === 1 ? 'noche' : 'noches'} ={' '}
-              <strong>{money(total)}</strong>
-            </div>
-          )}
-
-          <h4 className="rc-form-section-title">Acompañantes</h4>
-          <div className="rc-comp-add">
-            <input
-              placeholder="Nombre y apellido"
-              value={compName}
-              onChange={(e) => setCompName(e.target.value)}
-            />
-            <input
-              placeholder="Documento"
-              value={compDoc}
-              onChange={(e) => setCompDoc(e.target.value)}
-            />
-            <input
-              placeholder="Edad"
-              type="number"
-              className="rc-input-narrow"
-              value={compAge}
-              onChange={(e) => setCompAge(e.target.value)}
-            />
-            <button className="button small secondary" onClick={addCompanion}>
-              <Check size={14} />
-            </button>
-          </div>
-          {companions.length > 0 && (
-            <div className="rc-comp-list">
-              {companions.map((c) => (
-                <div className="rc-comp-item" key={c.id}>
-                  <span>
-                    {c.name} {c.lastName} · {c.document} · {c.age} años
-                  </span>
-                  <button onClick={() => removeCompanion(c.id)}>
-                    <X size={13} />
-                  </button>
-                </div>
-              ))}
+              Tarifa estimada: {moneyGTQ(selectedRoom.rate)} × {n} {n === 1 ? 'noche' : 'noches'} ={' '}
+              <strong>{moneyGTQ(total)}</strong>
             </div>
           )}
 
           <label className="rc-field rc-field-full">
             <span>Observaciones</span>
             <textarea
+              className={fieldClass(errors.observations)}
+              maxLength={NOTES_MAX_LENGTH}
               value={observations}
               onChange={(e) => setObservations(e.target.value)}
               placeholder="Notas adicionales..."
             />
+            <small aria-live="polite">
+              {observations.length}/{NOTES_MAX_LENGTH}
+            </small>
+            {errors.observations && <small className="rc-field-error">{errors.observations}</small>}
           </label>
         </div>
         <div className="modal-foot">

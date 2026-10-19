@@ -1,8 +1,24 @@
 import assert from 'node:assert/strict';
-import { test, afterEach } from 'node:test';
+import { test, afterEach, mock } from 'node:test';
 import { create, act } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ReservationFormModal } from '@/modules/front-desk/components/workspace/ReceptionModals';
+import {
+  STAY_DATES_REQUIRED,
+  STAY_RANGE_INVALID,
+  hotelToday,
+  isDigitsOnly,
+  keepPhoneDigits,
+  nextCalendarDay,
+  normalizeChildren,
+  normalizePersonName,
+  validateEmail,
+  validateGuestCounts,
+  validateNotes,
+  validatePersonName,
+  validatePhone,
+  validateStayDates,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import { PrivateWorkspace } from '@/private/workspace/PrivateWorkspace';
 import { calculateNights } from '@/shared/utils/date';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
@@ -142,21 +158,43 @@ const dateAlert = () =>
   view.root.findAll((node) => node.props.role === 'alert').map((node) => text(node));
 const formIsOpen = () => text(view.root).includes('Crear reserva manual');
 const ratePreview = () => view.root.findAll((node) => hasClass(node, 'rc-rate-preview'));
-const fillGuestAndRoom = () => {
-  const [name, lastName, phone] = view.root.findAll(
-    (node) => node.type === 'input' && hasClass(node, 'rc-input') && node.props.type !== 'date',
+const formInput = (predicate) =>
+  view.root.find((node) => node.type === 'input' && hasClass(node, 'rc-input') && predicate(node));
+const textInputs = () =>
+  view.root.findAll(
+    (node) => node.type === 'input' && hasClass(node, 'rc-input') && node.props.type === undefined,
   );
-  act(() => name.props.onChange({ target: { value: 'Ana' } }));
-  act(() => lastName.props.onChange({ target: { value: 'López' } }));
-  act(() => phone.props.onChange({ target: { value: '5555-0000' } }));
+const typeInto = (input, value) => act(() => input.props.onChange({ target: { value } }));
+const phoneInput = () => formInput((node) => node.props.name === 'phone');
+const emailInput = () => formInput((node) => node.props.type === 'email');
+const adultsInput = () => formInput((node) => node.props.name === 'adults');
+const childrenInput = () => formInput((node) => node.props.name === 'children');
+const fillGuestAndRoom = () => {
+  const [name, lastName] = textInputs();
+  typeInto(name, 'Ana');
+  typeInto(lastName, 'López');
+  typeInto(phoneInput(), '+502 5555-0000');
+  typeInto(emailInput(), 'ana.lopez@example.com');
   act(() => buttons('Hab. 101')[0].props.onClick());
 };
+const fieldErrors = () =>
+  view.root.findAll((node) => hasClass(node, 'rc-field-error')).map((node) => text(node));
+const openSummary = () => act(() => buttons('Ver resumen')[0].props.onClick());
+// Fechas relativas al día del hotel: la entrada no puede ser anterior a hoy en Guatemala.
+const dayFromToday = (offset) => {
+  let day = hotelToday();
+  for (let i = 0; i < offset; i++) day = nextCalendarDay(day);
+  return day;
+};
+const IN_2 = dayFromToday(2);
+const IN_5 = dayFromToday(5);
+const IN_7 = dayFromToday(7);
 
 for (const [label, checkIn, checkOut, message] of [
-  ['salida anterior a la entrada', '2024-09-08', '2024-09-02', INVALID_RANGE],
-  ['misma fecha de entrada y salida', '2024-09-08', '2024-09-08', INVALID_RANGE],
-  ['fecha de salida vacía', '2024-09-08', '', 'Fechas obligatorias'],
-  ['fecha de entrada vacía', '', '2024-09-08', 'Fechas obligatorias'],
+  ['salida anterior a la entrada', IN_7, IN_2, INVALID_RANGE],
+  ['misma fecha de entrada y salida', IN_7, IN_7, INVALID_RANGE],
+  ['fecha de salida vacía', IN_7, '', STAY_DATES_REQUIRED],
+  ['fecha de entrada vacía', '', IN_7, STAY_DATES_REQUIRED],
 ]) {
   test(`reserva manual: ${label} muestra error inline sin tumbar la app ni guardar`, () => {
     const saved = renderReservationForm();
@@ -176,23 +214,296 @@ for (const [label, checkIn, checkOut, message] of [
 test('reserva manual: al corregir las fechas se recupera el flujo y guarda 2 noches', () => {
   const saved = renderReservationForm();
   fillGuestAndRoom();
-  setDates('2024-09-08', '2024-09-02');
+  setDates(IN_7, IN_2);
   assert.deepEqual(dateAlert(), [INVALID_RANGE]);
 
-  setDates('2024-08-31', '2024-09-02');
+  setDates(IN_5, IN_7);
   assert.deepEqual(dateAlert(), []);
   assert.match(text(ratePreview()[0]), /× 2 noches/);
   const summary = buttons('Ver resumen')[0];
   assert.equal(summary.props.disabled, false);
   act(() => summary.props.onClick());
-  assert.match(text(view.root), /2024-08-31 → 2024-09-02 · 2 noches/);
+  assert.match(text(view.root), new RegExp(`${IN_5} → ${IN_7} · 2 noches`));
 
   act(() => buttons('Confirmar reserva')[0].props.onClick());
   assert.equal(saved.length, 1);
-  assert.equal(saved[0].checkIn, '2024-08-31');
-  assert.equal(saved[0].checkOut, '2024-09-02');
+  assert.equal(saved[0].checkIn, IN_5);
+  assert.equal(saved[0].checkOut, IN_7);
   assert.equal(saved[0].folio[0].concept, 'Alojamiento 2 noches');
   assert.equal(saved[0].folio[0].amount, 1000);
+});
+
+// --- Recepción: Nueva reserva · validaciones de la subfase 1B (etapa 1) ------
+
+test('nueva reserva · reglas: teléfono solo dígitos, de 8 a 20', () => {
+  assert.equal(validatePhone('55550000'), null, '8 dígitos (mínimo)');
+  assert.equal(validatePhone('50255550000'), null, '11 dígitos');
+  assert.equal(validatePhone('1'.repeat(20)), null, '20 dígitos (máximo)');
+  assert.equal(validatePhone(''), 'Ingresa el teléfono.');
+  assert.equal(validatePhone('   '), 'Ingresa el teléfono.');
+  assert.equal(validatePhone('5555000'), 'Ingresa un teléfono válido.', '7 dígitos');
+  assert.equal(validatePhone('1'.repeat(21)), 'Ingresa un teléfono válido.', '21 dígitos');
+  // Sin prefijo, espacios, guiones, paréntesis ni letras (validación previa a guardar).
+  for (const phone of ['+50255550000', '5555 0000', '5555-0000', '(502)55550000', '5555abcd']) {
+    assert.equal(validatePhone(phone), 'Ingresa un teléfono válido.', phone);
+  }
+});
+
+test('nueva reserva · reglas: correo obligatorio, con formato y máximo 254', () => {
+  assert.equal(validateEmail('ana.lopez@example.com'), null);
+  assert.equal(validateEmail('  maria+viajes@hotel.com.gt '), null, 'se recorta y admite +');
+  assert.match(validateEmail(''), /Ingresa el correo/);
+  assert.match(validateEmail('   '), /Ingresa el correo/);
+  for (const invalid of ['ana', 'ana@', '@example.com', 'ana@example', 'ana @x.com', 'a@b..com']) {
+    assert.match(validateEmail(invalid), /formato válido/, invalid);
+  }
+  assert.match(validateEmail(`${'a'.repeat(250)}@x.com`), /no puede superar 254/);
+});
+
+test('nueva reserva · reglas: fechas desde hoy en Guatemala y máximo 90 noches', () => {
+  const today = '2026-10-18';
+  assert.equal(validateStayDates('2026-10-18', '2026-10-19', today), null, 'entrada hoy');
+  assert.match(
+    validateStayDates('2026-10-17', '2026-10-19', today),
+    /anterior a hoy \(18-10-2026\)/,
+  );
+  assert.equal(validateStayDates('2026-10-18', '2027-01-16', today), null, '90 noches');
+  assert.match(validateStayDates('2026-10-18', '2027-01-17', today), /no puede superar 90 noches/);
+  assert.equal(validateStayDates('2026-10-20', '2026-10-20', today), STAY_RANGE_INVALID);
+  assert.equal(validateStayDates('', '2026-10-20', today), STAY_DATES_REQUIRED);
+  assert.match(validateStayDates('20-10-2026', '2026-10-21', today), /Formato de fecha/);
+  // A las 05:30 UTC del 19 todavía es 18 en Guatemala (UTC−6).
+  assert.equal(hotelToday(new Date('2026-10-19T05:30:00Z')), '2026-10-18');
+  assert.equal(hotelToday(new Date('2026-10-19T06:30:00Z')), '2026-10-19');
+});
+
+test('nueva reserva · reglas: adultos y menores enteros dentro de la capacidad', () => {
+  assert.deepEqual(validateGuestCounts('2', '1', 3), {});
+  assert.deepEqual(validateGuestCounts('1', '0'), {});
+  assert.equal(validateGuestCounts('0', '0').adults, 'Mínimo 1 adulto.');
+  assert.equal(validateGuestCounts('', '0').adults, 'Ingresa la cantidad de adultos.');
+  assert.equal(validateGuestCounts('-1', '0').adults, 'Ingresa un número entero.');
+  assert.equal(validateGuestCounts('1.5', '0').adults, 'Ingresa un número entero.');
+  assert.equal(validateGuestCounts('1', '-1').children, 'Ingresa un número entero.');
+  assert.equal(validateGuestCounts('1', '0.5').children, 'Ingresa un número entero.');
+  assert.match(validateGuestCounts('2', '1', 2).capacity, /admite 2 huéspedes como máximo/);
+});
+
+test('nueva reserva · reglas: filtros de escritura de cantidades y teléfono', () => {
+  for (const ok of ['', '0', '1', '12']) assert.equal(isDigitsOnly(ok), true, ok);
+  for (const bad of ['-9', '-', '1.5', '1,5', 'abc', '1e2', ' 1', '1 ', '+1']) {
+    assert.equal(isDigitsOnly(bad), false, bad);
+  }
+  assert.equal(normalizeChildren(''), '0');
+  assert.equal(normalizeChildren('   '), '0');
+  assert.equal(normalizeChildren('2'), '2');
+  assert.equal(keepPhoneDigits('+502 (5555)-0000'), '50255550000', 'pegado con formato');
+  assert.equal(keepPhoneDigits('55ab55#00$00'), '55550000', 'letras y símbolos');
+  assert.equal(keepPhoneDigits('1'.repeat(25)), '1'.repeat(20), 'como máximo 20 dígitos');
+});
+
+test('nueva reserva · reglas: observaciones hasta 500 caracteres', () => {
+  assert.equal(validateNotes(''), null);
+  assert.equal(validateNotes('a'.repeat(500)), null, '500 caracteres');
+  assert.equal(validateNotes('a'.repeat(501)), 'Máximo 500 caracteres.', '501 caracteres');
+});
+
+test('nueva reserva: la textarea de observaciones limita a 500 y muestra el contador', () => {
+  renderReservationForm();
+  const textarea = () => view.root.find((node) => node.type === 'textarea');
+  assert.equal(textarea().props.maxLength, 500);
+  assert.match(text(view.root), /0\/500/);
+  act(() => textarea().props.onChange({ target: { value: 'Llega tarde' } }));
+  assert.match(text(view.root), /11\/500/);
+});
+
+test('nueva reserva: no guarda con teléfono, correo o cantidades inválidas', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  typeInto(phoneInput(), '555');
+  typeInto(emailInput(), 'ana@');
+  typeInto(adultsInput(), '0');
+  openSummary();
+  assert.ok(formIsOpen(), 'no avanza al resumen');
+  const errors = fieldErrors();
+  assert.ok(errors.includes('Ingresa un teléfono válido.'), errors.join(' | '));
+  assert.ok(errors.some((error) => /formato válido/.test(error)));
+  assert.ok(errors.includes('Mínimo 1 adulto.'), 'no corrige el 0 a 1 en silencio');
+  assert.equal(adultsInput().props.value, '0');
+  assert.equal(saved.length, 0);
+});
+
+test('nueva reserva: adultos solo admite dígitos al escribir', () => {
+  renderReservationForm();
+  assert.equal(adultsInput().props.type, 'text', 'evita los comportamientos de type="number"');
+  assert.equal(adultsInput().props.inputMode, 'numeric');
+  typeInto(adultsInput(), '2');
+  for (const rejected of ['-9', '1.5', 'abc', '2e1', ' 2']) {
+    typeInto(adultsInput(), rejected);
+    assert.equal(adultsInput().props.value, '2', `"${rejected}" no se guarda en el estado`);
+  }
+  typeInto(adultsInput(), '');
+  openSummary();
+  assert.ok(fieldErrors().includes('Ingresa la cantidad de adultos.'));
+});
+
+test('nueva reserva: menores solo admite dígitos y vacío vuelve a 0', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  typeInto(childrenInput(), '1');
+  assert.equal(childrenInput().props.value, '1', '1 es válido');
+  for (const rejected of ['-5', 'abc', '0.5', '1e1']) {
+    typeInto(childrenInput(), rejected);
+    assert.equal(childrenInput().props.value, '1', `"${rejected}" no se guarda en el estado`);
+  }
+  typeInto(childrenInput(), '0');
+  assert.equal(childrenInput().props.value, '0', '0 es válido');
+
+  // Al perder el foco, vacío vuelve a 0.
+  typeInto(childrenInput(), '');
+  act(() => childrenInput().props.onBlur());
+  assert.equal(childrenInput().props.value, '0');
+
+  // Al pulsar "Ver resumen", vacío vuelve a 0 sin error y continúa.
+  typeInto(childrenInput(), '');
+  openSummary();
+  assert.ok(!formIsOpen(), 'avanza al resumen');
+  assert.ok(!fieldErrors().some((error) => /menores/i.test(error)));
+  assert.match(text(view.root), /1 adulto · 0 menores/);
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].children, 0, 'nunca NaN');
+  assert.ok(Number.isInteger(saved[0].adults) && Number.isInteger(saved[0].children));
+});
+
+test('nueva reserva: teléfono filtra lo que no es dígito y acepta de 8 a 20', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  assert.equal(phoneInput().props.type, 'text');
+  assert.equal(phoneInput().props.inputMode, 'numeric');
+  assert.equal(phoneInput().props.maxLength, 20);
+  assert.equal(phoneInput().props.placeholder, '55550000');
+
+  // Pegado con letras y símbolos: solo quedan los dígitos.
+  typeInto(phoneInput(), '+502 (5555)-abc 0000!');
+  assert.equal(phoneInput().props.value, '50255550000');
+  // 21 dígitos: el adicional no se almacena.
+  typeInto(phoneInput(), '1'.repeat(21));
+  assert.equal(phoneInput().props.value, '1'.repeat(20));
+
+  typeInto(phoneInput(), '5555000');
+  openSummary();
+  assert.ok(fieldErrors().includes('Ingresa un teléfono válido.'), '7 dígitos');
+  typeInto(phoneInput(), '');
+  openSummary();
+  assert.ok(fieldErrors().includes('Ingresa el teléfono.'));
+
+  typeInto(phoneInput(), '55550000');
+  openSummary();
+  assert.ok(!formIsOpen(), '8 dígitos avanza');
+  act(() => buttons('Volver')[0].props.onClick());
+  typeInto(phoneInput(), '1'.repeat(20));
+  openSummary();
+  assert.ok(!formIsOpen(), '20 dígitos avanza');
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.equal(saved[0].guest.phone, '1'.repeat(20));
+});
+
+test('nueva reserva: adultos + menores no superan la capacidad de la habitación', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  typeInto(adultsInput(), '2');
+  typeInto(childrenInput(), '1');
+  openSummary();
+  assert.ok(formIsOpen(), 'no avanza al resumen con 3 huéspedes en capacidad 2');
+  assert.ok(fieldErrors().some((error) => /admite 2 huéspedes como máximo/.test(error)));
+  assert.equal(saved.length, 0);
+
+  // Corregido dentro de la capacidad, sí avanza y guarda enteros.
+  typeInto(childrenInput(), '0');
+  openSummary();
+  assert.ok(!formIsOpen());
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.deepEqual([saved[0].adults, saved[0].children, saved[0].guestCount], [2, 0, 2]);
+});
+
+test('nueva reserva: no admite entrada anterior a hoy en Guatemala', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  const yesterday = toDtoCalendarDate(
+    new Date(toDomainCalendarDate(hotelToday()).getTime() - 24 * 60 * 60 * 1000),
+  );
+  setDates(yesterday, IN_2);
+  assert.ok(dateAlert()[0].startsWith('La fecha de entrada no puede ser anterior a hoy'));
+  assert.equal(buttons('Ver resumen')[0].props.disabled, true);
+  assert.equal(dateInputs()[0].props.min, hotelToday(), 'el selector parte de hoy');
+  assert.equal(saved.length, 0);
+});
+
+test('nueva reserva: separa adultos y menores, sin nacionalidad ni documento por defecto', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  typeInto(adultsInput(), '1');
+  typeInto(childrenInput(), '1');
+  assert.equal(
+    view.root.findAll((node) => node.props?.placeholder === 'Edad').length,
+    0,
+    'los acompañantes se registran en el check-in',
+  );
+  openSummary();
+  const summary = text(view.root);
+  assert.match(summary, /Se asignará al confirmar/, 'no inventa el código');
+  assert.ok(!summary.includes('AUR-TEST'));
+  assert.match(summary, /1 adulto · 1 menor/);
+  assert.match(summary, /Total estimadoQ1,000\.00/, 'monto en quetzales y marcado como estimado');
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].adults, 1);
+  assert.equal(saved[0].children, 1);
+  assert.equal(saved[0].guestCount, 2);
+  assert.deepEqual(saved[0].companions, []);
+  assert.equal(saved[0].guest.nationality, '');
+  assert.equal(saved[0].guest.docType, '');
+});
+
+test('nueva reserva: el alta envía adultos y menores reales y no inventa nacionalidad', async () => {
+  // El servicio exige UUID reales de huésped y tipo de habitación.
+  await mountReception({
+    rooms: [
+      hkRoom('room-101', '101', 'clean', { roomTypeId: '30000000-0000-4000-8000-000000000001' }),
+    ],
+  });
+  await act(async () => buttons('Nueva reserva')[0].props.onClick());
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  typeInto(adultsInput(), '1');
+  typeInto(childrenInput(), '1');
+  openSummary();
+  await act(async () => {
+    buttons('Confirmar reserva')[0].props.onClick();
+  });
+  // Huésped, tarifas, alta y confirmación: cuatro llamadas con latencia simulada.
+  for (let i = 0; i < 20 && recBackend.created?.status !== 'confirmed'; i++) await settle(300);
+  await settle();
+
+  const [guestBody] = recCalls('/guests').filter(Boolean);
+  assert.ok(guestBody, 'crea el huésped en el backend');
+  assert.ok(!('nationality' in guestBody), 'sin nacionalidad inventada');
+  assert.ok(!('documentType' in guestBody) && !('documentNumber' in guestBody));
+  assert.equal(guestBody.email, 'ana.lopez@example.com');
+  const bookingBody = recBackend.requests.find(({ call }) => call === 'POST /bookings')?.body;
+  assert.ok(
+    bookingBody,
+    `crea la reserva en el backend · errores: ${fieldErrors().join(' | ')} · toasts: ${toasts().join(' | ')}`,
+  );
+  assert.equal(bookingBody.adults, 1);
+  assert.equal(bookingBody.children, 1, 'los menores ya no se pierden');
+  assert.equal(recBackend.created.status, 'confirmed');
+  assert.ok(toasts().some((toast) => toast.includes('Reserva BKG-NEW00001 creada')));
 });
 
 // --- Limpieza: backend falso de HousekeepingController (INT-09) -----------
@@ -1514,6 +1825,8 @@ test('portal del huésped: el pedido de Room Service no elige la reserva', async
 // --- Recepción: cancelación formal contra BookingController (#126) --------
 
 const REC_BOOKING_ID = '1f24bc67-4a9d-4c1d-9210-d661f60e1260';
+const NEW_GUEST_ID = '40000000-0000-4000-8000-000000000001';
+const NEW_BOOKING_ID = '50000000-0000-4000-8000-000000000001';
 
 function installReceptionBackend({
   bookingStatus = 'confirmed',
@@ -1631,6 +1944,47 @@ function installReceptionBackend({
     }
     if (method === 'GET' && path === '/auth/permissions') {
       return json({ permissions: SESSION_PERMISSIONS.reception });
+    }
+    // Alta de "Nueva reserva": tarifa abierta, huésped nuevo y reserva confirmada.
+    if (method === 'GET' && path === '/rates') {
+      return json([
+        {
+          id: 'rate-standard',
+          // Misma tarifa para el tipo de la primera habitación del escenario.
+          roomTypeId: rooms[0]?.roomTypeId ?? 'type-standard',
+          name: 'Tarifa estándar',
+          validFrom: '2020-01-01',
+          validTo: '2099-12-31',
+          priceCents: 50000,
+          currency: 'GTQ',
+          minimumNights: 1,
+          refundable: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+    }
+    if (method === 'POST' && path === '/guests') {
+      return json({ id: NEW_GUEST_ID, ...body, createdAt: now, updatedAt: now }, 201);
+    }
+    if (method === 'POST' && path === '/bookings') {
+      state.created = {
+        id: NEW_BOOKING_ID,
+        confirmationCode: 'BKG-NEW00001',
+        guestLinkCode: 'GL-NEW00001',
+        ...body,
+        status: 'pending',
+        totalAmountCents: 100000,
+        currency: 'GTQ',
+        createdAt: now,
+        updatedAt: now,
+      };
+      return json(state.created, 201);
+    }
+    if (method === 'POST' && path === `/bookings/${NEW_BOOKING_ID}/confirm`) {
+      state.created.status = 'confirmed';
+      return json(state.created);
     }
     if (method === 'GET') return json([]);
     return json({ message: `Ruta no mockeada: ${method} ${path}` }, 404);
@@ -2051,4 +2405,225 @@ test('auditoría: administración conserva la consulta en su panel y al ver Rece
   await act(async () => resumen.props.onClick());
   for (let i = 0; i < 20 && auditCalls() === before; i++) await settle(300);
   assert.ok(auditCalls() > before, 'el administrador sigue consultando auditoría al ver Recepción');
+});
+
+// --- Nueva reserva: nombres, correo compatible con el backend, teléfono y cambio de día ---
+
+const VALID_NAMES = [
+  // Guatemala
+  'José María',
+  'María José',
+  'Ana Lucía',
+  'José Ángel',
+  'Muñoz',
+  'De la Cruz',
+  'María-José de León',
+  'Ma. José',
+  'Xiomara Ixchel',
+  // Internacionales
+  "O'Connor",
+  'O\u2019Connor',
+  'Jean-Pierre',
+  "D'Ángelo",
+  'St. John',
+  'Nguyễn Văn An',
+  'Zoë',
+  'Øyvind',
+  'Đorđe',
+  'Al-Hassan',
+];
+const INVALID_NAMES = [
+  'Ana2',
+  '123',
+  'J0sé',
+  '@na',
+  'Ana!',
+  'Ana_Lucía',
+  'Ana/Lucía',
+  '<script>',
+  'Ana 😀',
+  '-Ana',
+  'Ana-',
+  "'Ana",
+  "Ana'",
+  '. Ana',
+  'Jean--Pierre',
+  "O''Connor",
+  'Ana - Lucía',
+  'Ana..',
+  'Ana\u200B',
+];
+
+test('nueva reserva · nombres: acepta nombres guatemaltecos e internacionales', () => {
+  for (const name of VALID_NAMES) {
+    assert.equal(validatePersonName(name, 'nombre'), null, name);
+    assert.equal(validatePersonName(name, 'apellido'), null, name);
+  }
+});
+
+test('nueva reserva · nombres: rechaza dígitos, emojis, símbolos y separadores sueltos', () => {
+  for (const name of INVALID_NAMES) {
+    assert.equal(validatePersonName(name, 'nombre'), 'Solo se permiten letras.', name);
+  }
+  assert.equal(validatePersonName('', 'nombre'), 'Ingresa el nombre.');
+  assert.equal(validatePersonName('   ', 'apellido'), 'Ingresa el apellido.');
+});
+
+test('nueva reserva · nombres: mínimo 3 letras reales', () => {
+  // Menos de 3 letras.
+  assert.equal(validatePersonName('s', 'nombre'), 'Mínimo 3 letras.');
+  assert.equal(validatePersonName('w', 'apellido'), 'Mínimo 3 letras.');
+  assert.equal(validatePersonName('A', 'nombre'), 'Mínimo 3 letras.');
+  assert.equal(validatePersonName('Jo', 'nombre'), 'Mínimo 3 letras.');
+  assert.equal(validatePersonName('Li', 'apellido'), 'Mínimo 3 letras.');
+  // Una o dos letras con separadores: los separadores no cuentan como letras.
+  for (const name of ['A.', 'J.R.', 'A-B', 'A B', 'Jo.', '  s  ', 'A. B.']) {
+    assert.equal(validatePersonName(name, 'nombre'), 'Mínimo 3 letras.', name);
+  }
+  // Separadores sueltos o en un extremo: se rechazan por formato.
+  for (const name of ['-', "'", '.', '- -', "O'", '-A', 'A-']) {
+    assert.equal(validatePersonName(name, 'nombre'), 'Solo se permiten letras.', name);
+  }
+  // 3 letras o más.
+  assert.equal(validatePersonName('José', 'nombre'), null);
+  assert.equal(validatePersonName('Muñoz', 'apellido'), null);
+  assert.equal(validatePersonName('Ana María', 'nombre'), null);
+  assert.equal(validatePersonName('Zoë', 'nombre'), null, 'ë es una sola letra');
+  assert.equal(validatePersonName('Ana', 'nombre'), null, 'exactamente 3 letras');
+  assert.equal(validatePersonName('Jo Li', 'nombre'), null, '4 letras en dos palabras');
+  // Tilde combinada: tras NFC "e" + U+0301 es una sola letra.
+  assert.equal(validatePersonName('Jose\u0301', 'nombre'), null);
+  assert.equal(validatePersonName('  Ana   María  ', 'nombre'), null, 'espacios sobrantes');
+});
+
+test('nueva reserva · nombres: máximo 20 caracteres con tildes, ñ y espacios', () => {
+  // Exactamente 20 caracteres.
+  for (const name of ['María José Peñate Ló', 'José Ángel Muñoz Paz', 'a'.repeat(20)]) {
+    assert.equal(name.length, 20, name);
+    assert.equal(validatePersonName(name, 'nombre'), null, name);
+  }
+  // 21 caracteres.
+  for (const name of ['María-José de la Cruz', 'José Ángel Muñoz Pazo', 'a'.repeat(21)]) {
+    assert.equal(name.length, 21, name);
+    assert.equal(validatePersonName(name, 'apellido'), 'Máximo 20 caracteres.', name);
+  }
+  // Los espacios sobrantes no cuentan: se normaliza antes de medir.
+  assert.equal(validatePersonName('  José   Ángel  Muñoz ', 'nombre'), null);
+  assert.equal(validatePersonName('Ñuñoa Peñalosa', 'apellido'), null);
+});
+
+test('nueva reserva · nombres: normaliza espacios y Unicode sin cambiar mayúsculas', () => {
+  assert.equal(normalizePersonName('  José   María  '), 'José María');
+  assert.equal(normalizePersonName('Ana\tLucía'), 'Ana Lucía');
+  // "e" + acento combinado (U+0301) se guarda como "é" (NFC).
+  assert.equal(normalizePersonName('Jose\u0301'), 'José');
+  assert.equal(normalizePersonName('De la Cruz'), 'De la Cruz');
+  assert.equal(normalizePersonName('mcDONALD'), 'mcDONALD');
+});
+
+test('nueva reserva · correo: rechaza lo que el backend rechaza', () => {
+  // Rechazados por el @Email del backend (comprobado contra la API real).
+  for (const email of [
+    'a..b@x.com',
+    '.ana@x.com',
+    'ana.@x.com',
+    'ana@-x.com',
+    'ana@x-.com',
+    'ana@x..com',
+    'ana@.x.com',
+    'ana@x.com.',
+    'ana(x)@x.com',
+    'ana,b@x.com',
+    'ana b@x.com',
+    'ana@@x.com',
+  ]) {
+    assert.match(validateEmail(email), /formato válido/, email);
+  }
+  assert.match(validateEmail(`${'a'.repeat(65)}@x.com`), /antes de @ no puede superar 64/);
+  assert.match(validateEmail(`ana@${'b'.repeat(64)}.com`), /como máximo 63/);
+});
+
+test('nueva reserva · correo: acepta formatos válidos que el backend también acepta', () => {
+  for (const email of [
+    'ana.lopez@example.com',
+    'maria+viajes@hotel.com.gt',
+    "o'connor@example.com",
+    'ana_b@x.com',
+    'ana@ex-ample.com',
+    'ana@ex_ample.com',
+    'josé@correo.gt',
+    'ñandú@correo.gt',
+    'ana@ñandú.gt',
+    'ana@x.123',
+    `${'a'.repeat(64)}@x.com`,
+    `ana@${'b'.repeat(63)}.com`,
+  ]) {
+    assert.equal(validateEmail(email), null, email);
+  }
+  // Más estricto que el backend a propósito: exige un dominio con punto.
+  assert.match(validateEmail('ana@localhost'), /formato válido/);
+});
+
+test('nueva reserva: rechaza nombres con dígitos y guarda los nombres normalizados', () => {
+  const saved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  const [name, lastName] = textInputs();
+  assert.equal(name.props.maxLength, 20);
+  assert.equal(lastName.props.maxLength, 20);
+  typeInto(name, 'Ana2');
+  typeInto(lastName, 'L@pez');
+  openSummary();
+  assert.ok(formIsOpen(), 'no avanza al resumen');
+  assert.equal(
+    fieldErrors().filter((error) => error === 'Solo se permiten letras.').length,
+    2,
+    'un error en nombre y otro en apellido',
+  );
+
+  typeInto(name, '');
+  openSummary();
+  assert.ok(fieldErrors().includes('Ingresa el nombre.'));
+
+  // "s" / "w": una sola letra no permite avanzar al resumen.
+  typeInto(name, 's');
+  typeInto(lastName, 'w');
+  openSummary();
+  assert.ok(formIsOpen(), 'no avanza al resumen con "s" / "w"');
+  assert.equal(fieldErrors().filter((error) => error === 'Mínimo 3 letras.').length, 2);
+  assert.equal(saved.length, 0);
+
+  typeInto(name, '  José   María ');
+  typeInto(lastName, 'de la Cruz');
+  openSummary();
+  assert.match(text(view.root), /José María de la Cruz/);
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].guest.name, 'José María');
+  assert.equal(saved[0].guest.lastName, 'de la Cruz', 'conserva las minúsculas originales');
+});
+
+test('nueva reserva: al cambiar el día en Guatemala, valida con la fecha nueva al guardar', () => {
+  // 23:50 del 18-10-2026 en Guatemala (UTC−6) = 05:50 UTC del 19.
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-19T05:50:00Z') });
+  try {
+    const saved = renderReservationForm();
+    fillGuestAndRoom();
+    setDates('2026-10-18', '2026-10-20');
+    assert.deepEqual(dateAlert(), [], 'el 18 todavía es hoy');
+    openSummary();
+    assert.ok(!formIsOpen(), 'el resumen se abre');
+
+    // Pasa la medianoche: 00:10 del 19 en Guatemala.
+    mock.timers.setTime(Date.parse('2026-10-19T06:10:00Z'));
+    act(() => buttons('Confirmar reserva')[0].props.onClick());
+
+    assert.equal(saved.length, 0, 'no guarda una entrada que ya es pasada');
+    assert.ok(formIsOpen(), 'vuelve al formulario para mostrar el error');
+    assert.deepEqual(dateAlert(), [
+      'La fecha de entrada no puede ser anterior a hoy (19-10-2026).',
+    ]);
+  } finally {
+    mock.timers.reset();
+  }
 });

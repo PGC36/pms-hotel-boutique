@@ -293,6 +293,9 @@ export type Reservation = {
   roomType: RoomType;
   rate: number;
   guestCount: number;
+  /** Adultos y menores por separado; `guestCount` es su suma. */
+  adults?: number;
+  children?: number;
   status: ReservationStatus;
   origin: string;
   observations: string;
@@ -979,8 +982,11 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
       roomType: getRoomTypeLabel(booking.roomTypeId, roomTypes),
       rate: centsToAmount(booking.totalAmountCents) / nights,
       guestCount: booking.adults + booking.children,
+      adults: booking.adults,
+      children: booking.children,
       status,
-      origin: 'Online',
+      // El backend aún no guarda el canal: no se atribuye un origen que no consta.
+      origin: 'Sin registrar',
       observations: booking.notes ?? '',
       checkInTime:
         status === 'Check-in' || status === 'Check-out' ? formatDbTime(booking.updatedAt) : null,
@@ -2874,8 +2880,8 @@ function PrivateWorkspaceReady({
       rate_id: rate.id,
       check_in: reservation.checkIn,
       check_out: reservation.checkOut,
-      adults: reservation.guestCount,
-      children: 0,
+      adults: reservation.adults ?? reservation.guestCount,
+      children: reservation.children ?? 0,
       notes: reservation.observations.trim() || undefined,
     });
     const confirmed = await bookingService.confirmBooking(created.id);
