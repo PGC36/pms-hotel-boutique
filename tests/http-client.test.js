@@ -95,7 +95,10 @@ test('ignora excepciones y respuestas genéricas, pero conserva el detalle útil
     trace: ' at org.springframework.Service.run(Service.java:10)',
   });
   assert.equal(error.message, 'No pudimos completar la operación. Intenta nuevamente.');
-  assert.doesNotMatch(getUserFacingErrorMessage(error, 'No se pudo guardar.'), /HTTP 500|Exception|trace/i);
+  assert.doesNotMatch(
+    getUserFacingErrorMessage(error, 'No se pudo guardar.'),
+    /HTTP 500|Exception|trace/i,
+  );
 });
 
 test('los errores de red no filtran el mensaje técnico de fetch', async () => {

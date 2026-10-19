@@ -20,7 +20,10 @@ type ScreenState =
 type RoomTypeRow = { roomType: RoomType; featureNames: string };
 
 function getErrorMessage(cause: unknown): string {
-  return getUserFacingErrorMessage(cause, 'No pudimos cargar los tipos de habitación. Intenta nuevamente.');
+  return getUserFacingErrorMessage(
+    cause,
+    'No pudimos cargar los tipos de habitación. Intenta nuevamente.',
+  );
 }
 
 export function RoomTypeListScreen() {

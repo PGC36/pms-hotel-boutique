@@ -1709,7 +1709,12 @@ test('recepción: no consulta endpoints de solicitudes internas ni finanzas sin 
       `recepción no consulta ${path}`,
     );
   }
-  for (const path of ['/room-service/products', '/room-service/orders', '/concierge/requests', '/admin/audit-logs']) {
+  for (const path of [
+    '/room-service/products',
+    '/room-service/orders',
+    '/concierge/requests',
+    '/admin/audit-logs',
+  ]) {
     assert.ok(
       !recBackend.requests.some(({ call }) => call.startsWith(`GET ${path}`)),
       `recepción no consulta ${path}`,

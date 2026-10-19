@@ -3810,11 +3810,36 @@ test('#126: listados financieros globales muestran errores comprensibles sin fal
   };
 
   for (const [label, call, path, expectedMessage] of [
-    ['getAccounts', () => guestAccountService.getAccounts(), '/guest-accounts', /No tienes permisos para operar el folio/],
-    ['getCharges', () => guestAccountService.getCharges(), '/charges', /No tienes permisos para operar el folio/],
-    ['getPayments', () => guestAccountService.getPayments(), '/payments', /No tienes permisos para operar el folio/],
-    ['getDeposits', () => guestAccountService.getDeposits(), '/deposits', /No tienes permisos para operar el folio/],
-    ['getRequests', () => serviceRequestService.getRequests(), '/service-requests', /No tienes permisos para operar solicitudes/],
+    [
+      'getAccounts',
+      () => guestAccountService.getAccounts(),
+      '/guest-accounts',
+      /No tienes permisos para operar el folio/,
+    ],
+    [
+      'getCharges',
+      () => guestAccountService.getCharges(),
+      '/charges',
+      /No tienes permisos para operar el folio/,
+    ],
+    [
+      'getPayments',
+      () => guestAccountService.getPayments(),
+      '/payments',
+      /No tienes permisos para operar el folio/,
+    ],
+    [
+      'getDeposits',
+      () => guestAccountService.getDeposits(),
+      '/deposits',
+      /No tienes permisos para operar el folio/,
+    ],
+    [
+      'getRequests',
+      () => serviceRequestService.getRequests(),
+      '/service-requests',
+      /No tienes permisos para operar solicitudes/,
+    ],
   ]) {
     await assert.rejects(call, expectedMessage, `${label} no devuelve [] ni filtra rutas internas`);
     assert.equal(calls.at(-1), path, `${label} consulta ${path}`);

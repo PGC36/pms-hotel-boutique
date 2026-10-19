@@ -647,10 +647,22 @@ test('each staff role only sees its menu and direct unauthorized URLs are blocke
       ['/pms/users', '/pms/reception/admin', '/pms/reception/roomservice'],
       7,
     ],
-    ['limpieza', '/pms/housekeeping', 'Habitaciones', ['/pms/cash', '/pms/housekeeping/roomservice'], 4],
+    [
+      'limpieza',
+      '/pms/housekeeping',
+      'Habitaciones',
+      ['/pms/cash', '/pms/housekeeping/roomservice'],
+      4,
+    ],
     ['conserjeria', '/pms/concierge', 'Solicitudes', ['/pms/cash', '/pms/concierge/admin'], 3],
     // Sin inventory.read no se ofrece Inventario (el backend respondería 403).
-    ['roomservice', '/pms/room-service', 'Pedidos activos', ['/pms/users', '/pms/room-service/admin'], 3],
+    [
+      'roomservice',
+      '/pms/room-service',
+      'Pedidos activos',
+      ['/pms/users', '/pms/room-service/admin'],
+      3,
+    ],
     // Incluye los catálogos administrables de Conserjería y Limpieza.
     ['admin', '/pms/dashboard', 'Administración', [], 49],
   ];
@@ -670,7 +682,10 @@ test('each staff role only sees its menu and direct unauthorized URLs are blocke
         await act(async () => {
           await router.navigate(path);
         });
-        assert.ok(text().includes('No tienes permiso para ver esta sección'), `${account}: ${path}`);
+        assert.ok(
+          text().includes('No tienes permiso para ver esta sección'),
+          `${account}: ${path}`,
+        );
       }
       await act(async () => {
         await router.navigate(expectedPath);

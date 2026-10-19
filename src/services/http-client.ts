@@ -83,13 +83,14 @@ export function getControlledBackendMessage(data: unknown, depth = 0): string | 
       if (messages.length) return [...new Set(messages)].join(' ');
     }
     if (errors && typeof errors === 'object') {
-      const messages = Object.entries(errors as Record<string, unknown>)
-        .flatMap(([field, value]) => {
+      const messages = Object.entries(errors as Record<string, unknown>).flatMap(
+        ([field, value]) => {
           const values = Array.isArray(value) ? value : [value];
           return values
             .filter(isSafeBackendMessage)
             .map((message) => `${field}: ${message.trim()}`);
-        });
+        },
+      );
       if (messages.length) return [...new Set(messages)].join(' ');
     }
   }
@@ -108,9 +109,11 @@ function getUserFacingHttpErrorMessage(status: number, data?: unknown): string {
   if (status === 400 || status === 422) return 'Revisa los datos ingresados e intenta de nuevo.';
   if (status === 401) return 'Tu sesión expiró. Inicia sesión nuevamente.';
   if (status === 403) return 'No tienes permiso para realizar esta acción.';
-  if (status === 404) return 'No encontramos la información solicitada. Actualiza e inténtalo de nuevo.';
+  if (status === 404)
+    return 'No encontramos la información solicitada. Actualiza e inténtalo de nuevo.';
   if (status === 409) return 'La información cambió. Actualiza e inténtalo de nuevo.';
-  if (status === 429) return 'Hay muchas solicitudes en curso. Espera un momento e inténtalo de nuevo.';
+  if (status === 429)
+    return 'Hay muchas solicitudes en curso. Espera un momento e inténtalo de nuevo.';
   if (status >= 500) return 'No pudimos completar la operación. Intenta nuevamente.';
   return 'No pudimos completar la solicitud. Intenta nuevamente.';
 }

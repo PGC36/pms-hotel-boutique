@@ -50,7 +50,10 @@ const HOUSEKEEPING_STATUS_TONES: Record<Room['housekeepingStatus'], BadgeTone> =
 };
 
 function getErrorMessage(cause: unknown): string {
-  return getUserFacingErrorMessage(cause, 'No pudimos cargar las habitaciones. Intenta nuevamente.');
+  return getUserFacingErrorMessage(
+    cause,
+    'No pudimos cargar las habitaciones. Intenta nuevamente.',
+  );
 }
 
 export function RoomListScreen() {
