@@ -19,6 +19,7 @@ import {
 } from './mediaService';
 import type { MediaImageAssignmentDto } from '@/shared/types/entities/media-image';
 import { normalizeAmenityTime } from '@/shared/utils/amenitySchedule';
+import { catalogNameError } from '@/shared/utils/catalogName';
 
 type ApiAmenity = {
   id: string;
@@ -164,7 +165,8 @@ export const catalogService = {
   },
   async createAdminProduct(data: SaveProductData): Promise<Product> {
     await simulateLatency();
-    if (!data.name.trim()) throw new Error('El producto requiere nombre.');
+    const nameError = catalogNameError(data.name);
+    if (nameError) throw new Error(nameError);
     if (!data.sku.trim()) throw new Error('El producto requiere SKU.');
     if (!Number.isInteger(data.priceCents) || data.priceCents < 1) {
       throw new Error('El precio debe ser un entero mayor o igual a 1.');
@@ -185,6 +187,8 @@ export const catalogService = {
     }
     const current = (await this.getAdminProducts()).find((product) => product.id === id);
     if (!current) throw new Error(`No existe el producto ${id}.`);
+    const nameError = catalogNameError(data.name ?? current.name);
+    if (nameError) throw new Error(nameError);
     const product = await saveRequest(() =>
       httpClient.put<ApiProduct>(
         `/admin/room-service/products/${id}`,
@@ -203,6 +207,10 @@ export const catalogService = {
       ),
     );
     return toProduct(mapProductFromApi(product));
+  },
+  async deleteAdminProduct(id: string): Promise<void> {
+    await simulateLatency();
+    await httpClient.delete(`/admin/room-service/products/${id}`);
   },
   async getAmenities(): Promise<Amenity[]> {
     await simulateLatency();
@@ -232,7 +240,8 @@ export const catalogService = {
   },
   async createAmenity(data: SaveAmenityData): Promise<Amenity> {
     await simulateLatency();
-    if (!data.name.trim()) throw new Error('La amenidad requiere nombre.');
+    const nameError = catalogNameError(data.name);
+    if (nameError) throw new Error(nameError);
 
     const amenity = await saveRequest(() =>
       httpClient.post<ApiAmenity>('/admin/amenities', toAmenityRequest(data)),
@@ -243,6 +252,8 @@ export const catalogService = {
     await simulateLatency();
     const current = (await this.getAdminAmenities()).find((amenity) => amenity.id === id);
     if (!current) throw new Error(`No existe la amenidad ${id}.`);
+    const nameError = catalogNameError(data.name ?? current.name);
+    if (nameError) throw new Error(nameError);
     const amenity = await saveRequest(() =>
       httpClient.put<ApiAmenity>(
         `/admin/amenities/${id}`,

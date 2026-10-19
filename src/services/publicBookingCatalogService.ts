@@ -15,7 +15,7 @@ import {
   type RoomType,
   type RoomTypeDto,
 } from '@/shared/types/entities/room-type';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { toMediaImageDtos, type ApiMediaImage } from './mediaService';
 import { normalizeAmenityTime } from '@/shared/utils/amenitySchedule';
 import { mockUtils, simulateLatency } from './mockUtils';
@@ -293,6 +293,14 @@ export function toPublicBookingError(
   if (!(error instanceof HttpError)) {
     // Error de red (fetch rechazado) u otra falla sin respuesta HTTP.
     return new PublicBookingError('service_unavailable', SERVICE_UNAVAILABLE_MESSAGE);
+  }
+
+  if (error.status >= 500) {
+    return new PublicBookingError(
+      'service_unavailable',
+      getControlledBackendMessage(error.data) ?? SERVICE_UNAVAILABLE_MESSAGE,
+      error.status,
+    );
   }
 
   const message = backendMessage(error);

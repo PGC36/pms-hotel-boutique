@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Edit2, Plus, X } from 'lucide-react';
+import { Edit2, Plus, Trash2, X } from 'lucide-react';
 
 import {
   housekeepingCatalogService,
@@ -7,6 +7,8 @@ import {
 } from '@/services/housekeepingCatalogService';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
+import { catalogNameError } from '@/shared/utils/catalogName';
 
 export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: string) => void }) {
   const [services, setServices] = useState<HousekeepingServiceOption[]>([]);
@@ -17,6 +19,8 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<HousekeepingServiceOption | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -43,6 +47,11 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    const nameError = catalogNameError(name);
+    if (nameError) {
+      onAction(nameError);
+      return;
+    }
     setSaving(true);
     try {
       const saved = await housekeepingCatalogService.saveService(
@@ -81,6 +90,20 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
     }
   };
 
+  const remove = async (service: HousekeepingServiceOption) => {
+    setDeletingId(service.id);
+    try {
+      await housekeepingCatalogService.deleteService(service.id);
+      setServices((current) => current.filter((item) => item.id !== service.id));
+      setPendingDelete(null);
+      onAction('Opción eliminada del catálogo; se conserva en el historial.');
+    } catch (cause) {
+      onAction(cause instanceof Error ? cause.message : 'No fue posible eliminar la opción.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="panel">
       <div className="panel-heading">
@@ -98,9 +121,16 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
             Nombre
             <input
               required
+              minLength={2}
               maxLength={120}
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                event.currentTarget.setCustomValidity('');
+              }}
+              onBlur={(event) =>
+                event.currentTarget.setCustomValidity(catalogNameError(event.target.value) ?? '')
+              }
             />
           </label>
           <label>
@@ -160,14 +190,35 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
                 <button
                   className={`button small ${service.active ? 'secondary' : 'primary'}`}
                   onClick={() => void toggle(service)}
+                  type="button"
                 >
                   {service.active ? 'Desactivar' : 'Activar'}
+                </button>
+                <button
+                  className="icon-btn danger"
+                  aria-label={`Eliminar ${service.name}`}
+                  title="Eliminar del catálogo"
+                  type="button"
+                  disabled={deletingId === service.id}
+                  onClick={() => setPendingDelete(service)}
+                >
+                  <Trash2 size={15} />
                 </button>
               </div>
             </div>
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Eliminar opción de limpieza"
+        description={`¿Seguro que quieres eliminar “${pendingDelete?.name ?? ''}” del catálogo? Se conservará en el historial de solicitudes.`}
+        pending={pendingDelete !== null && deletingId === pendingDelete.id}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void remove(pendingDelete);
+        }}
+      />
     </div>
   );
 }

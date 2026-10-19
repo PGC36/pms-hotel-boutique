@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
   ArrowRight,
@@ -21,6 +22,7 @@ import {
   Headphones,
   Home,
   LogOut,
+  LoaderCircle,
   Menu,
   MessageSquare,
   MoreHorizontal,
@@ -519,7 +521,7 @@ const toCleaningRoom = (
   room: Room,
   id: number,
   type: string,
-  checklist?: HousekeepingChecklistItem[],
+  checklist?: HousekeepingChecklist,
 ): CleaningRoom => {
   const status = cleaningStatusLabels[room.housekeepingStatus];
   const done = isCleaningDone(status);
@@ -540,7 +542,8 @@ const toCleaningRoom = (
     startTime: startedAt ? formatDbTime(startedAt) : null,
     endTime: completedAt ? formatDbTime(completedAt) : null,
     duration: formatCleaningDuration(startedAt, completedAt),
-    checklist: checklist ?? DEFAULT_CLEANING_CHECKLIST.map((label) => ({ label, done })),
+    checklistId: checklist?.id,
+    checklist: checklist?.items ?? DEFAULT_CLEANING_CHECKLIST.map((label) => ({ label, done })),
   };
 };
 
@@ -607,9 +610,19 @@ function buildHousekeepingState(
     checklists.map((checklist) => [checklist.serviceRequestId, checklist]),
   );
 
-  const cleaningRooms = rooms.map((room, index) =>
-    toCleaningRoom(room, index + 1, getRoomType(room)),
-  );
+  const turnoverChecklists = checklists
+    .filter((checklist) => !checklist.serviceRequestId && checklist.roomId)
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+  const cleaningRooms = rooms.map((room, index) => {
+    const currentChecklist = turnoverChecklists.find((checklist) => checklist.roomId === room.id);
+    const checklist =
+      room.housekeepingStatus === 'cleaning' ||
+      room.housekeepingStatus === 'clean' ||
+      room.housekeepingStatus === 'inspected'
+        ? currentChecklist
+        : undefined;
+    return toCleaningRoom(room, index + 1, getRoomType(room), checklist);
+  });
 
   const guestRequests = stayovers.map((request, index) =>
     toStayoverRequest(
@@ -719,7 +732,7 @@ const toRoomServiceOrder = (
 // solo traduce estados; las transiciones las valida el backend.
 
 /** Roles con `concierge.read` en el backend. */
-const CONCIERGE_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'concierge'];
+const CONCIERGE_READ_ROLES: readonly RoleId[] = ['admin', 'concierge'];
 
 const CLOSED_CONCIERGE_STATUSES: readonly ConciergeStatus[] = [
   'Completada',
@@ -771,18 +784,18 @@ const toConciergeRequest = (
  * Roles con `room-service.read` en el backend. Pedir catálogo o pedidos con
  * otro rol (Limpieza, Conserjería) responde 403 y tumbaría la carga del panel.
  */
-const ROOM_SERVICE_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'room-service'];
+const ROOM_SERVICE_READ_ROLES: readonly RoleId[] = ['admin', 'room-service'];
 const ROOM_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
-const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
+const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin'];
 const BOOKING_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 const GUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 /**
  * `service-requests.read`: Conserjería también lo tiene, pero el backend solo le
  * devuelve solicitudes de conserjería, que ya carga desde `/concierge/requests`.
  */
-const SERVICE_REQUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
+const SERVICE_REQUEST_READ_ROLES: readonly RoleId[] = ['admin', 'housekeeping'];
 /** `folios.read`, `charges.read`, `payments.read` y `deposits.read`. */
-const FINANCE_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
+const FINANCE_READ_ROLES: readonly RoleId[] = ['admin'];
 
 async function safeList<T>(load: () => Promise<T[]>): Promise<T[]> {
   try {
@@ -857,7 +870,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         ? safeList(() => serviceRequestService.getRequests())
         : permissionAwareList(() => serviceRequestService.getRequests())
       : [],
-    safeList(() => auditService.getLogs()),
+    role === 'admin' ? safeList(() => auditService.getLogs()) : [],
     canReadFinance ? permissionAwareList(() => guestAccountService.getCharges()) : [],
     canReadFinance ? permissionAwareList(() => guestAccountService.getPayments()) : [],
     canReadFinance ? permissionAwareList(() => guestAccountService.getDeposits()) : [],
@@ -1379,7 +1392,7 @@ function resolveWorkspaceNav(role: RoleId, activeNav: string, navItems = navByRo
 }
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'No fue posible cargar el panel privado.';
+  return getUserFacingErrorMessage(cause, 'No fue posible cargar el panel privado.');
 }
 
 type LoaderState =
@@ -1715,8 +1728,7 @@ function PrivateWorkspaceReady({
   const contentRole = activeWorkspace.role;
   const contentNav = activeWorkspace.nav;
   const contentLabel = activeWorkspace.label;
-  const workspaceDataRole =
-    activeRole === 'admin' && contentRole !== 'housekeeping' ? activeRole : contentRole;
+  const workspaceDataRole = contentRole;
   const role = roles.find((item) => item.id === activeRole) ?? roles[0];
   const contentRoleInfo = roles.find((item) => item.id === contentRole) ?? role;
   const accountName = sessionName ?? role.person;
@@ -2304,7 +2316,17 @@ function PrivateWorkspaceReady({
 
     try {
       const updated = await housekeepingService.startCleaning(room.roomId);
-      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type));
+      const checklists = await housekeepingService.getChecklists();
+      const checklist = checklists
+        .filter(
+          (item) =>
+            !item.serviceRequestId &&
+            item.roomId === room.roomId &&
+            ['pending', 'in_progress'].includes(item.status),
+        )
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      if (!checklist) throw new Error('No encontramos el checklist activo de esta habitación.');
+      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist));
       notify('Limpieza iniciada correctamente');
     } catch (cause) {
       await failHousekeeping(cause);
@@ -2313,11 +2335,22 @@ function PrivateWorkspaceReady({
 
   const finishCleaning = async (roomId: number) => {
     const room = hkRooms.find((item) => item.id === roomId);
-    if (!room) return;
+    if (!room) return false;
+    if (room.checklist.some((item) => !item.done)) {
+      notify('Marca todas las tareas del checklist antes de finalizar la limpieza.');
+      return false;
+    }
 
     try {
       const updated = await housekeepingService.completeCleaning(room.roomId);
-      const checklist = room.checklist.map((item) => ({ ...item, done: true }));
+      const checklist = (await housekeepingService.getChecklists())
+        .filter(
+          (item) =>
+            !item.serviceRequestId && item.roomId === room.roomId && item.status === 'completed',
+        )
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      if (!checklist)
+        throw new Error('La limpieza se completó, pero no encontramos el checklist guardado.');
       replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist));
       if (updated.cleaningCompletedAt) {
         const entry = toCleaningHistoryEntry(
@@ -2330,8 +2363,10 @@ function PrivateWorkspaceReady({
         setHkHistory((prev) => [entry, ...prev]);
       }
       notify('Habitación marcada como limpia');
+      return true;
     } catch (cause) {
       await failHousekeeping(cause);
+      return false;
     }
   };
 
@@ -2341,7 +2376,10 @@ function PrivateWorkspaceReady({
 
     try {
       const updated = await housekeepingService.inspectRoom(room.roomId);
-      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, room.checklist));
+      const checklist = (await housekeepingService.getChecklists())
+        .filter((item) => !item.serviceRequestId && item.roomId === room.roomId)
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist));
       notify('Habitación inspeccionada correctamente');
     } catch (cause) {
       await failHousekeeping(cause);
@@ -2482,20 +2520,24 @@ function PrivateWorkspaceReady({
     const room = hkRooms.find((item) => item.id === roomId);
     if (!room) return;
 
-    const checklist = room.checklist.map((item, itemIndex) =>
+    const checklistItems = room.checklist.map((item, itemIndex) =>
       itemIndex === index ? { ...item, done: !item.done } : item,
     );
 
     try {
-      if (room.checklistId) {
-        await housekeepingService.saveChecklist(room.checklistId, { items: checklist });
-      }
+      if (!room.checklistId)
+        throw new Error('No encontramos el checklist guardado de esta habitación.');
+      const checklist = await housekeepingService.saveChecklist(room.checklistId, {
+        status: 'in_progress',
+        items: checklistItems,
+      });
       setHkRooms((current) =>
-        current.map((item) => (item.id === roomId ? { ...item, checklist } : item)),
+        current.map((item) =>
+          item.id === roomId
+            ? { ...item, checklistId: checklist.id, checklist: checklist.items }
+            : item,
+        ),
       );
-      if (!room.checklistId) {
-        notify('Checklist visual actualizado; el backend solo persiste checklists de stayover.');
-      }
     } catch (cause) {
       notifyError(cause);
     }
@@ -2941,18 +2983,28 @@ function PrivateWorkspaceReady({
     notify(`Reserva confirmada · ${reservation.code}`);
   };
 
-  const recDoCheckout = (id: number) => {
+  const recDoCheckout = async (id: number) => {
     const res = recReservationList.find((r) => r.id === id);
-    const now = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    setRecReservationList((current) =>
-      current.map((r) => (r.id === id ? { ...r, status: 'Check-out', checkOutTime: now } : r)),
-    );
-    if (res)
-      setRecRoomList((current) =>
-        current.map((rm) => (rm.number === res.roomNumber ? { ...rm, status: 'Limpieza' } : rm)),
-      );
-    setRecShowCheckout(null);
-    notify(`Check-out completado · ${res?.code}`);
+    if (!res) return;
+    if (recFolioTotals(res.folio).balance !== 0) {
+      notify('No se puede finalizar el check-out: primero liquida el saldo de la cuenta.');
+      return;
+    }
+    if (!res.bookingId) {
+      notify('Esta reserva no está vinculada al backend y no puede cerrarse.');
+      return;
+    }
+
+    try {
+      await bookingService.checkOut(res.bookingId);
+      const data = await loadWorkspaceData(workspaceDataRole);
+      setRecReservationList(data.recReservations);
+      setRecRoomList(data.recRooms);
+      setRecShowCheckout(null);
+      notify(`Check-out completado · ${res.code}`);
+    } catch (cause) {
+      notifyError(cause);
+    }
   };
 
   const recCancelReservation = async (id: number, reason: string) => {
@@ -3859,6 +3911,17 @@ function ConciergeContent({
   const [rejectionReason, setRejectionReason] = useState('');
   const [cancelRequestId, setCancelRequestId] = useState<number | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshHistory = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const activeRequests = requests.filter((req) => !isClosedConcierge(req.status));
   const completedRequests = requests.filter((req) => isClosedConcierge(req.status));
@@ -3984,8 +4047,13 @@ function ConciergeContent({
               <h3>Historial de solicitudes</h3>
               <p>Consulta las solicitudes atendidas, completadas o rechazadas.</p>
             </div>
-            <button className="button small secondary" onClick={() => void onRefresh()}>
-              <Activity size={14} /> Actualizar
+            <button
+              className="button small secondary"
+              onClick={() => void refreshHistory()}
+              disabled={refreshing}
+            >
+              <LoaderCircle size={14} className={refreshing ? 'rc-refresh-spinner' : undefined} />{' '}
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
           <div className="cg-history-list">
@@ -4543,7 +4611,7 @@ function HousekeepingContent({
   search: string;
   setSearch: (value: string) => void;
   onStartCleaning: (id: number) => void;
-  onFinishCleaning: (id: number) => void;
+  onFinishCleaning: (id: number) => Promise<boolean>;
   onInspect: (id: number) => void;
   onChangeStatus: (id: number, status: RoomStatus) => void;
   onAttendRequest: (id: number) => void;
@@ -5174,7 +5242,7 @@ function RoomDetailModal({
   room: CleaningRoom;
   onClose: () => void;
   onStartCleaning: (id: number) => void;
-  onFinishCleaning: (id: number) => void;
+  onFinishCleaning: (id: number) => Promise<boolean>;
   onInspect: (id: number) => void;
   onToggleChecklist: (roomId: number, index: number) => void;
   onOpenDefectModal: () => void;
@@ -5267,9 +5335,8 @@ function RoomDetailModal({
           {room.status === 'En proceso' && (
             <button
               className="button primary"
-              onClick={() => {
-                onFinishCleaning(room.id);
-                onClose();
+              onClick={async () => {
+                if (await onFinishCleaning(room.id)) onClose();
               }}
             >
               Finalizar limpieza
@@ -5322,6 +5389,17 @@ function StatusModal({
   onClose: () => void;
   onChangeStatus: (id: number, status: RoomStatus) => void;
 }) {
+  const nextStatusOptions: Record<
+    RoomHousekeepingStatus,
+    { status: RoomStatus; tone: 'info' | 'success'; note?: string }[]
+  > = {
+    dirty: [{ status: 'En proceso', tone: 'info' }],
+    cleaning: [{ status: 'Completada', tone: 'success' }],
+    clean: [{ status: 'Inspeccionada', tone: 'success' }],
+    inspected: [{ status: 'Completada', tone: 'success', note: 'Revertir inspección' }],
+  };
+  const nextStatuses = nextStatusOptions[room.housekeepingStatus];
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" style={{ width: 360 }} onMouseDown={(e) => e.stopPropagation()}>
@@ -5335,27 +5413,22 @@ function StatusModal({
           </button>
         </div>
         <p className="login-helper">
-          Selecciona el nuevo estado. El sistema valida que el cambio siga el flujo de limpieza.
+          {room.housekeepingStatus === 'inspected'
+            ? 'Puedes regresar la habitación a Completada si necesitas corregir la inspección.'
+            : 'Selecciona el siguiente estado permitido en el flujo de limpieza.'}
         </p>
         <div className="hk-status-options">
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'En proceso')}
-          >
-            <span className="hk-summary-dot info" /> En proceso
-          </button>
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'Completada')}
-          >
-            <span className="hk-summary-dot success" /> Completada
-          </button>
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'Inspeccionada')}
-          >
-            <span className="hk-summary-dot success" /> Inspeccionada
-          </button>
+          {nextStatuses.map(({ status, tone, note }) => (
+            <button
+              className="hk-status-option"
+              key={status}
+              onClick={() => onChangeStatus(room.id, status)}
+            >
+              <span className={`hk-summary-dot ${tone}`} />
+              <span>{status}</span>
+              {note && <small>{note}</small>}
+            </button>
+          ))}
         </div>
       </div>
     </div>

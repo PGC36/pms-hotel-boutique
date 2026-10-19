@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { Button } from '@/shared/components/Button';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -48,7 +49,7 @@ const initialForm: FormState = {
 };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos cargar el formulario. Intenta nuevamente.');
 }
 
 function validateForm(form: FormState): FormErrors {

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './app/router.tsx';
 import './index.css';
+import './styles/responsive.css';
 import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { AppErrorBoundary } from '@/app/observability/AppErrorBoundary';
 

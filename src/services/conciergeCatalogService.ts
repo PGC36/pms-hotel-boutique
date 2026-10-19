@@ -1,5 +1,6 @@
 import { guestRequest } from './guestHttp';
 import { httpClient } from './http-client';
+import { catalogNameError } from '@/shared/utils/catalogName';
 
 export type ConciergeServiceOption = {
   id: string;
@@ -38,9 +39,14 @@ export const conciergeCatalogService = {
     data: { name: string; description: string; active?: boolean },
     id?: string,
   ): Promise<ConciergeServiceOption> {
+    const nameError = catalogNameError(data.name);
+    if (nameError) throw new Error(nameError);
     const dto = id
       ? await httpClient.put<ConciergeServiceDto>(`/concierge/services/${id}`, data)
       : await httpClient.post<ConciergeServiceDto>('/concierge/services', data);
     return map(dto);
+  },
+  async deleteService(id: string): Promise<void> {
+    await httpClient.delete(`/concierge/services/${id}`);
   },
 };
