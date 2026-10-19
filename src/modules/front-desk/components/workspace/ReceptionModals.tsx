@@ -17,12 +17,16 @@ import {
   NAME_MAX_LENGTH,
   NOTES_MAX_LENGTH,
   PHONE_MAX_DIGITS,
+  describeEditSaveError,
+  editCheckOutMin,
   hotelToday,
   isDigitsOnly,
   keepPhoneDigits,
   nextCalendarDay,
   normalizeChildren,
   normalizePersonName,
+  validateEditedNotes,
+  validateEditedStay,
   validateEmail,
   validateGuestCounts,
   validateNotes,
@@ -50,17 +54,17 @@ type Totals = { charges: number; deposits: number; payments: number; balance: nu
 
 const fieldClass = (err?: string) => `rc-input${err ? ' error' : ''}`;
 
-// Fechas civiles "YYYY-MM-DD" del <input type="date">: en ese formato el orden de
-// texto coincide con el cronológico, así que se comparan sin pasar por new Date().
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const INVALID_STAY_RANGE =
-  'Rango de fechas no válido. La fecha de salida debe ser posterior a la fecha de entrada.';
-const stayRangeError = (checkIn: string, checkOut: string) => {
-  if (!checkIn || !checkOut) return 'Fechas obligatorias';
-  if (!CALENDAR_DATE.test(checkIn) || !CALENDAR_DATE.test(checkOut) || checkOut <= checkIn)
-    return INVALID_STAY_RANGE;
-  return '';
-};
+/**
+ * Valores de Editar reserva tomados de la fila seleccionada mientras carga el
+ * detalle del backend. Adultos y menores por separado: `guestCount` es su suma.
+ */
+const editFormFromRow = (reservation: Reservation) => ({
+  checkIn: reservation.checkIn,
+  checkOut: reservation.checkOut,
+  adults: reservation.adults === undefined ? '' : String(reservation.adults),
+  children: reservation.children,
+  notes: reservation.observations,
+});
 
 export function ReservationEditModal({
   reservation,
@@ -75,11 +79,40 @@ export function ReservationEditModal({
     useState<Awaited<ReturnType<typeof bookingService.getBookingById>>>();
   const [checkIn, setCheckIn] = useState(reservation.checkIn);
   const [checkOut, setCheckOut] = useState(reservation.checkOut);
-  const [adults, setAdults] = useState(reservation.guestCount);
+  // Texto, no número: así se detectan vacío y 0 en lugar de corregirlos en silencio.
+  const [adults, setAdults] = useState(() => editFormFromRow(reservation).adults);
+  const [children, setChildren] = useState(reservation.children);
   const [notes, setNotes] = useState(reservation.observations);
+  // Valores guardados: las reglas nuevas solo se exigen a lo que el usuario cambie.
+  const [original, setOriginal] = useState({
+    checkIn: reservation.checkIn,
+    checkOut: reservation.checkOut,
+    notes: reservation.observations,
+  });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const notesCheck = validateEditedNotes(notes, original.notes);
+  const today = hotelToday();
+
+  // Si cambia la reserva seleccionada, se descartan en el mismo render los datos
+  // de la anterior: nunca se muestran mezclados mientras carga la nueva.
+  const [shownBookingId, setShownBookingId] = useState(reservation.bookingId);
+  if (shownBookingId !== reservation.bookingId) {
+    const row = editFormFromRow(reservation);
+    setShownBookingId(reservation.bookingId);
+    setBooking(undefined);
+    setCheckIn(row.checkIn);
+    setCheckOut(row.checkOut);
+    setAdults(row.adults);
+    setChildren(row.children);
+    setNotes(row.notes);
+    setOriginal({ checkIn: row.checkIn, checkOut: row.checkOut, notes: row.notes });
+    setFieldErrors({});
+    setError('');
+    setLoading(true);
+  }
 
   useEffect(() => {
     let active = true;
@@ -97,10 +130,17 @@ export function ReservationEditModal({
           return;
         }
         setBooking(value);
-        setCheckIn(toDtoCalendarDate(value.checkIn));
-        setCheckOut(toDtoCalendarDate(value.checkOut));
-        setAdults(value.adults);
-        setNotes(value.notes ?? '');
+        const loaded = {
+          checkIn: toDtoCalendarDate(value.checkIn),
+          checkOut: toDtoCalendarDate(value.checkOut),
+          notes: value.notes ?? '',
+        };
+        setOriginal(loaded);
+        setCheckIn(loaded.checkIn);
+        setCheckOut(loaded.checkOut);
+        setAdults(String(value.adults));
+        setChildren(value.children);
+        setNotes(loaded.notes);
       })
       .catch((cause: unknown) => {
         if (active)
@@ -114,17 +154,32 @@ export function ReservationEditModal({
     };
   }, [reservation.bookingId]);
 
+  const validate = () => {
+    const stay = validateEditedStay(checkIn, checkOut, original);
+    const errors: Record<string, string> = {};
+    if (stay.checkIn) errors.checkIn = stay.checkIn;
+    if (stay.checkOut) errors.checkOut = stay.checkOut;
+    // Capacidad: la sigue validando el backend, como hasta ahora.
+    const adultsError = validateGuestCounts(adults, '0').adults;
+    if (adultsError) errors.adults = adultsError;
+    const notesError = validateEditedNotes(notes, original.notes).error;
+    if (notesError) errors.notes = notesError;
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const clearFieldError = (field: string) =>
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+
   const save = async () => {
     if (!booking || !reservation.bookingId) return;
-    const rangeError = stayRangeError(checkIn, checkOut);
-    if (rangeError) {
-      setError(rangeError);
-      return;
-    }
-    if (adults < 1) {
-      setError('Debe haber al menos un adulto.');
-      return;
-    }
+    // Se revalida justo antes de guardar.
+    if (!validate()) return;
     setSaving(true);
     setError('');
     try {
@@ -135,14 +190,21 @@ export function ReservationEditModal({
         rate_id: booking.rateId,
         check_in: checkIn,
         check_out: checkOut,
-        adults,
+        adults: Number(adults),
         children: booking.children,
-        notes: notes.trim() || undefined,
+        // Sin cambios no se envían: el backend conserva el texto original exacto,
+        // aunque supere el límite actual.
+        notes: notes === original.notes ? undefined : notes,
       });
       await onSaved();
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'No fue posible guardar los cambios.');
+      // Los cruces con otras reservas de la habitación los comprueba el backend.
+      const failure = describeEditSaveError(
+        cause instanceof Error ? cause.message : 'No fue posible guardar los cambios.',
+      );
+      if (failure.field === 'form') setError(failure.message);
+      else setFieldErrors((current) => ({ ...current, [failure.field]: failure.message }));
     } finally {
       setSaving(false);
     }
@@ -177,42 +239,83 @@ export function ReservationEditModal({
               <span>Entrada</span>
               <input
                 type="date"
+                name="edit-check-in"
+                className={fieldClass(fieldErrors.checkIn)}
                 value={checkIn}
-                onChange={(event) => setCheckIn(event.target.value)}
+                min={today}
+                onChange={(event) => {
+                  setCheckIn(event.target.value);
+                  clearFieldError('checkIn');
+                  // La validez de la salida depende de la entrada.
+                  clearFieldError('checkOut');
+                }}
                 disabled={loading || saving}
               />
+              {fieldErrors.checkIn && (
+                <small className="rc-field-error">{fieldErrors.checkIn}</small>
+              )}
             </label>
             <label className="rc-field">
               <span>Salida</span>
               <input
                 type="date"
+                name="edit-check-out"
+                className={fieldClass(fieldErrors.checkOut)}
                 value={checkOut}
-                onChange={(event) => setCheckOut(event.target.value)}
+                min={editCheckOutMin(checkIn, today)}
+                onChange={(event) => {
+                  setCheckOut(event.target.value);
+                  clearFieldError('checkOut');
+                }}
                 disabled={loading || saving}
               />
+              {fieldErrors.checkOut && (
+                <small className="rc-field-error">{fieldErrors.checkOut}</small>
+              )}
             </label>
             <label className="rc-field">
               <span>Adultos</span>
+              {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
               <input
-                type="number"
-                min={1}
+                type="text"
+                name="edit-adults"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className={fieldClass(fieldErrors.adults)}
                 value={adults}
-                onChange={(event) => setAdults(Number(event.target.value))}
+                onChange={(event) => {
+                  // Signos, letras, decimales o espacios no se guardan en el estado.
+                  if (!isDigitsOnly(event.target.value)) return;
+                  setAdults(event.target.value);
+                  clearFieldError('adults');
+                }}
                 disabled={loading || saving}
               />
+              {fieldErrors.adults && <small className="rc-field-error">{fieldErrors.adults}</small>}
             </label>
             <label className="rc-field">
               <span>Menores</span>
-              <input type="number" value={booking?.children ?? 0} disabled />
+              <input type="number" name="edit-children" value={children ?? ''} disabled />
             </label>
             <label className="rc-field rc-field-full">
               <span>Notas</span>
               <textarea
+                name="edit-notes"
+                className={fieldClass(fieldErrors.notes)}
+                maxLength={NOTES_MAX_LENGTH}
                 value={notes}
-                onChange={(event) => setNotes(event.target.value)}
+                onChange={(event) => {
+                  setNotes(event.target.value);
+                  clearFieldError('notes');
+                }}
                 disabled={loading || saving}
                 rows={3}
               />
+              <small aria-live="polite">
+                {notes.length}/{NOTES_MAX_LENGTH}
+              </small>
+              {notesCheck.warning && <small role="status">{notesCheck.warning}</small>}
+              {fieldErrors.notes && <small className="rc-field-error">{fieldErrors.notes}</small>}
             </label>
           </div>
           {error && (

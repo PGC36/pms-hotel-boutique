@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { test, afterEach, mock } from 'node:test';
 import { create, act } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
-import { ReservationFormModal } from '@/modules/front-desk/components/workspace/ReceptionModals';
+import {
+  ReservationEditModal,
+  ReservationFormModal,
+} from '@/modules/front-desk/components/workspace/ReceptionModals';
 import {
   STAY_DATES_REQUIRED,
   STAY_RANGE_INVALID,
@@ -2626,4 +2629,338 @@ test('nueva reserva: al cambiar el día en Guatemala, valida con la fecha nueva 
   } finally {
     mock.timers.reset();
   }
+});
+
+// --- Recepción: Editar reserva (formulario 2) --------------------------------
+
+// "Hoy" fijo para las reglas de fechas: 12:00 del 18-10-2026 en Guatemala.
+const EDIT_TODAY = Date.parse('2026-10-18T18:00:00Z');
+afterEach(() => mock.timers.reset());
+
+/** Fila de la reserva tal como la entrega el workspace (guestCount = adultos + menores). */
+const editRow = (booking) => ({
+  id: 1,
+  bookingId: booking.id,
+  code: booking.confirmationCode,
+  checkIn: booking.checkIn,
+  checkOut: booking.checkOut,
+  guestCount: booking.adults + booking.children,
+  adults: booking.adults,
+  children: booking.children,
+  observations: booking.notes ?? '',
+});
+
+async function renderEditModal({
+  checkIn = '2026-12-10',
+  checkOut = '2026-12-12',
+  notes,
+  adults,
+  children,
+  wait = true,
+} = {}) {
+  mock.timers.enable({ apis: ['Date'], now: EDIT_TODAY });
+  recBackend = installReceptionBackend({ checkInDate: checkIn, checkOutDate: checkOut });
+  if (notes !== undefined) recBackend.booking.notes = notes;
+  if (adults !== undefined) recBackend.booking.adults = adults;
+  if (children !== undefined) recBackend.booking.children = children;
+  const calls = { saved: 0, closed: 0 };
+  await act(async () => {
+    view = create(
+      <ReservationEditModal
+        reservation={editRow(recBackend.booking)}
+        onClose={() => {
+          calls.closed += 1;
+        }}
+        onSaved={async () => {
+          calls.saved += 1;
+        }}
+      />,
+    );
+  });
+  if (wait) await editLoaded();
+  return calls;
+}
+// Espera a que cargue la reserva (los campos se habilitan).
+const editLoaded = async () => {
+  for (let i = 0; i < 20 && editField('edit-adults').props.disabled; i++) await settle(200);
+};
+/** Respuesta de error del backend al siguiente PUT (p. ej. cruce con otra reserva). */
+const failNextUpdate = (status, message) => {
+  const backend = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    if (init.method !== 'PUT') return backend(input, init);
+    globalThis.fetch = backend;
+    const path = new URL(String(input)).pathname.replace(/^\/api\/v1/, '');
+    recBackend.requests.push({ call: `PUT ${path}`, body: JSON.parse(String(init.body)) });
+    return new Response(JSON.stringify({ message }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+};
+const editField = (name) =>
+  view.root.find((node) => ['input', 'textarea'].includes(node.type) && node.props.name === name);
+const editType = (name, value) => act(() => editField(name).props.onChange({ target: { value } }));
+const putCalls = () =>
+  recBackend.requests.filter(({ call }) => call === `PUT /bookings/${REC_BOOKING_ID}`);
+const editSave = async (calls) => {
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  // Guardado válido: espera a que termine (latencia simulada del servicio).
+  for (let i = 0; i < 15 && calls && calls.saved === 0; i++) await settle(200);
+};
+
+test('editar reserva: adultos solo admite dígitos y exige mínimo 1', async () => {
+  await renderEditModal({ adults: 2 });
+  assert.equal(editField('edit-adults').props.type, 'text');
+  assert.equal(editField('edit-adults').props.inputMode, 'numeric');
+  assert.equal(editField('edit-adults').props.value, '2');
+  for (const rejected of ['-9', '1.5', 'abc', '2e1', ' 2']) {
+    editType('edit-adults', rejected);
+    assert.equal(editField('edit-adults').props.value, '2', `"${rejected}" no se guarda`);
+  }
+  editType('edit-adults', '');
+  await editSave();
+  assert.ok(fieldErrors().includes('Ingresa la cantidad de adultos.'));
+  editType('edit-adults', '0');
+  await editSave();
+  assert.ok(fieldErrors().includes('Mínimo 1 adulto.'), 'no convierte 0 en 1');
+  assert.equal(editField('edit-adults').props.value, '0');
+  assert.equal(putCalls().length, 0, 'no guarda cantidades inválidas');
+});
+
+test('editar reserva: la salida debe ser posterior a la entrada', async () => {
+  await renderEditModal();
+  editType('edit-check-out', '2026-12-10');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['La salida debe ser posterior a la entrada.']);
+  editType('edit-check-out', '2026-12-09');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['La salida debe ser posterior a la entrada.']);
+  editType('edit-check-in', '');
+  await editSave();
+  assert.ok(fieldErrors().includes('Ingresa la fecha de entrada.'));
+  assert.equal(putCalls().length, 0);
+});
+
+test('editar reserva: fechas modificadas no superan 90 noches', async () => {
+  await renderEditModal();
+  // 91 noches desde el 10-12-2026.
+  editType('edit-check-out', '2027-03-11');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['Máximo 90 noches.']);
+  assert.equal(putCalls().length, 0);
+  // 90 noches: el error se limpia al corregir.
+  editType('edit-check-out', '2027-03-10');
+  assert.deepEqual(fieldErrors(), []);
+});
+
+test('editar reserva: una reserva histórica permite editar sus observaciones', async () => {
+  // Entrada ya pasada y 151 noches: datos históricos que no se tocan.
+  const calls = await renderEditModal({ checkIn: '2026-01-01', checkOut: '2026-06-01' });
+  const notes = `Solicita factura.
+Llega tarde.`;
+  editType('edit-notes', notes);
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), [], 'no se bloquea por las fechas históricas');
+  assert.equal(putCalls().length, 1);
+  const body = putCalls()[0].body;
+  assert.equal(body.checkIn, '2026-01-01', 'no modifica las fechas existentes');
+  assert.equal(body.checkOut, '2026-06-01');
+  assert.equal(body.notes, notes, 'conserva los saltos de línea');
+  assert.equal(calls.saved, 1);
+});
+
+test('editar reserva: observaciones nuevas hasta 500 caracteres con contador', async () => {
+  const calls = await renderEditModal({ notes: '' });
+  assert.equal(editField('edit-notes').props.maxLength, 500);
+  assert.match(text(view.root), /0\/500/);
+  editType('edit-notes', 'a'.repeat(501));
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['Máximo 500 caracteres.']);
+  assert.equal(putCalls().length, 0);
+  editType('edit-notes', 'a'.repeat(500));
+  assert.match(text(view.root), /500\/500/);
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(putCalls().length, 1, '500 caracteres se guardan');
+});
+
+test('editar reserva: conserva observaciones históricas de más de 500 caracteres', async () => {
+  const longNotes = 'Nota del portal. '.repeat(50).trimEnd();
+  const calls = await renderEditModal({ notes: longNotes, adults: 1 });
+  assert.ok(longNotes.length > 500);
+  assert.equal(editField('edit-notes').props.value, longNotes, 'no se recorta al cargar');
+  assert.match(text(view.root), /superan 500 caracteres\. Se conservan sin cambios/);
+
+  // Cambiar otro campo no se bloquea por las observaciones intactas.
+  editType('edit-adults', '2');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(putCalls().length, 1);
+  assert.ok(!('notes' in putCalls()[0].body), 'no se reenvían: el backend conserva el original');
+  assert.equal(recBackend.booking.notes, longNotes, 'no se pierde el texto');
+});
+
+test('editar reserva: si se modifican observaciones largas aplica el límite', async () => {
+  await renderEditModal({ notes: 'x'.repeat(800) });
+  editType('edit-notes', 'x'.repeat(799));
+  assert.ok(!text(view.root).includes('Se conservan sin cambios'), 'ya no es el texto original');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['Máximo 500 caracteres.']);
+  assert.equal(putCalls().length, 0);
+});
+
+test('editar reserva: menores sigue deshabilitado con el valor guardado', async () => {
+  await renderEditModal();
+  const children = view.root.find(
+    (node) => node.type === 'input' && node.props.type === 'number' && node.props.disabled,
+  );
+  assert.equal(children.props.value, 0);
+});
+
+test('editar reserva: guarda datos válidos con adultos enteros', async () => {
+  const calls = await renderEditModal({ adults: 1 });
+  editType('edit-check-in', '2026-12-11');
+  editType('edit-check-out', '2026-12-14');
+  editType('edit-adults', '2');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  const body = putCalls()[0].body;
+  assert.equal(body.adults, 2, 'entero, no texto');
+  assert.equal(body.children, 0);
+  assert.equal(body.checkIn, '2026-12-11');
+  assert.equal(body.checkOut, '2026-12-14');
+  assert.ok(!('notes' in body), 'observaciones sin cambios no se envían');
+  assert.equal(calls.saved, 1);
+  assert.equal(calls.closed, 1);
+});
+
+test('editar reserva: precarga los datos de la reserva seleccionada, sin valores por defecto', async () => {
+  await renderEditModal({ adults: 2, children: 1, notes: 'Cuna en la habitación', wait: false });
+  // Mientras carga se ven los datos de la fila, no la suma de huéspedes ni ceros.
+  assert.equal(editField('edit-adults').props.disabled, true);
+  assert.equal(editField('edit-adults').props.value, '2', 'adultos, no adultos + menores');
+  assert.equal(editField('edit-children').props.value, 1);
+  await editLoaded();
+  assert.equal(editField('edit-check-in').props.value, '2026-12-10');
+  assert.equal(editField('edit-check-out').props.value, '2026-12-12');
+  assert.equal(editField('edit-adults').props.value, '2');
+  assert.equal(editField('edit-children').props.value, 1);
+  assert.equal(editField('edit-children').props.disabled, true);
+  assert.equal(editField('edit-notes').props.value, 'Cuna en la habitación');
+});
+
+test('editar reserva: al cambiar de reserva no se muestran datos de la anterior', async () => {
+  await renderEditModal({ adults: 2, notes: 'Primera' });
+  editType('edit-notes', 'Borrador sin guardar');
+  const other = {
+    ...recBackend.booking,
+    id: '5b8e1c3a-2f47-4d0e-9a61-7c3d2e1f0b99',
+    confirmationCode: 'BKG-200',
+    checkIn: '2027-01-05',
+    checkOut: '2027-01-08',
+    adults: 1,
+    children: 0,
+    notes: 'Segunda',
+  };
+  act(() =>
+    view.update(
+      <ReservationEditModal
+        reservation={editRow(other)}
+        onClose={() => {}}
+        onSaved={async () => {}}
+      />,
+    ),
+  );
+  assert.equal(editField('edit-check-in').props.value, '2027-01-05');
+  assert.equal(editField('edit-check-out').props.value, '2027-01-08');
+  assert.equal(editField('edit-adults').props.value, '1');
+  assert.equal(editField('edit-notes').props.value, 'Segunda');
+  assert.equal(editField('edit-adults').props.disabled, true, 'vuelve a cargar');
+  // Deja terminar la carga pendiente antes de desmontar.
+  await settle();
+});
+
+test('editar reserva: no permite elegir nuevas fechas anteriores a hoy', async () => {
+  await renderEditModal();
+  assert.equal(editField('edit-check-in').props.min, '2026-10-18', 'hoy en Guatemala');
+  assert.equal(editField('edit-check-out').props.min, '2026-12-11', 'día siguiente a la entrada');
+  editType('edit-check-in', '2026-10-17');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['No puede ser anterior a hoy.']);
+  assert.equal(putCalls().length, 0, 'no guarda fechas pasadas');
+  // Hoy sí se permite como nueva entrada.
+  editType('edit-check-in', '2026-10-18');
+  assert.equal(editField('edit-check-out').props.min, '2026-10-19');
+  editType('edit-check-out', '2026-10-17');
+  await editSave();
+  assert.deepEqual(fieldErrors(), ['No puede ser anterior a hoy.']);
+  assert.equal(putCalls().length, 0);
+});
+
+test('editar reserva: conserva fechas históricas y permite editar adultos', async () => {
+  const calls = await renderEditModal({ checkIn: '2026-09-01', checkOut: '2026-09-04', adults: 1 });
+  // No se reemplazan por hoy aunque ya pasaron.
+  assert.equal(editField('edit-check-in').props.value, '2026-09-01');
+  assert.equal(editField('edit-check-out').props.value, '2026-09-04');
+  editType('edit-adults', '2');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  const body = putCalls()[0].body;
+  assert.deepEqual([body.checkIn, body.checkOut, body.adults], ['2026-09-01', '2026-09-04', 2]);
+});
+
+test('editar reserva: con entrada pasada solo se exige hoy a la fecha que cambia', async () => {
+  // Estancia en curso: se puede extender la salida sin tocar la entrada histórica.
+  const calls = await renderEditModal({ checkIn: '2026-10-15', checkOut: '2026-10-20' });
+  editType('edit-check-out', '2026-10-22');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  const body = putCalls()[0].body;
+  assert.equal(body.checkIn, '2026-10-15');
+  assert.equal(body.checkOut, '2026-10-22');
+});
+
+test('editar reserva: cambio válido a fechas futuras', async () => {
+  const calls = await renderEditModal();
+  editType('edit-check-in', '2027-02-01');
+  editType('edit-check-out', '2027-02-05');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(putCalls().length, 1);
+  const body = putCalls()[0].body;
+  assert.equal(body.checkIn, '2027-02-01');
+  assert.equal(body.checkOut, '2027-02-05');
+  assert.equal(body.roomId, 'room-101', 'conserva la habitación: el backend comprueba sus cruces');
+  assert.equal(calls.saved, 1);
+});
+
+test('editar reserva: comunica el conflicto de disponibilidad que informa el backend', async () => {
+  const calls = await renderEditModal();
+  editType('edit-check-out', '2026-12-15');
+  failNextUpdate(400, 'Room is not available for the requested dates');
+  await editSave();
+  for (let i = 0; i < 15 && fieldErrors().length === 0; i++) await settle(200);
+  assert.deepEqual(fieldErrors(), ['La habitación no está disponible en esas fechas.']);
+  assert.ok(!text(view.root).includes('Room is not available'), 'sin el mensaje técnico');
+  assert.equal(calls.saved, 0);
+  assert.equal(calls.closed, 0, 'el formulario sigue abierto para corregir');
+  assert.equal(editField('edit-check-out').props.value, '2026-12-15', 'no cambia las fechas');
+  assert.equal(recBackend.booking.checkOut, '2026-12-12', 'la reserva no se modificó');
+  // Al corregir las fechas desaparece el aviso.
+  editType('edit-check-in', '2026-12-11');
+  assert.deepEqual(fieldErrors(), []);
+});
+
+test('editar reserva: la propia reserva no genera un falso conflicto', async () => {
+  // Rango que se solapa con el original (10→12): el frontend no lo bloquea y el
+  // backend lo comprueba excluyendo esta misma reserva (PUT a su propio id).
+  const calls = await renderEditModal();
+  editType('edit-check-in', '2026-12-11');
+  editType('edit-check-out', '2026-12-13');
+  await editSave(calls);
+  assert.deepEqual(fieldErrors(), []);
+  assert.equal(putCalls().length, 1);
+  assert.equal(calls.saved, 1);
+  assert.equal(recBackend.booking.checkIn, '2026-12-11');
 });

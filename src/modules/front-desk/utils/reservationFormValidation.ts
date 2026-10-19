@@ -220,3 +220,121 @@ export function validateGuestCounts(
 export function validateNotes(value: string): string | null {
   return value.length > NOTES_MAX_LENGTH ? NOTES_TOO_LONG : null;
 }
+
+// --- Editar reserva -----------------------------------------------------------
+//
+// Una reserva existente puede tener datos históricos que hoy no pasarían las
+// reglas de Nueva reserva (entrada pasada, más de 90 noches, observaciones de
+// más de 500 caracteres desde otros canales). Esas reglas solo se aplican a lo
+// que el usuario cambia, para no impedir editar otros campos.
+
+export const EDIT_CHECK_IN_REQUIRED = 'Ingresa la fecha de entrada.';
+export const EDIT_CHECK_OUT_REQUIRED = 'Ingresa la fecha de salida.';
+export const EDIT_DATE_INVALID = 'Fecha no válida.';
+export const EDIT_CHECK_OUT_AFTER = 'La salida debe ser posterior a la entrada.';
+export const EDIT_MAX_NIGHTS = `Máximo ${MAX_STAY_NIGHTS} noches.`;
+export const EDIT_NOTES_OVER_LIMIT_WARNING = `Estas observaciones superan ${NOTES_MAX_LENGTH} caracteres. Se conservan sin cambios; si las editas, deberán quedar en ${NOTES_MAX_LENGTH} o menos.`;
+
+export const EDIT_DATE_PAST = 'No puede ser anterior a hoy.';
+
+export type EditStayErrors = { checkIn?: string; checkOut?: string };
+
+/**
+ * Fechas de Editar reserva: ambas obligatorias y con formato válido, y la
+ * salida posterior a la entrada. Una fecha que el usuario cambia no puede ser
+ * anterior a hoy (Guatemala); si cambió alguna, el máximo es de 90 noches. Las
+ * fechas guardadas que no se tocan se conservan aunque ya hayan pasado.
+ */
+export function validateEditedStay(
+  checkIn: string,
+  checkOut: string,
+  original: { checkIn: string; checkOut: string },
+  today: string = hotelToday(),
+): EditStayErrors {
+  const errors: EditStayErrors = {};
+  if (!checkIn) errors.checkIn = EDIT_CHECK_IN_REQUIRED;
+  else if (!CALENDAR_DATE.test(checkIn)) errors.checkIn = EDIT_DATE_INVALID;
+  if (!checkOut) errors.checkOut = EDIT_CHECK_OUT_REQUIRED;
+  else if (!CALENDAR_DATE.test(checkOut)) errors.checkOut = EDIT_DATE_INVALID;
+  if (errors.checkIn || errors.checkOut) return errors;
+
+  const checkInChanged = checkIn !== original.checkIn;
+  const checkOutChanged = checkOut !== original.checkOut;
+  if (checkInChanged && checkIn < today) errors.checkIn = EDIT_DATE_PAST;
+  if (checkOutChanged && checkOut < today) errors.checkOut = EDIT_DATE_PAST;
+  if (errors.checkOut) return errors;
+
+  if (checkOut <= checkIn) {
+    errors.checkOut = EDIT_CHECK_OUT_AFTER;
+  } else if (checkInChanged || checkOutChanged) {
+    const nights = calculateNights(toDomainCalendarDate(checkIn), toDomainCalendarDate(checkOut));
+    if (nights > MAX_STAY_NIGHTS) errors.checkOut = EDIT_MAX_NIGHTS;
+  }
+  return errors;
+}
+
+/** Mínimo del selector de salida: el día siguiente a la entrada, nunca antes de hoy. */
+export function editCheckOutMin(checkIn: string, today: string = hotelToday()): string {
+  if (!CALENDAR_DATE.test(checkIn)) return today;
+  const afterCheckIn = nextCalendarDay(checkIn);
+  return afterCheckIn > today ? afterCheckIn : today;
+}
+
+export const EDIT_ROOM_UNAVAILABLE = 'La habitación no está disponible en esas fechas.';
+
+/**
+ * Errores del backend al actualizar la reserva (`PUT /bookings/{id}`), con el
+ * campo junto al que se muestran. El backend es quien comprueba los cruces con
+ * otras reservas de la habitación (excluyendo la propia) y la capacidad.
+ */
+const EDIT_BACKEND_ERRORS: Record<string, { field: string; message: string }> = {
+  'Room is not available for the requested dates': {
+    field: 'checkOut',
+    message: EDIT_ROOM_UNAVAILABLE,
+  },
+  'Guest count exceeds room type capacity': {
+    field: 'adults',
+    message: 'Supera la capacidad de la habitación.',
+  },
+  'Rate is not valid for the requested stay dates': {
+    field: 'checkOut',
+    message: 'La tarifa no aplica en esas fechas.',
+  },
+  'Stay does not meet the rate minimum nights': {
+    field: 'checkOut',
+    message: 'No cumple las noches mínimas de la tarifa.',
+  },
+  'Check-in date must be before check-out date': {
+    field: 'checkOut',
+    message: EDIT_CHECK_OUT_AFTER,
+  },
+  'Room is not operable for booking assignment': {
+    field: 'form',
+    message: 'La habitación está fuera de servicio.',
+  },
+  'Checked-in bookings cannot be structurally modified through the general update endpoint': {
+    field: 'form',
+    message: 'Con check-in solo se puede extender la salida o editar las notas.',
+  },
+};
+
+export function describeEditSaveError(message: string): { field: string; message: string } {
+  return EDIT_BACKEND_ERRORS[message.trim()] ?? { field: 'form', message };
+}
+
+/**
+ * Observaciones de Editar reserva: si no cambiaron se conservan aunque superen
+ * el límite (solo una advertencia); si cambiaron, se exige el máximo de 500.
+ */
+export function validateEditedNotes(
+  value: string,
+  original: string,
+): { error: string | null; warning: string | null } {
+  if (value === original) {
+    return {
+      error: null,
+      warning: value.length > NOTES_MAX_LENGTH ? EDIT_NOTES_OVER_LIMIT_WARNING : null,
+    };
+  }
+  return { error: validateNotes(value), warning: null };
+}
