@@ -283,7 +283,9 @@ caracteristicas y tarifas ya pasan por `http-client.ts`:
 - `GET /rooms`, `GET /rooms/{id}`, `POST /rooms`, `PUT /rooms/{id}`.
 - `GET /room-types`, `GET /room-types/{id}`, `POST /room-types`,
   `PUT /room-types/{id}`.
-- `GET /room-features`.
+- `GET /room-features`, `POST /room-features`, `PUT /room-features/:id` y
+  `DELETE /room-features/:id` (la eliminación responde conflicto si la
+  característica está asociada a algún tipo de habitación).
 - `GET /rates`, `POST /rates`, `PUT /rates/{id}`. No se asume
   `GET /rates/{id}`.
 
@@ -294,13 +296,16 @@ Models. `status` y `housekeepingStatus` permanecen separados; `priceCents` se
 mantiene en centavos y no se duplica ninguna regla de negocio del backend.
 
 Los listados ya no conservan fallback local cuando el backend no esta
-disponible: `getRooms()`, `getRoomTypes()`, `getRoomFeatures()` y `getRates()`
+disponible: `getRooms()`, `getRoomTypes()`, `getRoomFeatures()`,
+`createRoomFeature()`, `updateRoomFeature()`, `deleteRoomFeature()` y `getRates()`
 deben recibir datos reales o propagar el error. Los detalles por ID no ocultan
 un 404 real: `getRoomById()` y `getRoomTypeById()` devuelven `undefined` si el
 backend indica que el recurso no existe. Las escrituras de habitaciones, tipos
 y tarifas usan el contrato HTTP real; los errores 400, 401, 403, 404 y 409 se
 propagan como mensajes de operacion para que la UI existente muestre el fallo
-sin mutar estado local.
+sin mutar estado local. El catalogo se administra desde Tipos de habitacion:
+el boton **Caracteristicas** permite crear, editar y eliminar opciones no
+asignadas; el formulario del tipo permite seleccionar varias con casillas.
 
 `PrivateWorkspace` carga `rooms` solo para roles con dominio de habitaciones
 (`admin`, `reception`, `housekeeping`), y carga `room-types`/`room-features`
