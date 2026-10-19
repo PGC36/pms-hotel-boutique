@@ -29,6 +29,26 @@ type SavePromotionData = {
   active?: boolean;
 };
 
+function validatePromotion(
+  data: Pick<SavePromotionData, 'name' | 'code' | 'discount_percent' | 'valid_from'> & {
+    valid_to?: string;
+  },
+) {
+  if (!data.name.trim()) throw new Error('La promocion requiere nombre.');
+  if (!data.code.trim()) throw new Error('La promocion requiere codigo.');
+  if (
+    !Number.isInteger(data.discount_percent) ||
+    data.discount_percent < 1 ||
+    data.discount_percent > 100
+  ) {
+    throw new Error('El descuento debe ser un numero entero entre 1 y 100.');
+  }
+  if (!data.valid_from) throw new Error('Selecciona la fecha de inicio de la promocion.');
+  if (data.valid_to && data.valid_to < data.valid_from) {
+    throw new Error('La fecha de fin no puede ser anterior a la fecha de inicio.');
+  }
+}
+
 function toPromotionDto(api: ApiPromotion): PromotionDto {
   return {
     id: api.id,
@@ -51,7 +71,7 @@ function toRequest(data: SavePromotionData) {
     description: data.description.trim(),
     discountPercent: data.discount_percent,
     validFrom: data.valid_from,
-    validTo: data.valid_to,
+    validTo: data.valid_to || undefined,
     active: data.active ?? true,
   };
 }
@@ -80,23 +100,21 @@ export const promotionService = {
   },
   async createPromotion(data: SavePromotionData): Promise<Promotion> {
     await simulateLatency();
-    if (!data.name.trim()) throw new Error('La promocion requiere nombre.');
-    if (!data.code.trim()) throw new Error('La promocion requiere codigo.');
-    if (!Number.isInteger(data.discount_percent) || data.discount_percent <= 0) {
-      throw new Error('El descuento debe ser un entero mayor a 0.');
-    }
+    validatePromotion(data);
 
     const promotion = await httpClient.post<ApiPromotion>('/admin/promotions', toRequest(data));
     return toPromotion(toPromotionDto(promotion));
   },
   async updatePromotion(id: string, data: Partial<SavePromotionData>): Promise<Promotion> {
     await simulateLatency();
-    if (data.discount_percent !== undefined) {
-      if (!Number.isInteger(data.discount_percent) || data.discount_percent <= 0) {
-        throw new Error('El descuento debe ser un entero mayor a 0.');
-      }
-    }
     const request = await getPromotionRequest(id, data);
+    validatePromotion({
+      name: request.name,
+      code: request.code,
+      discount_percent: request.discountPercent,
+      valid_from: request.validFrom,
+      valid_to: request.validTo,
+    });
     const promotion = await httpClient.put<ApiPromotion>(`/admin/promotions/${id}`, request);
     return toPromotion(toPromotionDto(promotion));
   },

@@ -164,7 +164,7 @@ export function CheckOutScreen() {
     ? BOOKING_STATUS_TRANSITIONS[booking.status].includes('checkedOut')
     : false;
   const hasNonZeroBalance = account ? account.balanceCents !== 0 : true;
-  const canCheckOut = canTransitionToCheckedOut;
+  const canCheckOut = canTransitionToCheckedOut && !hasNonZeroBalance;
   const chargesTotalCents = charges.reduce((total, charge) => total + charge.amountCents, 0);
   const paymentsTotalCents = payments.reduce((total, payment) => total + payment.amountCents, 0);
   const depositsTotalCents = deposits
@@ -377,7 +377,7 @@ export function CheckOutScreen() {
             className="button primary"
             type="button"
             onClick={handleCheckOut}
-            disabled={isCheckingOut}
+            disabled={isCheckingOut || !canCheckOut}
           >
             {isCheckingOut ? 'Confirmando…' : 'Confirmar check-out'}
           </button>

@@ -434,7 +434,10 @@ function installHousekeepingBackend() {
     const room = path.match(/^\/housekeeping\/rooms\/([^/]+)\/(start|complete|inspect)$/);
     if (method === 'POST' && room) {
       const index = state.rooms.findIndex((item) => item.id === room[1]);
-      const [from, to, field] = turnover[room[2]];
+      let [from, to, field] = turnover[room[2]];
+      if (room[2] === 'complete' && state.rooms[index].housekeepingStatus === 'inspected') {
+        from = 'inspected';
+      }
       if (state.rooms[index].housekeepingStatus !== from) return json({ status: 400 }, 400);
       state.rooms[index] = {
         ...state.rooms[index],
@@ -681,6 +684,34 @@ test('limpieza: una habitación limpia se inspecciona contra el backend', async 
   assert.equal(cardFor('202').status, 'Inspeccionada');
   assert.equal(hkBackend.rooms[3].housekeepingStatus, 'inspected');
   assert.equal(hkBackend.rooms[3].status, 'occupied', 'el turnover no toca Room.status');
+});
+
+test('limpieza: una inspección se puede revertir a completada y oculta saltos inválidos', async () => {
+  await mountHousekeeping();
+  await goTo('Habitaciones');
+  const room = cardFor('202');
+  await act(async () => buttons('Inspeccionar', room.card)[0].props.onClick());
+  await settle();
+
+  await act(async () => buttons('Ver detalle', cardFor('202').card)[0].props.onClick());
+  await settle();
+  await act(async () => buttons('Cambiar estado', view.root)[0].props.onClick());
+
+  assert.deepEqual(
+    view.root
+      .findAll((node) => node.type === 'button' && hasClass(node, 'hk-status-option'))
+      .map(text),
+    ['CompletadaRevertir inspección'],
+  );
+  const completeOption = view.root.find(
+    (node) => node.type === 'button' && hasClass(node, 'hk-status-option'),
+  );
+  await act(async () => completeOption.props.onClick());
+  await settle();
+
+  assert.equal(hkBackend.rooms[3].housekeepingStatus, 'clean');
+  assert.equal(cardFor('202').status, 'Completada');
+  assert.ok(hkBackend.requests.includes('POST /housekeeping/rooms/room-202/complete'));
 });
 
 test('limpieza: si el backend rechaza la transición se muestra el estado real', async () => {
@@ -1670,12 +1701,23 @@ test('recepción: con sus permisos reales conserva todas sus secciones', async (
   ]);
 });
 
-test('recepción: carga solicitudes y finanzas globales desde el backend', async () => {
+test('recepción: no consulta endpoints de solicitudes internas ni finanzas sin permiso', async () => {
   await mountReception();
   for (const path of ['/service-requests', '/charges', '/payments', '/deposits']) {
     assert.ok(
-      recBackend.requests.some(({ call }) => call === `GET ${path}`),
-      `recepción consulta ${path}`,
+      !recBackend.requests.some(({ call }) => call === `GET ${path}`),
+      `recepción no consulta ${path}`,
+    );
+  }
+  for (const path of [
+    '/room-service/products',
+    '/room-service/orders',
+    '/concierge/requests',
+    '/admin/audit-logs',
+  ]) {
+    assert.ok(
+      !recBackend.requests.some(({ call }) => call.startsWith(`GET ${path}`)),
+      `recepción no consulta ${path}`,
     );
   }
 });

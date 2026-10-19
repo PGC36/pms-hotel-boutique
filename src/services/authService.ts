@@ -8,7 +8,7 @@ import {
   type SessionUser,
 } from '@/shared/types/entities/session';
 import type { UserRole } from '@/shared/types/common';
-import { httpClient, HttpError } from './http-client';
+import { getControlledBackendMessage, httpClient, HttpError } from './http-client';
 
 export const sessionStorageKey = 'PMS_AUTH_SESSION';
 const legacyStorageKey = 'hotel-aurora.auth.v1';
@@ -75,12 +75,9 @@ function displayNameFromEmail(email: string): string {
 
 function messageFromHttpError(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
-  const data = error.data;
-  if (data && typeof data === 'object') {
-    const value = data as { message?: unknown; error?: unknown };
-    if (typeof value.message === 'string' && value.message.trim()) return value.message;
-    if (typeof value.error === 'string' && value.error.trim()) return value.error;
-  }
+  if (error.status >= 500) return error.message;
+  const backendMessage = getControlledBackendMessage(error.data);
+  if (backendMessage) return backendMessage;
   return fallback;
 }
 

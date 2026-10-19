@@ -18,7 +18,7 @@ import {
 import { toDomain as toDeposit, type Deposit } from '@/shared/types/entities/deposit';
 import type { BookingDto } from '@/shared/types/entities/booking';
 import type { ID } from '@/shared/types/common';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { mockUtils, simulateLatency } from './mockUtils';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -181,13 +181,9 @@ function depositMethodToApi(method: Deposit['method']): DepositResponse['method'
 
 function getHttpErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
-  const data = error.data;
-  if (data && typeof data === 'object') {
-    const value = data as { message?: unknown; error?: unknown; detail?: unknown };
-    if (typeof value.message === 'string' && value.message.trim()) return value.message;
-    if (typeof value.error === 'string' && value.error.trim()) return value.error;
-    if (typeof value.detail === 'string' && value.detail.trim()) return value.detail;
-  }
+  if (error.status >= 500) return error.message;
+  const backendMessage = getControlledBackendMessage(error.data);
+  if (backendMessage) return backendMessage;
   if (error.status === 401) return 'Tu sesion expiro. Inicia sesion nuevamente.';
   if (error.status === 403) return 'No tienes permisos para operar el folio.';
   if (error.status === 404) return 'No se encontro el folio o recurso financiero solicitado.';

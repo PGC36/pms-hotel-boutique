@@ -1,11 +1,18 @@
+import type { ReactNode } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
 import { useAuth } from '@/modules/auth/components/auth-context';
 import { hasPermission, type Permission } from '@/modules/auth/models/session';
 
-export function RequirePermission({ permission }: { permission: Permission }) {
+export function RequirePermission({
+  permission,
+  children,
+}: {
+  permission: Permission;
+  children?: ReactNode;
+}) {
   const { session } = useAuth();
-  if (hasPermission(session, permission)) return <Outlet />;
+  if (hasPermission(session, permission)) return children ?? <Outlet />;
   return (
     <section className="content">
       <p className="eyebrow">Acceso restringido</p>

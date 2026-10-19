@@ -1,7 +1,7 @@
 import { toDomain as toOrder, type Order, type OrderDto } from '@/shared/types/entities/order';
 import type { ID } from '@/shared/types/common';
 import type { OrderStatus } from '@/shared/constants/statuses';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { guestRequest } from './guestHttp';
 
 // INT-10: el personal opera los pedidos contra `RoomServiceController`. El
@@ -83,8 +83,45 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 
 function getHttpErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
+  if (error.status >= 500) return error.message;
   if (error.status === 400) {
-    return `${fallback} El backend rechazó la operación: el pedido cambió de estado, no hay stock suficiente o el folio no está abierto.`;
+    const body = error.data;
+    const detail =
+      typeof body === 'string'
+        ? body
+        : body && typeof body === 'object'
+          ? ['message', 'detail', 'error']
+              .map((key) => (key in body ? (body as Record<string, unknown>)[key] : undefined))
+              .find((value): value is string => typeof value === 'string')
+          : undefined;
+    if (detail) {
+      const stockError = detail.match(
+        /insufficient stock for product (.+): available (\d+), requested (\d+)/i,
+      );
+      if (stockError) {
+        return `No hay stock suficiente de ${stockError[1]}. Disponibles: ${stockError[2]}; solicitados: ${stockError[3]}.`;
+      }
+      const stockRaceError = detail.match(/insufficient stock: available (\d+), requested (\d+)/i);
+      if (stockRaceError) {
+        return `No hay stock suficiente. Quedan ${stockRaceError[1]} unidades y se solicitaron ${stockRaceError[2]}. Actualiza el inventario.`;
+      }
+      if (/inventory item for product .+ is inactive/i.test(detail)) {
+        const productName = detail.match(/inventory item for product (.+) is inactive/i)?.[1];
+        return `No se pudo completar el pedido: el insumo vinculado a ${productName ?? 'este producto'} está inactivo en el inventario.`;
+      }
+      if (/exactly one active inventory item/i.test(detail)) {
+        return 'No se pudo completar el pedido: el producto debe tener exactamente un insumo activo vinculado al inventario.';
+      }
+      if (/folio|accounting period|cash session/i.test(detail)) {
+        return 'No se pudo completar el pedido porque el folio o la caja de la reserva no están abiertos.';
+      }
+      if (/status|transition/i.test(detail)) {
+        return 'No se pudo cambiar el estado: el pedido ya cambió o esa transición no está permitida. Actualiza la lista e inténtalo de nuevo.';
+      }
+      const safeDetail = getControlledBackendMessage(body);
+      return safeDetail ? `${fallback} ${safeDetail}` : fallback;
+    }
+    return `${fallback} El backend rechazó la operación: el pedido pudo cambiar de estado, faltar stock o tener el folio cerrado. Actualiza la lista e inténtalo de nuevo.`;
   }
   if (error.status === 401) return 'Tu sesión expiró. Inicia sesión nuevamente.';
   if (error.status === 403) return 'No tienes permisos para operar Room Service.';

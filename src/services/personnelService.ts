@@ -58,6 +58,7 @@ type UpdateUserData = {
   email: string;
   roleId: string;
   status: User['status'];
+  password?: string;
 };
 
 const apiRoleToUserRole: Record<string, User['role']> = {
@@ -100,6 +101,7 @@ const toUpdateUserRequest = (data: UpdateUserData) => ({
   email: data.email.trim().toLowerCase(),
   roleId: data.roleId,
   status: data.status,
+  ...(data.password ? { password: data.password } : {}),
 });
 
 const toCreateRoleRequest = (data: CreateRoleData) => ({
@@ -185,6 +187,7 @@ export const personnelService = {
       email: data.email ?? current.email,
       roleId: data.roleId,
       status: data.status ?? current.status,
+      password: data.password,
     });
     const user = await httpClient.put<ApiUser>(`/admin/users/${id}`, request);
     return toUser(toUserDto(user));
