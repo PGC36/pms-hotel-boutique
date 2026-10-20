@@ -17,6 +17,9 @@ const backendPermissionMap: Record<string, Permission[]> = {
 function permissionsFromAuthorities(session: AuthSession): Permission[] {
   if (session.authorities.includes('ROLE_ADMIN')) return [...rolePermissions.ADMIN];
   const mapped = session.authorities.flatMap((authority) => backendPermissionMap[authority] ?? []);
+  // Rol personalizado: solo lo que conceden sus permisos reales, sin heredar los
+  // del rol predefinido cuyo panel usa (B3). `dashboard:view` es la entrada común.
+  if (session.user.roleCode) return [...new Set<Permission>(['dashboard:view', ...mapped])];
   return [...new Set([...rolePermissions[session.user.role], ...mapped])];
 }
 

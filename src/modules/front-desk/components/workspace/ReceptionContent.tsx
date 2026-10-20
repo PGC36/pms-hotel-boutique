@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
-import { useState } from 'react';
+import { formatCurrency } from '@/shared/utils/currency';
+import { useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight,
   Ban,
@@ -26,8 +27,25 @@ import type {
   ReservationStatus,
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
-import { toDtoCalendarDate } from '@/shared/types/common';
-import { ReservationDetail } from './ReservationDetail';
+import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import { formatStayRange } from '@/shared/utils/date';
+import type { FrontDeskPaymentMethod } from '@/modules/front-desk/utils/paymentMethods';
+import {
+  getArrivalsForDay,
+  getDeparturesForDay,
+  getOccupancyPercent,
+} from '@/modules/front-desk/utils/receptionSummary';
+import {
+  AVAIL_FIX_FIELDS,
+  availabilityCapacityMessage,
+  editCheckOutMin,
+  hotelToday,
+  isCalendarDate,
+  isDigitsOnly,
+  nextCalendarDay,
+  validateAvailabilityQuery,
+} from '@/modules/front-desk/utils/reservationFormValidation';
+import { ReservationDetail, type DepositAction } from './ReservationDetail';
 import {
   BlockModal,
   ChargeModal,
@@ -40,9 +58,19 @@ import {
   RoomChangeModal,
 } from './ReceptionModals';
 
-const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+// Quetzales con el formato único del proyecto (antes se mostraba "$" con formato de México).
+const money = (n: number) => formatCurrency(Math.round(n * 100), 'GTQ');
 const fmtDate = (d: string) =>
   new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+
+/** Estadía en formato de Guatemala (dd-mm-aaaa – dd-mm-aaaa); un dato inválido no tumba la pantalla. */
+const stayRangeLabel = (checkIn: string, checkOut: string) => {
+  try {
+    return formatStayRange(toDomainCalendarDate(checkIn), toDomainCalendarDate(checkOut));
+  } catch {
+    return `${checkIn} – ${checkOut}`;
+  }
+};
 
 type Totals = { charges: number; deposits: number; payments: number; balance: number };
 
@@ -97,6 +125,7 @@ export function ReceptionContent({
   showVoidCharge,
   setShowVoidCharge,
   onVoidCharge,
+  onDepositAction,
   showPayment,
   setShowPayment,
   onAddPayment,
@@ -180,12 +209,28 @@ export function ReceptionContent({
   showVoidCharge: { resId: number; entryId: number } | null;
   setShowVoidCharge: (v: { resId: number; entryId: number } | null) => void;
   onVoidCharge: (resId: number, entryId: number, reason: string) => void;
+  onDepositAction: (
+    resId: number,
+    entryId: number,
+    action: DepositAction,
+    reason?: string,
+  ) => Promise<boolean>;
   showPayment: number | null;
   setShowPayment: (v: number | null) => void;
-  onAddPayment: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddPayment: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   showDeposit: number | null;
   setShowDeposit: (v: number | null) => void;
-  onAddDeposit: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddDeposit: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   showRoomChange: number | null;
   setShowRoomChange: (v: number | null) => void;
   onRoomChange: (id: number, room: string) => void;
@@ -212,10 +257,19 @@ export function ReceptionContent({
   onRefresh: () => Promise<void>;
 }) {
   const [refreshingCalendar, setRefreshingCalendar] = useState(false);
-  const [availCheckIn, setAvailCheckIn] = useState('2024-08-31');
-  const [availCheckOut, setAvailCheckOut] = useState('2024-09-02');
-  const [availGuests, setAvailGuests] = useState(2);
+  // Disponibilidad parte de hoy → mañana en Guatemala.
+  const [availCheckIn, setAvailCheckIn] = useState(() => hotelToday());
+  const [availCheckOut, setAvailCheckOut] = useState(() => nextCalendarDay(hotelToday()));
+  // Texto, no número: vacío y 0 se informan en lugar de convertirse en 1.
+  const [availGuests, setAvailGuests] = useState('2');
   const [availType, setAvailType] = useState('Todos');
+  // Buscar fuerza un nuevo render para revalidar con la fecha de hoy (p. ej. tras la medianoche).
+  const [, setAvailSearches] = useState(0);
+  // Tipos de las habitaciones cargadas, sin duplicados ni opciones que no existen.
+  const availTypeOptions = Array.from(new Set(rooms.map((room) => room.type)));
+  if (availType !== 'Todos' && !availTypeOptions.some((type) => type === availType)) {
+    setAvailType('Todos');
+  }
 
   const refreshCalendar = async () => {
     if (refreshingCalendar) return;
@@ -230,12 +284,9 @@ export function ReceptionContent({
   /* ---------- Dashboard / Resumen ---------- */
   if (nav === 'Resumen') {
     const today = toDtoCalendarDate(new Date());
-    const arrivals = reservations.filter(
-      (r) => r.checkIn === today && !['Cancelada', 'Anulada'].includes(r.status),
-    );
-    const departures = reservations.filter(
-      (r) => r.checkOut === today && !['Cancelada', 'Anulada'].includes(r.status),
-    );
+    // Mismos criterios que las métricas de la cabecera (receptionSummary).
+    const arrivals = getArrivalsForDay(reservations, today).all;
+    const departures = getDeparturesForDay(reservations, today).all;
     const inHouse = reservations.filter((r) => r.status === 'Check-in');
     const available = rooms.filter((r) => r.status === 'Disponible');
     const occupied = rooms.filter((r) => r.status === 'Ocupada');
@@ -245,6 +296,19 @@ export function ReceptionContent({
     const pending = reservations.filter(
       (r) => r.status === 'Pendiente' || r.status === 'Confirmada',
     );
+    const occupancyPercent = getOccupancyPercent(occupied.length, rooms.length);
+    // Filas clicables accesibles con teclado (Enter/Espacio), sin cambiar su aspecto.
+    const reservationRowProps = (id: number) => ({
+      role: 'button',
+      tabIndex: 0,
+      onClick: () => onSelectRes(id),
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelectRes(id);
+        }
+      },
+    });
 
     return (
       <>
@@ -324,7 +388,7 @@ export function ReceptionContent({
                     </div>
                   )}
                   {arrivals.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
@@ -348,7 +412,7 @@ export function ReceptionContent({
                     </div>
                   )}
                   {departures.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
@@ -372,14 +436,12 @@ export function ReceptionContent({
                     </div>
                   )}
                   {pending.map((r) => (
-                    <div className="rc-dash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
+                    <div className="rc-dash-row" key={r.id} {...reservationRowProps(r.id)}>
                       <div>
                         <strong>
                           {r.guest.name} {r.guest.lastName}
                         </strong>
-                        <span>
-                          {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}
-                        </span>
+                        <span>{stayRangeLabel(r.checkIn, r.checkOut)}</span>
                       </div>
                       <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
                     </div>
@@ -420,13 +482,22 @@ export function ReceptionContent({
             </div>
             <div className="rc-progress-block">
               <span>Ocupación general</span>
-              <strong>{Math.round((occupied.length / rooms.length) * 100)}%</strong>
+              <strong>{occupancyPercent === null ? '—' : `${occupancyPercent}%`}</strong>
               <div className="progress-line">
-                <i style={{ width: `${Math.round((occupied.length / rooms.length) * 100)}%` }} />
+                <i style={{ width: `${occupancyPercent ?? 0}%` }} />
               </div>
             </div>
             <div className="rc-quick-actions">
-              <button onClick={() => setShowBlock(true)}>
+              {/* R-05: el bloqueo aún no se guarda en el backend (subfase 1C); no se simula. */}
+              <button
+                type="button"
+                title="Disponible en una próxima fase"
+                onClick={() =>
+                  onAction(
+                    'El bloqueo de habitaciones aún no está disponible. No se registró ningún cambio.',
+                  )
+                }
+              >
                 <Ban size={16} /> Bloquear habitación
               </button>
               <button onClick={() => onNavigate('Caja')}>
@@ -487,6 +558,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -593,16 +667,21 @@ export function ReceptionContent({
         </div>
         <div className="toolbar rc-cal-toolbar">
           <div className="rc-cal-filters">
+            {/* Tipos de las habitaciones cargadas (igual que Disponibilidad), sin opciones inexistentes. */}
             <select
+              aria-label="Filtrar por tipo de habitación"
               value={calFilter.type}
               onChange={(e) => setCalFilter({ ...calFilter, type: e.target.value })}
             >
               <option>Todos</option>
-              <option>Estándar</option>
-              <option>Deluxe</option>
-              <option>Suite</option>
+              {availTypeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
             </select>
             <select
+              aria-label="Filtrar por estado de la reserva"
               value={calFilter.status}
               onChange={(e) => setCalFilter({ ...calFilter, status: e.target.value })}
             >
@@ -613,6 +692,7 @@ export function ReceptionContent({
               <option>Check-out</option>
             </select>
             <select
+              aria-label="Filtrar por habitación"
               value={calFilter.room}
               onChange={(e) => setCalFilter({ ...calFilter, room: e.target.value })}
             >
@@ -753,6 +833,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -822,6 +905,7 @@ export function ReceptionContent({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar reservas"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por código, huésped, habitación..."
@@ -938,6 +1022,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1008,6 +1095,7 @@ export function ReceptionContent({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar huéspedes"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Nombre, teléfono, correo o código de reserva..."
@@ -1063,6 +1151,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1114,14 +1205,47 @@ export function ReceptionContent({
 
   /* ---------- Disponibilidad ---------- */
   if (nav === 'Disponibilidad') {
-    const available = rooms.filter((r) => {
-      if (r.status !== 'Disponible') return false;
-      if (availType !== 'Todos' && r.type !== availType) return false;
-      if (r.capacity < availGuests) return false;
-      if (hasConflict(r.number, availCheckIn, availCheckOut)) return false;
-      if (isRoomBlocked(r.number, availCheckIn, availCheckOut)) return false;
-      return true;
+    const today = hotelToday();
+    const availErrors = validateAvailabilityQuery(availCheckIn, availCheckOut, availGuests, today);
+    // Con campos inválidos no se muestra ninguna habitación: un rango invertido o
+    // vacío no tiene cruces y las daría todas por disponibles.
+    const availValid = Object.keys(availErrors).length === 0;
+    // Valores enormes pasan a Infinity: la comparación con la capacidad sigue siendo correcta.
+    const guestCount = Number(availGuests);
+    const maxCapacity = rooms.length > 0 ? Math.max(...rooms.map((r) => r.capacity)) : 0;
+    const overCapacity = availValid && rooms.length > 0 && guestCount > maxCapacity;
+    const available = !availValid
+      ? []
+      : rooms.filter((r) => {
+          if (r.status !== 'Disponible') return false;
+          if (availType !== 'Todos' && r.type !== availType) return false;
+          if (r.capacity < guestCount) return false;
+          if (hasConflict(r.number, availCheckIn, availCheckOut)) return false;
+          if (isRoomBlocked(r.number, availCheckIn, availCheckOut)) return false;
+          return true;
+        });
+    const availCountLabel = `${available.length} ${
+      available.length === 1 ? 'habitación disponible' : 'habitaciones disponibles'
+    }`;
+    const availInputClass = (error?: string) => `rc-input${error ? ' error' : ''}`;
+    const availErrorProps = (field: keyof typeof availErrors) => ({
+      'aria-invalid': Boolean(availErrors[field]),
+      'aria-describedby': availErrors[field] ? `avail-${field}-error` : undefined,
     });
+    const changeAvailCheckIn = (value: string) => {
+      setAvailCheckIn(value);
+      // Si la salida deja de ser posterior a la entrada, pasa al día siguiente;
+      // si sigue siendo válida, se conserva.
+      if (isCalendarDate(value) && isCalendarDate(availCheckOut) && availCheckOut <= value) {
+        setAvailCheckOut(nextCalendarDay(value));
+      }
+    };
+    const searchAvailability = () => {
+      setAvailSearches((count) => count + 1);
+      const errors = validateAvailabilityQuery(availCheckIn, availCheckOut, availGuests);
+      if (Object.keys(errors).length > 0) return;
+      onAction(`Disponibilidad ${stayRangeLabel(availCheckIn, availCheckOut)}: ${availCountLabel}`);
+    };
 
     return (
       <div className="panel">
@@ -1136,54 +1260,96 @@ export function ReceptionContent({
             <span>Entrada</span>
             <input
               type="date"
+              name="avail-check-in"
+              className={availInputClass(availErrors.checkIn)}
+              min={today}
               value={availCheckIn}
-              onChange={(e) => setAvailCheckIn(e.target.value)}
+              onChange={(e) => changeAvailCheckIn(e.target.value)}
+              {...availErrorProps('checkIn')}
             />
+            {availErrors.checkIn && (
+              <small id="avail-checkIn-error" className="rc-field-error">
+                {availErrors.checkIn}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Salida</span>
             <input
               type="date"
+              name="avail-check-out"
+              className={availInputClass(availErrors.checkOut)}
+              min={editCheckOutMin(availCheckIn, today)}
               value={availCheckOut}
               onChange={(e) => setAvailCheckOut(e.target.value)}
+              {...availErrorProps('checkOut')}
             />
+            {availErrors.checkOut && (
+              <small id="avail-checkOut-error" className="rc-field-error">
+                {availErrors.checkOut}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Huéspedes</span>
+            {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
             <input
-              type="number"
-              min={1}
+              type="text"
+              name="avail-guests"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className={availInputClass(availErrors.guests)}
               value={availGuests}
-              onChange={(e) => setAvailGuests(Number(e.target.value) || 1)}
+              onChange={(e) => {
+                // Signos, letras, decimales o espacios (también pegados) no se guardan.
+                if (isDigitsOnly(e.target.value)) setAvailGuests(e.target.value);
+              }}
+              {...availErrorProps('guests')}
             />
+            {availErrors.guests && (
+              <small id="avail-guests-error" className="rc-field-error">
+                {availErrors.guests}
+              </small>
+            )}
           </label>
           <label className="rc-field">
             <span>Tipo</span>
-            <select value={availType} onChange={(e) => setAvailType(e.target.value)}>
+            <select
+              name="avail-type"
+              value={availType}
+              onChange={(e) => setAvailType(e.target.value)}
+            >
               <option>Todos</option>
-              <option>Estándar</option>
-              <option>Deluxe</option>
-              <option>Suite</option>
+              {availTypeOptions.map((type) => (
+                <option key={type}>{type}</option>
+              ))}
             </select>
           </label>
-          <button
-            className="button primary"
-            onClick={() =>
-              onAction(`Disponibilidad consultada del ${availCheckIn} al ${availCheckOut}`)
-            }
-          >
-            <Search size={16} /> Buscar
-          </button>
+          {/* Encabezado vacío: alinea el botón con los campos aunque estos muestren errores. */}
+          <div className="rc-field rc-avail-action">
+            <span aria-hidden="true">&nbsp;</span>
+            <button className="button primary" onClick={searchAvailability} disabled={!availValid}>
+              <Search size={16} /> Buscar
+            </button>
+          </div>
         </div>
         <div className="rc-avail-results">
-          <div className="rc-avail-count">
-            {available.length}{' '}
-            {available.length === 1 ? 'habitación disponible' : 'habitaciones disponibles'}
-          </div>
-          {available.length === 0 ? (
-            <div className="hk-empty">
+          {!availValid ? (
+            <div className="hk-empty" role="status">
+              <Search size={22} />
+              <p>{AVAIL_FIX_FIELDS}</p>
+            </div>
+          ) : (
+            <div className="rc-avail-count">{availCountLabel}</div>
+          )}
+          {!availValid ? null : available.length === 0 ? (
+            <div className="hk-empty" role="status">
               <BedDouble size={22} />
-              <p>No hay habitaciones disponibles para esas fechas</p>
+              <p>
+                {overCapacity
+                  ? availabilityCapacityMessage(availGuests, maxCapacity)
+                  : 'No hay habitaciones disponibles para esas fechas'}
+              </p>
             </div>
           ) : (
             available.map((r) => (
@@ -1534,6 +1700,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1659,8 +1828,18 @@ type ModalsArgs = {
     observation: string,
   ) => void;
   onVoidCharge: (resId: number, entryId: number, reason: string) => void;
-  onAddPayment: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
-  onAddDeposit: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddPayment: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
+  onAddDeposit: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   onRoomChange: (id: number, room: string) => void;
   folioTotals: (f: FolioEntry[]) => Totals;
 };
@@ -1803,7 +1982,7 @@ function CashResSelectorModal({
             <p className="eyebrow">SELECCIONAR RESERVA</p>
             <h2>{title}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1815,6 +1994,7 @@ function CashResSelectorModal({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar reserva por huésped o código"
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}

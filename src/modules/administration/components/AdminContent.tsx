@@ -4,6 +4,7 @@ import {
   isValidElement,
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ReactElement,
   type ReactNode,
@@ -48,7 +49,13 @@ import { inventoryService } from '@/services/inventoryService';
 import { personnelService } from '@/services/personnelService';
 import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
-import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
+import { auditDescription } from '@/modules/administration/utils/auditDescription';
+import {
+  customRoleSelectionError,
+  editableRoleGroups,
+  rolePermissionKeysFromUi,
+  uiPermissionsFromBackend,
+} from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
 import { getUserFacingErrorMessage } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
@@ -65,6 +72,23 @@ import { formatAmenitySchedule, parseAmenityScheduleInput } from '@/shared/utils
 import { formatCurrency } from '@/shared/utils/currency';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
 import {
+  amountToMoneyInput,
+  fieldErrorProps,
+  isMoneyInput,
+  isWholeNumberInput,
+  moneyInputToCents,
+  normalizePersonNamePart,
+  validateDateRange,
+  validateMoneyAmount,
+  validatePersonNamePart,
+  validateRequiredText,
+  validateWholeNumber,
+} from '@/shared/utils/formValidation';
+import {
+  EMAIL_MAX_LENGTH,
+  validateEmail,
+} from '@/modules/front-desk/utils/reservationFormValidation';
+import {
   discardPendingUploads,
   galleryFromImages,
   getGallerySaveBlocker,
@@ -80,6 +104,7 @@ import type {
 } from '@/shared/types/entities/audit-log';
 import type { Booking } from '@/shared/types/entities/booking';
 import type { CashSession } from '@/shared/types/entities/cash-session';
+import { formatDateGT } from '@/shared/utils/date';
 import type { InventoryItemCategory, InventoryUnit } from '@/shared/types/entities/inventory-item';
 import type { InventoryItemCategoryDto } from '@/shared/types/entities/inventory-item';
 import type { InventoryMovementReasonDto } from '@/shared/types/entities/inventory-movement';
@@ -101,10 +126,16 @@ import './AdminContent.css';
 type AdminUser = {
   id: number;
   dbId: string;
+  /** Nombre visible (nombre + apellido). */
   name: string;
+  /** Campos separados del contrato (`User.firstName`/`lastName`). */
+  firstName: string;
+  lastName: string;
   email: string;
   password?: string;
   role: string;
+  /** Id real del rol (resuelto por código): no depende del nombre visible. */
+  roleDbId?: string;
   status: 'Activo' | 'Inactivo';
   lastAccess: string;
 };
@@ -151,6 +182,8 @@ type SeasonRate = {
   endDate: string;
   baseRate: number;
   seasonalRate: number;
+  /** Noches mínimas de la tarifa (el backend lo exige al crear). */
+  minimumNights?: number;
   status: 'Activa' | 'Inactiva';
 };
 type Promo = {
@@ -320,138 +353,6 @@ const withFixedAdminPermissions = (permissions: Record<string, boolean>) => ({
   ...Object.fromEntries(ADMIN_ACCESS_PERMISSION_KEYS.map((key) => [key, true])),
 });
 
-const backendPermissionsByAccessKey: Record<string, string[]> = {
-  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: ['bookings.read', 'rooms.read', 'cash.read'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]: [],
-  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: [
-    'rooms.read',
-    'rooms.write',
-    'room-types.read',
-    'room-types.write',
-    'room-features.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: ['rates.read', 'rates.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: ['rates.read', 'rates.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: [
-    'room-service.read',
-    'room-service.write',
-    'concierge.read',
-    'concierge.write',
-    'housekeeping.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: [
-    'bookings.read',
-    'cash.read',
-    'payments.read',
-    'deposits.read',
-    'charges.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: ['inventory.read', 'inventory.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: ['cash.read', 'cash.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: [],
-  [roleAccessKey('RECEPCIÓN', 'Resumen')]: ['bookings.read', 'guests.read', 'rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Calendario')]: ['bookings.read', 'rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Reservas')]: ['bookings.read', 'bookings.write'],
-  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: ['guests.read', 'guests.write'],
-  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: ['rooms.read', 'rates.read'],
-  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: ['rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Caja')]: ['cash.read', 'cash.write'],
-  [roleAccessKey('LIMPIEZA', 'Inicio')]: ['housekeeping.read'],
-  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: ['housekeeping.read', 'rooms.read'],
-  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: ['housekeeping.read', 'housekeeping.write'],
-  [roleAccessKey('LIMPIEZA', 'Historial')]: ['housekeeping.read'],
-  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: ['room-service.read', 'room-service.write'],
-  [roleAccessKey('ROOM SERVICE', 'Menú')]: ['room-service.read'],
-  [roleAccessKey('ROOM SERVICE', 'Historial')]: ['room-service.read'],
-  [roleAccessKey('ROOM SERVICE', 'Inventario')]: ['inventory.read'],
-  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: ['concierge.read', 'concierge.write'],
-  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: ['concierge.read', 'bookings.read'],
-  [roleAccessKey('CONSERJERÍA', 'Historial')]: ['concierge.read'],
-  [roleAccessKey('HUÉSPED', 'Inicio')]: ['guest-portal.home'],
-  [roleAccessKey('HUÉSPED', 'Mis reservas')]: ['guest-portal.reservations'],
-  [roleAccessKey('HUÉSPED', 'Mi estancia')]: ['guest-portal.stay'],
-  [roleAccessKey('HUÉSPED', 'Amenidades')]: ['guest-portal.amenities'],
-  [roleAccessKey('HUÉSPED', 'Conserjería')]: ['guest-portal.requests'],
-  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: ['guest-portal.services'],
-  [roleAccessKey('HUÉSPED', 'Room service')]: ['guest-portal.room-service'],
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]: ['guest-portal.requests'],
-  [roleAccessKey('HUÉSPED', 'Notificaciones')]: ['guest-portal.notifications'],
-};
-
-const adminNavigationPermissionByAccessKey: Record<string, string> = {
-  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: 'navigation.administracion.dashboard',
-  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]:
-    'navigation.administracion.usuarios-y-roles',
-  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: 'navigation.administracion.habitaciones',
-  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: 'navigation.administracion.tarifas',
-  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: 'navigation.administracion.promociones',
-  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: 'navigation.administracion.servicios',
-  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: 'navigation.administracion.reportes',
-  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: 'navigation.administracion.inventario',
-  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: 'navigation.administracion.caja',
-  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: 'navigation.administracion.auditoria',
-  [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'navigation.recepcion.resumen',
-  [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'navigation.recepcion.calendario',
-  [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'navigation.recepcion.reservas',
-  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: 'navigation.recepcion.huespedes',
-  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: 'navigation.recepcion.disponibilidad',
-  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: 'navigation.recepcion.habitaciones',
-  [roleAccessKey('RECEPCIÓN', 'Caja')]: 'navigation.recepcion.caja',
-  [roleAccessKey('LIMPIEZA', 'Inicio')]: 'navigation.limpieza.inicio',
-  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: 'navigation.limpieza.habitaciones',
-  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: 'navigation.limpieza.solicitudes',
-  [roleAccessKey('LIMPIEZA', 'Historial')]: 'navigation.limpieza.historial',
-  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: 'navigation.room-service.pedidos-activos',
-  [roleAccessKey('ROOM SERVICE', 'Menú')]: 'navigation.room-service.menu',
-  [roleAccessKey('ROOM SERVICE', 'Historial')]: 'navigation.room-service.historial',
-  [roleAccessKey('ROOM SERVICE', 'Inventario')]: 'navigation.room-service.inventario',
-  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: 'navigation.conserjeria.solicitudes',
-  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: 'navigation.conserjeria.por-habitacion',
-  [roleAccessKey('CONSERJERÍA', 'Historial')]: 'navigation.conserjeria.historial',
-  [roleAccessKey('HUÉSPED', 'Inicio')]: 'navigation.huesped.inicio',
-  [roleAccessKey('HUÉSPED', 'Mis reservas')]: 'navigation.huesped.mis-reservas',
-  [roleAccessKey('HUÉSPED', 'Mi estancia')]: 'navigation.huesped.mi-estancia',
-  [roleAccessKey('HUÉSPED', 'Amenidades')]: 'navigation.huesped.amenidades',
-  [roleAccessKey('HUÉSPED', 'Conserjería')]: 'navigation.huesped.conserjeria',
-  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: 'navigation.huesped.servicios-de-habitacion',
-  [roleAccessKey('HUÉSPED', 'Room service')]: 'navigation.huesped.room-service',
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]:
-    'navigation.huesped.mis-solicitudes-y-pedidos',
-  [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'navigation.huesped.notificaciones',
-};
-
-const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
-  if (role.permissionIds.length === 0) {
-    const fallbackPermissions = getRoleDashboardPermissions(role.code);
-    return normalizeRoleCode(role.code) === 'admin'
-      ? withFixedAdminPermissions(fallbackPermissions)
-      : fallbackPermissions;
-  }
-  const granted = new Set(role.permissionIds);
-  const hasConfiguredNavigation = granted.has('navigation.configured');
-  if (normalizeRoleCode(role.code) === 'admin' || hasConfiguredNavigation) {
-    const navigationPermissions = Object.fromEntries(
-      ALL_PERMISSIONS.map((key) => {
-        const permission = adminNavigationPermissionByAccessKey[key];
-        return [key, permission ? granted.has(permission) : false];
-      }),
-    );
-    return normalizeRoleCode(role.code) === 'admin'
-      ? withFixedAdminPermissions(navigationPermissions)
-      : navigationPermissions;
-  }
-  const permissions = Object.fromEntries(
-    ALL_PERMISSIONS.map((key) => {
-      const backendKeys = backendPermissionsByAccessKey[key] ?? [];
-      return [
-        key,
-        backendKeys.length === 0 ? false : backendKeys.some((item) => granted.has(item)),
-      ];
-    }),
-  ) as Record<string, boolean>;
-  return permissions;
-};
-
 const reportTabsByGroup: Record<ReportGroup, AdminReportTab[]> = {
   'Resumen operativo': ['Ocupación', 'Reservas', 'Cancelaciones'],
   'Reportes financieros': ['Ingresos'],
@@ -501,7 +402,8 @@ const parseDbId = (id: string, fallback: number) => {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-const centsToAmount = (cents: number) => Math.round(cents / 100);
+// Sin redondear: un precio de Q25.50 se edita como 25.5 y no se guarda como Q26.00.
+const centsToAmount = (cents: number) => cents / 100;
 
 const amountToCents = (amount: number) => Math.round(amount * 100);
 
@@ -547,18 +449,6 @@ const roleDisplayName = (role?: Role) => {
     roomService: 'Room Service',
   };
   return labels[normalizeRoleCode(role.code)] ?? role.name;
-};
-
-const getRoleDashboardPermissions = (roleCode: string) => {
-  const normalized = normalizeRoleCode(roleCode);
-  return Object.fromEntries(
-    ROLE_ACCESS_GROUPS.flatMap((group) =>
-      group.items.map((item) => [
-        roleAccessKey(group.name, item),
-        normalized === 'admin' || (group.roleCodes as readonly string[]).includes(normalized),
-      ]),
-    ),
-  ) as Record<string, boolean>;
 };
 
 const roomStatusLabel = (
@@ -617,35 +507,57 @@ const INVENTORY_REASON_BY_LABEL = Object.fromEntries(
 const toInventoryCategoryDto = (category: InventoryItemCategory): InventoryItemCategoryDto =>
   category === 'roomService' ? 'room_service' : category;
 
-const splitFullName = (name: string) => {
-  const [firstName = '', ...lastNameParts] = name.trim().split(/\s+/).filter(Boolean);
-  return {
-    firstName,
-    lastName: lastNameParts.join(' ') || firstName,
-  };
-};
+/** Contraseña inicial de un empleado: mínimo del backend (`CreateUserRequest`, @Size(min = 8)). */
+const USER_PASSWORD_MIN_LENGTH = 8;
+/** Límites del backend para roles (`CreateRoleRequest`). */
+const ROLE_NAME_MAX_LENGTH = 120;
+const ROLE_CODE_MAX_LENGTH = 80;
+/** Concepto de un movimiento de caja (`CreateCashMovementRequest`, @Size(max = 255)). */
+const CASH_CONCEPT_MAX_LENGTH = 255;
+/** Descuento de una promoción (`UpsertPromotionRequest`, @Min(1) @Max(100)). */
+const PROMO_PERCENT_MIN = 1;
+const PROMO_PERCENT_MAX = 100;
+/**
+ * Reglas de formato de los formularios de habitaciones y promociones (antes como
+ * `pattern`/`max` nativos del formulario; aquí con el error junto al campo).
+ */
+const ROOM_NUMBER_PATTERN = /^[A-Za-z0-9-]+$/;
+const ROOM_CAPACITY_MAX = 20;
+const ROOM_TYPE_NAME_PATTERN = /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9'’ -]{1,79}$/;
+const PROMO_NAME_PATTERN = /^[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ -]{1,99}$/;
+const PROMO_CODE_MIN_LENGTH = 2;
+const patternError = (value: string, pattern: RegExp, message: string) =>
+  pattern.test(value.trim()) ? null : message;
 
 const adminUserFromDomain = (user: User, roles: Role[], index: number): AdminUser => {
-  const role = roles.find((item: Role) => normalizeRoleCode(item.code) === user.role);
+  // Por el código real: un rol personalizado ya no aparece como Recepción (B3).
+  const roleKey = user.roleCode ?? user.role;
+  const role = roles.find((item: Role) => normalizeRoleCode(item.code) === roleKey);
   return {
     id: parseDbId(user.id, index + 1),
     dbId: user.id,
     name: `${user.firstName} ${user.lastName}`,
+    firstName: user.firstName,
+    lastName: user.lastName,
     email: user.email,
-    role: roleDisplayName(role) || user.role,
+    role: roleDisplayName(role) || roleKey,
     status: user.status === 'active' ? 'Activo' : 'Inactivo',
     lastAccess: toDtoCalendarDate(user.updatedAt),
   };
 };
 
 const adminUserFromAdminRoles = (user: User, roles: AdminRole[], index: number): AdminUser => {
-  const role = roles.find((item) => item.code === user.role);
+  const roleKey = user.roleCode ?? user.role;
+  const role = roles.find((item) => item.code === roleKey);
   return {
     id: parseDbId(user.id, index + 1),
     dbId: user.id,
     name: `${user.firstName} ${user.lastName}`,
+    firstName: user.firstName,
+    lastName: user.lastName,
     email: user.email,
-    role: role?.name ?? user.role,
+    role: role?.name ?? roleKey,
+    roleDbId: role?.dbId,
     status: user.status === 'active' ? 'Activo' : 'Inactivo',
     lastAccess: toDtoCalendarDate(user.updatedAt),
   };
@@ -659,7 +571,7 @@ const adminRoleFromDomain = (role: Role, users: User[], index: number): AdminRol
     code: roleCode,
     name: roleDisplayName(role),
     description: `Rol ${role.code}`,
-    userCount: users.filter((user) => user.role === roleCode).length,
+    userCount: users.filter((user) => (user.roleCode ?? user.role) === roleCode).length,
     permissions: uiPermissionsFromBackend(role),
     permissionKeys: [...role.permissionIds],
   };
@@ -751,11 +663,41 @@ const AUDIT_ACTION_LABELS: Record<KnownAuditAction, string> = {
 
 const dashboardPeriodOptions: DashboardPeriod[] = ['Hoy', '7 días', '30 días', '90 días'];
 const reportPeriodOptions: ReportPeriod[] = ['Día', 'Semana', 'Mes', 'Año', 'Temporada'];
+/** Módulos y acciones que registra el backend (AuditTrail) además del vocabulario base. */
+const AUDIT_MODULE_EXTRA_LABELS: Record<string, string> = {
+  folio: 'Folio',
+  payments: 'Pagos',
+  deposits: 'Depósitos',
+  roles: 'Roles',
+  demo_seed: 'Datos de demostración',
+};
+const AUDIT_ACTION_EXTRA_LABELS: Record<string, string> = {
+  created: 'Creación',
+  cancel: 'Cancelación',
+  close_exceptional: 'Cierre excepcional',
+  charge_create: 'Cargo',
+  charge_void: 'Anulación de cargo',
+  payment_create: 'Pago',
+  deposit_create: 'Depósito',
+  deposit_apply: 'Aplicación de depósito',
+  deposit_refund: 'Devolución de depósito',
+  user_password_change: 'Cambio de contraseña',
+  user_role_change: 'Cambio de rol',
+  user_status_change: 'Cambio de estado',
+  role_create: 'Creación de rol',
+  role_update: 'Actualización de rol',
+  role_permissions_replace: 'Cambio de permisos',
+};
+
 const auditModuleLabel = (module: AuditModule) =>
-  module in AUDIT_MODULE_LABELS ? AUDIT_MODULE_LABELS[module as KnownAuditModule] : module;
+  module in AUDIT_MODULE_LABELS
+    ? AUDIT_MODULE_LABELS[module as KnownAuditModule]
+    : (AUDIT_MODULE_EXTRA_LABELS[module] ?? module);
 
 const auditActionLabel = (action: AuditAction) =>
-  action in AUDIT_ACTION_LABELS ? AUDIT_ACTION_LABELS[action as KnownAuditAction] : action;
+  action in AUDIT_ACTION_LABELS
+    ? AUDIT_ACTION_LABELS[action as KnownAuditAction]
+    : (AUDIT_ACTION_EXTRA_LABELS[action] ?? action);
 
 /*
 const dashboardSeries: Record<
@@ -1012,9 +954,15 @@ function AdminModal({
   error?: string | null;
 }) {
   const close = submitting ? () => undefined : onClose;
+  const modalRef = useRef<HTMLDivElement>(null);
   return (
     <div className="modal-backdrop" onMouseDown={close}>
-      <div className="modal adm-modal" style={{ width }} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="modal adm-modal"
+        style={{ width }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <div>
             <p className="eyebrow">{eyebrow}</p>
@@ -1043,12 +991,12 @@ function AdminModal({
             <button
               type="button"
               className="button primary"
-              onClick={(event) => {
-                const fields = event.currentTarget
-                  .closest('.adm-modal')
-                  ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
-                    'input, select, textarea',
-                  );
+              onClick={() => {
+                // Validación nativa de los campos del modal (required, min/max…) antes
+                // de la validación propia de cada formulario.
+                const fields = modalRef.current?.querySelectorAll<
+                  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+                >('input, select, textarea');
                 for (const field of fields ?? []) {
                   if (!field.checkValidity()) {
                     field.reportValidity();
@@ -1090,7 +1038,12 @@ function AdminToolbar({
     <div className="toolbar">
       <div className="search-box">
         <Search size={17} />
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar..." />
+        <input
+          aria-label="Buscar"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar..."
+        />
       </div>
       {filterLabel && filterOptions && setFilter && (
         <div className="filter-dropdown">
@@ -1112,7 +1065,11 @@ function AdminToolbar({
         </div>
       )}
       {onAction && (
-        <button className="icon-btn" onClick={() => onAction('Más filtros abiertos')}>
+        <button
+          className="icon-btn"
+          aria-label="Más filtros"
+          onClick={() => onAction('Más filtros abiertos')}
+        >
           <Settings size={18} />
         </button>
       )}
@@ -1152,17 +1109,23 @@ function StatusSwitch({
   checked,
   label,
   onChange,
+  disabled = false,
+  disabledReason,
 }: {
   checked: boolean;
   label: string;
   onChange: () => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   return (
     <button
       type="button"
       className={`adm-status-switch ${checked ? 'on' : ''}`}
       aria-label={label}
-      title={label}
+      aria-pressed={checked}
+      title={disabled && disabledReason ? disabledReason : label}
+      disabled={disabled}
       onClick={onChange}
     >
       <span />
@@ -1299,7 +1262,7 @@ function buildAuditEntries(logs: AuditLog[], users: User[]): AuditEntry[] {
     time: formatDbTime(entry.occurredAt),
     module: auditModuleLabel(entry.module),
     action: auditActionLabel(entry.action),
-    description: `${entry.entityType} ${entry.entityId}`,
+    description: auditDescription(entry.entityType, entry.entityId, entry.details),
   }));
 }
 
@@ -1308,11 +1271,14 @@ export function AdminContent({
   onAction,
   onNavigate,
   onRolePermissionsChange,
+  currentUserEmail,
 }: {
   nav: string;
   onAction: (message: string) => void;
   onNavigate?: (nav: string) => void;
   onRolePermissionsChange?: (roleCode: string, permissions: Record<string, boolean>) => void;
+  /** Correo de la sesión: la propia cuenta no se puede desactivar. */
+  currentUserEmail?: string;
 }) {
   const [screen, setScreen] = useState<ScreenState>({ status: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
@@ -1546,6 +1512,7 @@ export function AdminContent({
       onNavigate={onNavigate}
       onRefresh={() => setReloadKey((current) => current + 1)}
       onRolePermissionsChange={onRolePermissionsChange}
+      currentUserEmail={currentUserEmail}
       initialAdminUsers={screen.users}
       initialAdminRoles={screen.roles}
       initialAdminRooms={screen.rooms}
@@ -1572,6 +1539,7 @@ function AdminContentReady({
   onNavigate,
   onRefresh,
   onRolePermissionsChange,
+  currentUserEmail,
   initialAdminUsers,
   initialAdminRoles,
   initialAdminRooms,
@@ -1594,6 +1562,7 @@ function AdminContentReady({
   onNavigate?: (nav: string) => void;
   onRefresh: () => void;
   onRolePermissionsChange?: (roleCode: string, permissions: Record<string, boolean>) => void;
+  currentUserEmail?: string;
   initialAdminUsers: AdminUser[];
   initialAdminRoles: AdminRole[];
   initialAdminRooms: AdminRoom[];
@@ -1622,6 +1591,28 @@ function AdminContentReady({
   const [rsItems, setRsItems] = useState(initialRoomServiceItems);
   const [deletingRsId, setDeletingRsId] = useState<string | null>(null);
   const [pendingDeleteRsItem, setPendingDeleteRsItem] = useState<RoomServiceItem | null>(null);
+  const [pendingDeactivateUser, setPendingDeactivateUser] = useState<AdminUser | null>(null);
+  const [changingUserStatusId, setChangingUserStatusId] = useState<string | null>(null);
+
+  const changeUserStatus = async (target: AdminUser, status: 'active' | 'inactive') => {
+    setChangingUserStatusId(target.dbId);
+    try {
+      const updated = await personnelService.updateUser(target.dbId, {
+        roleId: target.roleDbId ?? roleIdFromDisplay(roles, target.role),
+        status,
+      });
+      setUsers((current) =>
+        current.map((item, index) =>
+          item.dbId === target.dbId ? adminUserFromAdminRoles(updated, roles, index) : item,
+        ),
+      );
+      onAction(status === 'inactive' ? 'Usuario desactivado' : 'Usuario activado');
+    } catch (error) {
+      onAction(serviceErrorMessage(error));
+    } finally {
+      setChangingUserStatusId(null);
+    }
+  };
   const [inventory, setInventory] = useState(initialInventory);
   const [movements, setMovements] = useState(initialMovements);
   const [cashMovements, setCashMovements] = useState(initialCashMovements);
@@ -1652,6 +1643,22 @@ function AdminContentReady({
   const [editProduct, setEditProduct] = useState<InventoryProduct | null>(null);
   const [showMovementModal, setShowMovementModal] = useState(false);
   const [showCashModal, setShowCashModal] = useState(false);
+  const [cashSessionModal, setCashSessionModal] = useState<'open' | 'close' | null>(null);
+  const [openCashSessions, setOpenCashSessions] = useState<CashSession[]>([]);
+  const [openCashSessionsError, setOpenCashSessionsError] = useState<string | null>(null);
+  const [exceptionalClose, setExceptionalClose] = useState<CashSession | null>(null);
+  const loadOpenCashSessions = useCallback(async () => {
+    try {
+      setOpenCashSessions(await cashService.getOpenSessions());
+      setOpenCashSessionsError(null);
+    } catch (cause) {
+      setOpenCashSessions([]);
+      setOpenCashSessionsError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+  useEffect(() => {
+    if (nav === 'Caja') void loadOpenCashSessions();
+  }, [nav, loadOpenCashSessions]);
   const [cashOpen, setCashOpen] = useState(() =>
     initialCashSessions.some((session) => session.status === 'open'),
   );
@@ -2171,6 +2178,22 @@ function AdminContentReady({
     });
     return (
       <>
+        <ConfirmDialog
+          open={pendingDeactivateUser !== null}
+          title="Desactivar usuario"
+          description={`¿Seguro que quieres desactivar a ${pendingDeactivateUser?.name ?? ''} (${pendingDeactivateUser?.email ?? ''})? No podrá iniciar sesión hasta que lo vuelvas a activar.`}
+          confirmLabel="Desactivar"
+          pendingLabel="Desactivando..."
+          pending={
+            pendingDeactivateUser !== null && changingUserStatusId === pendingDeactivateUser.dbId
+          }
+          onClose={() => setPendingDeactivateUser(null)}
+          onConfirm={async () => {
+            if (!pendingDeactivateUser) return;
+            await changeUserStatus(pendingDeactivateUser, 'inactive');
+            setPendingDeactivateUser(null);
+          }}
+        />
         {usersSection === 'Gestión de usuarios' && (
           <div className="panel">
             <div className="panel-heading">
@@ -2227,23 +2250,19 @@ function AdminContentReady({
                       <StatusSwitch
                         checked={u.status === 'Activo'}
                         label={u.status === 'Activo' ? 'Desactivar usuario' : 'Activar usuario'}
-                        onChange={async () => {
-                          try {
-                            const updated = await personnelService.updateUser(u.dbId, {
-                              roleId: roleIdFromDisplay(roles, u.role),
-                              status: u.status === 'Activo' ? 'inactive' : 'active',
-                            });
-                            setUsers((current) =>
-                              current.map((item, index) =>
-                                item.dbId === u.dbId
-                                  ? adminUserFromAdminRoles(updated, roles, index)
-                                  : item,
-                              ),
-                            );
-                            onAction('Usuario actualizado correctamente');
-                          } catch (error) {
-                            onAction(serviceErrorMessage(error));
+                        disabled={
+                          changingUserStatusId === u.dbId ||
+                          (u.status === 'Activo' &&
+                            Boolean(currentUserEmail) &&
+                            u.email.toLowerCase() === currentUserEmail?.toLowerCase())
+                        }
+                        disabledReason="No puedes desactivar tu propia cuenta"
+                        onChange={() => {
+                          if (u.status === 'Activo') {
+                            setPendingDeactivateUser(u);
+                            return;
                           }
+                          void changeUserStatus(u, 'active');
                         }}
                       />
                     </td>
@@ -2324,7 +2343,8 @@ function AdminContentReady({
             onClose={() => setShowUserModal(false)}
             onSave={async (u) => {
               try {
-                const { firstName, lastName } = splitFullName(u.name);
+                // Campos separados: ya no se adivina la división por la primera palabra.
+                const { firstName, lastName } = u;
                 const payload = {
                   firstName,
                   lastName,
@@ -2373,7 +2393,11 @@ function AdminContentReady({
               try {
                 const isEditingProtectedAdminRole =
                   editRole !== null && normalizeRoleCode(editRole.code) === 'admin';
-                const nextPermissionKeys = rolePermissionKeysFromUi(r.code, r.permissions);
+                const nextPermissionKeys = rolePermissionKeysFromUi(
+                  r.code,
+                  r.permissions,
+                  editRole?.permissionKeys ?? [],
+                );
                 let saved = editRole
                   ? await personnelService.updateRole(editRole.dbId, { name: r.name })
                   : await personnelService.createRole({
@@ -2662,7 +2686,8 @@ function AdminContentReady({
             roomTypes={roomTypes}
             onClose={() => setShowRoomModal(false)}
             onSave={async (r) => {
-              const floor = Number(String(r.floor).replace(/\D/g, '')) || 1;
+              // El modal exige al menos un dígito en el piso: "Piso 0" se guarda como 0, no como 1.
+              const floor = Number(String(r.floor).replace(/\D/g, ''));
               const data = {
                 room_number: r.number,
                 room_type_id: r.roomTypeId,
@@ -2716,7 +2741,8 @@ function AdminContentReady({
                   name: rt.name,
                   description: rt.description,
                   capacity: rt.capacity,
-                  bed_configuration: rt.features.join(', ') || rt.name,
+                  // Sin bed_configuration: el panel no edita camas y el backend conserva
+                  // la guardada (antes se sobrescribía con la lista de características).
                   room_feature_ids: rt.roomFeatureIds,
                   active: rt.status === 'Activo',
                   images,
@@ -2753,6 +2779,8 @@ function AdminContentReady({
                     valid_from: toDtoCalendarDate(new Date()),
                     valid_to: '9999-12-31',
                     price_cents: amountToCents(rt.basePrice),
+                    // El backend exige minimumNights (> 0); 1 = sin mínimo, igual que al leer tarifas.
+                    minimum_nights: 1,
                     active: true,
                   });
                 } catch (cause) {
@@ -2911,6 +2939,7 @@ function AdminContentReady({
                 valid_from: sr.startDate,
                 valid_to: sr.endDate,
                 price_cents: amountToCents(sr.seasonalRate),
+                minimum_nights: sr.minimumNights,
                 active: true,
               });
               setSeasonRates((cur) => [
@@ -4033,40 +4062,11 @@ function AdminContentReady({
             </div>
             <div className="adm-heading-actions">
               {cashOpen ? (
-                <button
-                  className="button secondary"
-                  onClick={async () => {
-                    try {
-                      await cashService.closeSession();
-                      const sessions = await cashService.getSessions();
-                      setCashSessions(sessions);
-                      setCashMovements([]);
-                      setCashOpen(false);
-                      onAction('Caja cerrada correctamente');
-                    } catch (cause) {
-                      notifyError(cause);
-                    }
-                  }}
-                >
+                <button className="button secondary" onClick={() => setCashSessionModal('close')}>
                   <Ban size={16} /> Cerrar caja
                 </button>
               ) : (
-                <button
-                  className="button primary"
-                  onClick={async () => {
-                    try {
-                      const opened = await cashService.openSession({
-                        openingBalanceCents: amountToCents(saldoInicial),
-                      });
-                      setCashSessions((cur) => [...cur, opened]);
-                      setCashMovements([]);
-                      setCashOpen(true);
-                      onAction('Caja abierta correctamente');
-                    } catch (cause) {
-                      notifyError(cause);
-                    }
-                  }}
-                >
+                <button className="button primary" onClick={() => setCashSessionModal('open')}>
                   <Plus size={16} /> Abrir caja
                 </button>
               )}
@@ -4111,6 +4111,118 @@ function AdminContentReady({
             </AdminTable>
           )}
         </div>
+        {(() => {
+          const ownId = latestCashSession?.status === 'open' ? latestCashSession.id : undefined;
+          const others = openCashSessions.filter((session) => session.id !== ownId);
+          const ownerOf = (session: CashSession) =>
+            users.find((user) => user.dbId === session.openedByUserId)?.name ??
+            'Usuario sin nombre';
+          if (!openCashSessionsError && others.length === 0) return null;
+          return (
+            <div className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h3>Cajas abiertas de otros usuarios</h3>
+                  <p>Cierre excepcional con conteo físico y motivo; queda auditado</p>
+                </div>
+              </div>
+              {openCashSessionsError ? (
+                <p className="login-helper" role="alert">
+                  {openCashSessionsError}
+                </p>
+              ) : (
+                <AdminTable headers={['Responsable', 'Apertura', 'Saldo esperado', 'Acción']}>
+                  {others.map((session) => (
+                    <tr key={session.id}>
+                      <td>
+                        <strong>{ownerOf(session)}</strong>
+                      </td>
+                      <td>{formatDateGT(session.openedAt)}</td>
+                      <td>
+                        {session.expectedBalanceCents !== undefined
+                          ? formatCurrency(session.expectedBalanceCents, 'GTQ')
+                          : '—'}
+                      </td>
+                      <td>
+                        <button
+                          className="button small secondary"
+                          onClick={() => setExceptionalClose(session)}
+                          aria-label={`Cierre excepcional de ${ownerOf(session)}`}
+                        >
+                          <Ban size={14} /> Cierre excepcional
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </AdminTable>
+              )}
+            </div>
+          );
+        })()}
+        {exceptionalClose && (
+          <CashSessionModal
+            mode="close"
+            expectedCents={exceptionalClose.expectedBalanceCents}
+            ownerLabel={
+              users.find((user) => user.dbId === exceptionalClose.openedByUserId)?.name ??
+              'Usuario sin nombre'
+            }
+            onClose={() => setExceptionalClose(null)}
+            onSave={async (amountCents, notes, reason) => {
+              // El backend verifica que sea Administración y guarda actor y motivo.
+              const closed = await cashService.closeSession({
+                sessionId: exceptionalClose.id,
+                countedBalanceCents: amountCents,
+                notes,
+                reason,
+              });
+              setExceptionalClose(null);
+              await loadOpenCashSessions();
+              const difference = closed.differenceCents ?? 0;
+              onAction(
+                difference === 0
+                  ? 'Cierre excepcional registrado sin diferencias'
+                  : `Cierre excepcional con ${difference < 0 ? 'faltante' : 'sobrante'} de ${formatCurrency(Math.abs(difference), 'GTQ')}`,
+              );
+            }}
+          />
+        )}
+        {cashSessionModal && (
+          <CashSessionModal
+            mode={cashSessionModal}
+            expectedCents={latestCashSession?.expectedBalanceCents}
+            onClose={() => setCashSessionModal(null)}
+            onSave={async (amountCents, notes) => {
+              if (cashSessionModal === 'open') {
+                const opened = await cashService.openSession({
+                  openingBalanceCents: amountCents,
+                  notes,
+                });
+                setCashSessions((cur) => [...cur, opened]);
+                setCashMovements([]);
+                setCashOpen(true);
+                onAction('Caja abierta correctamente');
+              } else {
+                // Lo contado físicamente: el backend calcula esperado y diferencia.
+                const closed = await cashService.closeSession({
+                  countedBalanceCents: amountCents,
+                  notes,
+                });
+                const sessions = await cashService.getSessions();
+                setCashSessions(sessions);
+                setCashMovements([]);
+                setCashOpen(false);
+                const difference = closed.differenceCents ?? 0;
+                onAction(
+                  difference === 0
+                    ? 'Caja cerrada sin diferencias'
+                    : `Caja cerrada con ${difference < 0 ? 'faltante' : 'sobrante'} de ${formatCurrency(Math.abs(difference), 'GTQ')}`,
+                );
+              }
+              setCashSessionModal(null);
+            }}
+          />
+        )}
         {showCashModal && (
           <CashModal
             onClose={() => setShowCashModal(false)}
@@ -4219,7 +4331,7 @@ function AdminContentReady({
 
 // ─── MODALES ───
 
-function UserModal({
+export function UserModal({
   user,
   roles,
   onClose,
@@ -4228,79 +4340,167 @@ function UserModal({
   user: AdminUser | null;
   roles: AdminRole[];
   onClose: () => void;
-  onSave: (u: AdminUser) => void;
+  onSave: (u: AdminUser) => void | Promise<void>;
 }) {
-  const [name, setName] = useState(user?.name ?? '');
+  const [firstName, setFirstName] = useState(user?.firstName ?? '');
+  const [lastName, setLastName] = useState(user?.lastName ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState(user?.role ?? roles[0]?.name ?? '');
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(user?.status ?? 'Activo');
+  type Field = 'firstName' | 'lastName' | 'email' | 'password' | 'role';
+  const [errors, setErrors] = useState<FieldErrors<Field>>({});
+  const save = useAdminSubmit();
+  const clearError = (field: Field) => setErrors((current) => ({ ...current, [field]: undefined }));
+
+  const submit = () => {
+    const normalizedFirstName = normalizePersonNamePart(firstName);
+    const normalizedLastName = normalizePersonNamePart(lastName);
+    const normalizedEmail = email.trim();
+    // Un usuario existente con datos antiguos puede guardarse si no se tocan.
+    const firstNameChanged =
+      !user || normalizedFirstName !== normalizePersonNamePart(user.firstName);
+    const lastNameChanged = !user || normalizedLastName !== normalizePersonNamePart(user.lastName);
+    const emailChanged = !user || normalizedEmail !== user.email.trim();
+    const nextErrors = compactErrors({
+      firstName: firstNameChanged ? validatePersonNamePart(normalizedFirstName, 'nombre') : null,
+      lastName: lastNameChanged ? validatePersonNamePart(normalizedLastName, 'apellido') : null,
+      email: emailChanged
+        ? normalizedEmail
+          ? validateEmail(normalizedEmail)
+          : 'Ingresa el correo electrónico.'
+        : null,
+      // Al editar, la contraseña es opcional: vacía conserva la actual.
+      password: !password
+        ? user
+          ? null
+          : 'Ingresa una contraseña temporal.'
+        : password.length < USER_PASSWORD_MIN_LENGTH
+          ? `Mínimo ${USER_PASSWORD_MIN_LENGTH} caracteres.`
+          : null,
+      role: roles.some((r) => r.name === role) ? null : 'Selecciona un rol.',
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        id: user?.id ?? 0,
+        dbId: user?.dbId ?? '',
+        name: `${normalizedFirstName} ${normalizedLastName}`,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        email: normalizedEmail,
+        password: password ? password : undefined,
+        role,
+        status,
+        lastAccess: user?.lastAccess ?? 'Sin acceso',
+      }),
+    );
+  };
+
   return (
     <AdminModal
       title={user ? 'Editar usuario' : 'Nuevo usuario'}
       eyebrow="GESTIÓN DE USUARIOS"
       onClose={onClose}
-      onSubmit={() =>
-        onSave({
-          id: user?.id ?? 0,
-          dbId: user?.dbId ?? '',
-          name,
-          email,
-          password: password.trim() ? password : undefined,
-          role,
-          status,
-          lastAccess: user?.lastAccess ?? 'Sin acceso',
-        })
-      }
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel={user ? 'Guardar cambios' : 'Crear usuario'}
     >
+      <div className="rc-form-grid">
+        <label className="hk-form-label">
+          Nombre *
+          <input
+            className={inputClass(errors.firstName)}
+            value={firstName}
+            autoComplete="given-name"
+            onChange={(e) => {
+              setFirstName(e.target.value);
+              clearError('firstName');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('user-firstName-error', errors.firstName)}
+          />
+          <FieldError id="user-firstName-error" error={errors.firstName} />
+        </label>
+        <label className="hk-form-label">
+          Apellido *
+          <input
+            className={inputClass(errors.lastName)}
+            value={lastName}
+            autoComplete="family-name"
+            onChange={(e) => {
+              setLastName(e.target.value);
+              clearError('lastName');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('user-lastName-error', errors.lastName)}
+          />
+          <FieldError id="user-lastName-error" error={errors.lastName} />
+        </label>
+      </div>
       <label className="hk-form-label">
-        Nombre completo
+        Correo electrónico *
         <input
-          className="hk-form-select"
-          required
-          minLength={2}
-          maxLength={100}
-          pattern="[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.'’ -]{1,99}"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Nombre del usuario"
-        />
-      </label>
-      <label className="hk-form-label">
-        Correo electrónico
-        <input
-          className="hk-form-select"
+          className={inputClass(errors.email)}
           type="email"
-          required
-          maxLength={254}
+          inputMode="email"
+          autoComplete="email"
+          maxLength={EMAIL_MAX_LENGTH}
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            clearError('email');
+          }}
           placeholder="correo@aurorahotel.com"
+          aria-required="true"
+          {...fieldErrorProps('user-email-error', errors.email)}
         />
+        <FieldError id="user-email-error" error={errors.email} />
       </label>
       <label className="hk-form-label">
-        Rol
-        <select className="hk-form-select" value={role} onChange={(e) => setRole(e.target.value)}>
+        Rol *
+        <select
+          className={inputClass(errors.role)}
+          value={role}
+          disabled={roles.length === 0}
+          onChange={(e) => {
+            setRole(e.target.value);
+            clearError('role');
+          }}
+          aria-required="true"
+          {...fieldErrorProps('user-role-error', errors.role)}
+        >
+          {roles.length === 0 && <option value="">No hay roles disponibles</option>}
           {roles.map((r) => (
             <option key={r.id} value={r.name}>
               {r.name}
             </option>
           ))}
         </select>
+        <FieldError id="user-role-error" error={errors.role} />
       </label>
       <label className="hk-form-label">
-        {user ? 'Nueva contraseña (opcional)' : 'Contraseña temporal'}
+        {user ? 'Nueva contraseña (opcional)' : 'Contraseña temporal *'}
         <input
-          className="hk-form-select"
+          className={inputClass(errors.password)}
           type="password"
-          value={password}
-          minLength={8}
-          required={!user}
           autoComplete="new-password"
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder={user ? 'Dejar en blanco para conservarla' : 'Mínimo 8 caracteres'}
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            clearError('password');
+          }}
+          placeholder={
+            user
+              ? 'Dejar en blanco para conservarla'
+              : `Mínimo ${USER_PASSWORD_MIN_LENGTH} caracteres`
+          }
+          aria-required={user ? undefined : 'true'}
+          {...fieldErrorProps('user-password-error', errors.password)}
         />
+        <FieldError id="user-password-error" error={errors.password} />
       </label>
       <label className="hk-form-label">
         Estado
@@ -4317,7 +4517,7 @@ function UserModal({
   );
 }
 
-function RoleModal({
+export function RoleModal({
   role,
   onClose,
   onSave,
@@ -4327,6 +4527,8 @@ function RoleModal({
   onSave: (r: AdminRole) => void | Promise<void>;
 }) {
   const isProtectedAdminRole = normalizeRoleCode(role?.code ?? '') === 'admin';
+  const editableGroups = editableRoleGroups(role?.code);
+  const [permissionsError, setPermissionsError] = useState<string | undefined>();
   const [name, setName] = useState(role?.name ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
   const [permissions, setPermissions] = useState<Record<string, boolean>>(
@@ -4338,42 +4540,71 @@ function RoleModal({
   );
   const setGroupPermissions = (group: (typeof ROLE_ACCESS_GROUPS)[number], selected: boolean) => {
     if (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) return;
+    if (!editableGroups.includes(group.name)) return;
+    setPermissionsError(undefined);
     setPermissions((current) => ({
       ...current,
       ...Object.fromEntries(group.items.map((p) => [roleAccessKey(group.name, p), selected])),
     }));
+  };
+  const [nameError, setNameError] = useState<string | undefined>();
+  const save = useAdminSubmit();
+  const submit = () => {
+    const trimmedName = name.replace(/\s+/g, ' ').trim();
+    const code = role?.code ?? trimmedName.toLowerCase().replace(/\s+/g, '_');
+    const error =
+      validateRequiredText(trimmedName, 'Ingresa el nombre del rol.', ROLE_NAME_MAX_LENGTH) ??
+      // El código de un rol nuevo sale del nombre y el backend admite hasta 80 caracteres.
+      (!role && code.length > ROLE_CODE_MAX_LENGTH
+        ? `Máximo ${ROLE_CODE_MAX_LENGTH} caracteres para un rol nuevo.`
+        : null);
+    setNameError(error ?? undefined);
+    if (error) return;
+    const selectionError = customRoleSelectionError(role?.code, permissions);
+    setPermissionsError(selectionError ?? undefined);
+    if (selectionError) return;
+    const finalPermissions = isProtectedAdminRole
+      ? withFixedAdminPermissions(permissions)
+      : permissions;
+    void save.submit(() =>
+      onSave({
+        id: role?.id ?? 0,
+        dbId: role?.dbId ?? '',
+        code,
+        name: trimmedName,
+        description: description.trim(),
+        permissions: finalPermissions,
+        permissionKeys: rolePermissionKeysFromUi(code, finalPermissions),
+        userCount: role?.userCount ?? 0,
+      }),
+    );
   };
   return (
     <AdminModal
       title={role ? 'Editar rol' : 'Nuevo rol'}
       eyebrow="ROLES Y PERMISOS"
       onClose={onClose}
-      onSubmit={() =>
-        onSave({
-          id: role?.id ?? 0,
-          dbId: role?.dbId ?? '',
-          code: role?.code ?? name.toLowerCase().replace(/\s+/g, '_'),
-          name,
-          description,
-          permissions: isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
-          permissionKeys: rolePermissionKeysFromUi(
-            role?.code ?? name.toLowerCase().replace(/\s+/g, '_'),
-            isProtectedAdminRole ? withFixedAdminPermissions(permissions) : permissions,
-          ),
-          userCount: role?.userCount ?? 0,
-        })
-      }
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel={role ? 'Guardar cambios' : 'Crear rol'}
       width={520}
     >
       <label className="hk-form-label">
-        Nombre del rol
+        Nombre del rol *
         <input
-          className="hk-form-select"
+          className={inputClass(nameError)}
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          maxLength={ROLE_NAME_MAX_LENGTH}
+          onChange={(e) => {
+            setName(e.target.value);
+            setNameError(undefined);
+          }}
           placeholder="Ej. Gerente"
+          aria-required="true"
+          {...fieldErrorProps('role-name-error', nameError)}
         />
+        <FieldError id="role-name-error" error={nameError} />
       </label>
       <label className="hk-form-label">
         Descripción
@@ -4395,7 +4626,10 @@ function RoleModal({
                   <button
                     type="button"
                     className="button secondary"
-                    disabled={isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME}
+                    disabled={
+                      (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) ||
+                      !editableGroups.includes(group.name)
+                    }
                     onClick={() => setGroupPermissions(group, true)}
                   >
                     Seleccionar todo
@@ -4403,7 +4637,10 @@ function RoleModal({
                   <button
                     type="button"
                     className="button secondary"
-                    disabled={isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME}
+                    disabled={
+                      (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) ||
+                      !editableGroups.includes(group.name)
+                    }
                     onClick={() => setGroupPermissions(group, false)}
                   >
                     Deseleccionar todo
@@ -4414,19 +4651,26 @@ function RoleModal({
                 const key = roleAccessKey(group.name, p);
                 const isLockedAdminPermission =
                   isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME;
+                const isOutsideRoleArea = !editableGroups.includes(group.name);
                 const checked = isLockedAdminPermission ? true : permissions[key];
                 return (
                   <button
                     type="button"
                     key={key}
                     className={`adm-perm-toggle ${checked ? 'on' : ''}`}
-                    disabled={isLockedAdminPermission}
+                    disabled={isLockedAdminPermission || isOutsideRoleArea}
+                    aria-pressed={Boolean(checked)}
                     title={
                       isLockedAdminPermission
                         ? 'El grupo Administración permanece habilitado para este rol.'
-                        : undefined
+                        : isOutsideRoleArea
+                          ? 'Esta área no está disponible para este rol.'
+                          : undefined
                     }
-                    onClick={() => setPermissions((cur) => ({ ...cur, [key]: !cur[key] }))}
+                    onClick={() => {
+                      setPermissionsError(undefined);
+                      setPermissions((cur) => ({ ...cur, [key]: !cur[key] }));
+                    }}
                   >
                     <span className="adm-perm-check">{checked && <Check size={12} />}</span>
                     <span>{p}</span>
@@ -4436,12 +4680,13 @@ function RoleModal({
             </div>
           ))}
         </div>
+        <FieldError id="role-permissions-error" error={permissionsError} />
       </label>
     </AdminModal>
   );
 }
 
-function RoomModal({
+export function RoomModal({
   room,
   roomTypes,
   onClose,
@@ -4450,93 +4695,153 @@ function RoomModal({
   room: AdminRoom | null;
   roomTypes: AdminRoomType[];
   onClose: () => void;
-  onSave: (r: AdminRoom) => void;
+  onSave: (r: AdminRoom) => void | Promise<void>;
 }) {
   const [number, setNumber] = useState(room?.number ?? '');
   const [floor, setFloor] = useState(room?.floor ?? 'Piso 1');
   const [type, setType] = useState(room?.type ?? roomTypes[0]?.name ?? '');
-  const [capacity, setCapacity] = useState(room?.capacity ?? 2);
-  const [rate, setRate] = useState(room?.rate ?? 1850);
+  const [capacity, setCapacity] = useState(String(room?.capacity ?? 2));
+  const [rate, setRate] = useState(amountToMoneyInput(room?.rate ?? 1850));
   const [status, setStatus] = useState(room?.status ?? 'Disponible');
+  const [errors, setErrors] = useState<
+    FieldErrors<'number' | 'floor' | 'type' | 'capacity' | 'rate'>
+  >({});
+  const save = useAdminSubmit();
   const selectedRoomType = roomTypes.find((rt) => rt.name === type);
+  const clearError = (field: 'number' | 'floor' | 'type' | 'capacity' | 'rate') =>
+    setErrors((current) => ({ ...current, [field]: undefined }));
+  const submit = () => {
+    const nextErrors = compactErrors({
+      number:
+        validateRequiredText(number, 'Ingresa el número de habitación.') ??
+        patternError(number, ROOM_NUMBER_PATTERN, 'Usa solo letras, números y guiones.'),
+      // El backend guarda el piso como número: "Piso 2" o "2" (antes, sin número pasaba a 1).
+      floor: /\d/.test(floor) ? null : 'Ingresa el piso (ej. 2 o Piso 2).',
+      type: selectedRoomType ? null : 'Selecciona un tipo de habitación.',
+      capacity: validateWholeNumber(capacity, {
+        min: 1,
+        max: ROOM_CAPACITY_MAX,
+        requiredMessage: 'Ingresa la capacidad.',
+        minMessage: 'Mínimo 1 huésped.',
+        maxMessage: `Máximo ${ROOM_CAPACITY_MAX} huéspedes.`,
+      }),
+      rate: validateMoneyAmount(rate, { allowZero: true, requiredMessage: 'Ingresa la tarifa.' }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        id: room?.id ?? 0,
+        dbId: room?.dbId ?? '',
+        roomTypeId: selectedRoomType?.dbId ?? room?.roomTypeId ?? '',
+        number: number.trim(),
+        floor: floor.trim(),
+        type,
+        capacity: Number(capacity),
+        rate: (moneyInputToCents(rate) ?? 0) / 100,
+        status,
+        features: selectedRoomType?.features ?? room?.features ?? [],
+      }),
+    );
+  };
   return (
     <AdminModal
       title={room ? 'Editar habitación' : 'Nueva habitación'}
       eyebrow="GESTIÓN DE HABITACIONES"
       onClose={onClose}
-      onSubmit={() =>
-        onSave({
-          id: room?.id ?? 0,
-          dbId: room?.dbId ?? '',
-          roomTypeId: selectedRoomType?.dbId ?? room?.roomTypeId ?? '',
-          number,
-          floor,
-          type,
-          capacity,
-          rate,
-          status,
-          features: selectedRoomType?.features ?? room?.features ?? [],
-        })
-      }
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel={room ? 'Guardar cambios' : 'Crear habitación'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Número
+          Número *
           <input
-            className="hk-form-select"
-            required
+            className={inputClass(errors.number)}
             maxLength={20}
-            pattern="[A-Za-z0-9-]+"
             value={number}
-            onChange={(e) => setNumber(e.target.value)}
+            onChange={(e) => {
+              setNumber(e.target.value);
+              clearError('number');
+            }}
             placeholder="Ej. 101"
+            aria-required="true"
+            {...fieldErrorProps('room-number-error', errors.number)}
           />
+          <FieldError id="room-number-error" error={errors.number} />
         </label>
         <label className="hk-form-label">
-          Piso
+          Piso *
           <input
-            className="hk-form-select"
-            required
+            className={inputClass(errors.floor)}
             maxLength={30}
             value={floor}
-            onChange={(e) => setFloor(e.target.value)}
+            onChange={(e) => {
+              setFloor(e.target.value);
+              clearError('floor');
+            }}
             placeholder="Ej. Piso 1"
+            aria-required="true"
+            {...fieldErrorProps('room-floor-error', errors.floor)}
           />
+          <FieldError id="room-floor-error" error={errors.floor} />
         </label>
         <label className="hk-form-label">
-          Tipo
-          <select className="hk-form-select" value={type} onChange={(e) => setType(e.target.value)}>
+          Tipo *
+          <select
+            className={inputClass(errors.type)}
+            value={type}
+            disabled={roomTypes.length === 0}
+            onChange={(e) => {
+              setType(e.target.value);
+              clearError('type');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('room-type-error', errors.type)}
+          >
+            {roomTypes.length === 0 && <option value="">No hay tipos de habitación</option>}
             {roomTypes.map((rt) => (
               <option key={rt.id} value={rt.name}>
                 {rt.name}
               </option>
             ))}
           </select>
+          <FieldError id="room-type-error" error={errors.type} />
         </label>
         <label className="hk-form-label">
           Capacidad
           <input
-            className="hk-form-select"
-            type="number"
-            min={1}
-            max={20}
-            required
+            className={inputClass(errors.capacity)}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             value={capacity}
-            onChange={(e) => setCapacity(Number(e.target.value))}
+            onChange={(e) => {
+              if (!isWholeNumberInput(e.target.value)) return;
+              setCapacity(e.target.value);
+              clearError('capacity');
+            }}
+            {...fieldErrorProps('room-capacity-error', errors.capacity)}
           />
+          <FieldError id="room-capacity-error" error={errors.capacity} />
         </label>
         <label className="hk-form-label">
           Tarifa
           <input
-            className="hk-form-select"
-            type="number"
-            min={0}
-            step="0.01"
-            required
+            className={inputClass(errors.rate)}
+            type="text"
+            inputMode="decimal"
             value={rate}
-            onChange={(e) => setRate(Number(e.target.value))}
+            onChange={(e) => {
+              const next = e.target.value.trim();
+              if (!isMoneyInput(next)) return;
+              setRate(next);
+              clearError('rate');
+            }}
+            {...fieldErrorProps('room-rate-error', errors.rate)}
           />
+          <FieldError id="room-rate-error" error={errors.rate} />
         </label>
         <label className="hk-form-label">
           Estado
@@ -4791,7 +5096,7 @@ function RoomFeatureCatalogModal({
   );
 }
 
-function RoomTypeModal({
+export function RoomTypeModal({
   roomType,
   roomFeatures,
   onClose,
@@ -4803,15 +5108,64 @@ function RoomTypeModal({
   onSave: (rt: AdminRoomType, images: MediaImageAssignmentDto[]) => Promise<void>;
 }) {
   const [name, setName] = useState(roomType?.name ?? '');
-  const [capacity, setCapacity] = useState(roomType?.capacity ?? 2);
+  const [capacity, setCapacity] = useState(String(roomType?.capacity ?? 2));
   const [description, setDescription] = useState(roomType?.description ?? '');
-  const [basePrice, setBasePrice] = useState(roomType?.basePrice ?? 1850);
+  const [basePrice, setBasePrice] = useState(amountToMoneyInput(roomType?.basePrice ?? 1850));
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(roomType?.status ?? 'Activo');
   const [roomFeatureIds, setRoomFeatureIds] = useState(roomType?.roomFeatureIds ?? []);
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(roomType?.images ?? []),
   );
+  const [errors, setErrors] = useState<FieldErrors<'name' | 'capacity' | 'basePrice'>>({});
   const save = useModalSave(gallery, onClose);
+  const clearError = (field: 'name' | 'capacity' | 'basePrice') =>
+    setErrors((current) => ({ ...current, [field]: undefined }));
+  const submit = () => {
+    const nextErrors = compactErrors({
+      name:
+        validateRequiredText(name, 'Ingresa el nombre del tipo.') ??
+        patternError(
+          name,
+          ROOM_TYPE_NAME_PATTERN,
+          'Empieza con una letra; usa letras, números, espacios, apóstrofos o guiones (2 a 80).',
+        ),
+      // Backend: capacidad > 0 (`CreateRoomTypeRequest`, @Positive).
+      capacity: validateWholeNumber(capacity, {
+        min: 1,
+        max: ROOM_CAPACITY_MAX,
+        requiredMessage: 'Ingresa la capacidad.',
+        minMessage: 'Mínimo 1 huésped.',
+        maxMessage: `Máximo ${ROOM_CAPACITY_MAX} huéspedes.`,
+      }),
+      // Backend: precio de la tarifa ≥ 0 (`CreateRateRequest`, @PositiveOrZero).
+      basePrice: validateMoneyAmount(basePrice, {
+        allowZero: true,
+        requiredMessage: 'Ingresa el precio base.',
+      }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave(
+        {
+          id: roomType?.id ?? 0,
+          dbId: roomType?.dbId ?? '',
+          name: name.trim(),
+          capacity: Number(capacity),
+          description: description.trim(),
+          // Características del catálogo elegidas en el selector (no las camas).
+          roomFeatureIds,
+          features: roomFeatures
+            .filter((feature) => roomFeatureIds.includes(feature.id))
+            .map((feature) => feature.name),
+          basePrice: (moneyInputToCents(basePrice) ?? 0) / 100,
+          status,
+          images: roomType?.images ?? [],
+        },
+        toImageAssignments(gallery),
+      ),
+    );
+  };
   return (
     <AdminModal
       title={roomType ? 'Editar tipo de habitación' : 'Nuevo tipo de habitación'}
@@ -4820,54 +5174,43 @@ function RoomTypeModal({
       onClose={save.cancel}
       submitting={save.submitting}
       error={save.error}
-      onSubmit={() =>
-        save.submit(() =>
-          onSave(
-            {
-              id: roomType?.id ?? 0,
-              dbId: roomType?.dbId ?? '',
-              name,
-              capacity,
-              description,
-              roomFeatureIds,
-              features: roomFeatures
-                .filter((feature) => roomFeatureIds.includes(feature.id))
-                .map((feature) => feature.name),
-              basePrice,
-              status,
-              images: roomType?.images ?? [],
-            },
-            toImageAssignments(gallery),
-          ),
-        )
-      }
+      onSubmit={submit}
       submitLabel={roomType ? 'Guardar cambios' : 'Crear tipo'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Nombre
+          Nombre *
           <input
-            className="hk-form-select"
-            required
-            minLength={2}
+            className={inputClass(errors.name)}
             maxLength={80}
-            pattern="[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9'’ -]{1,79}"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              clearError('name');
+            }}
             placeholder="Ej. Deluxe"
+            aria-required="true"
+            {...fieldErrorProps('room-type-name-error', errors.name)}
           />
+          <FieldError id="room-type-name-error" error={errors.name} />
         </label>
         <label className="hk-form-label">
-          Capacidad
+          Capacidad *
           <input
-            className="hk-form-select"
-            type="number"
-            min={1}
-            max={20}
-            required
+            className={inputClass(errors.capacity)}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             value={capacity}
-            onChange={(e) => setCapacity(Number(e.target.value))}
+            onChange={(e) => {
+              if (!isWholeNumberInput(e.target.value)) return;
+              setCapacity(e.target.value);
+              clearError('capacity');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('room-type-capacity-error', errors.capacity)}
           />
+          <FieldError id="room-type-capacity-error" error={errors.capacity} />
         </label>
       </div>
       <label className="hk-form-label">
@@ -4906,16 +5249,22 @@ function RoomTypeModal({
       </fieldset>
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Precio base
+          Precio base *
           <input
-            className="hk-form-select"
-            type="number"
-            min={0}
-            step="0.01"
-            required
+            className={inputClass(errors.basePrice)}
+            type="text"
+            inputMode="decimal"
             value={basePrice}
-            onChange={(e) => setBasePrice(Number(e.target.value))}
+            onChange={(e) => {
+              const next = e.target.value.trim();
+              if (!isMoneyInput(next)) return;
+              setBasePrice(next);
+              clearError('basePrice');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('room-type-price-error', errors.basePrice)}
           />
+          <FieldError id="room-type-price-error" error={errors.basePrice} />
         </label>
         <label className="hk-form-label">
           Estado
@@ -4958,6 +5307,7 @@ function useModalSave(gallery: GalleryItem[], onClose: () => void) {
   }, [gallery]);
 
   async function submit(save: () => Promise<void>) {
+    if (submitting) return;
     const blocker = getGallerySaveBlocker(gallery);
     if (blocker) {
       setError(blocker);
@@ -4969,6 +5319,9 @@ function useModalSave(gallery: GalleryItem[], onClose: () => void) {
       await save();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No fue posible guardar los cambios.');
+    } finally {
+      // Si el guardado captura su propio error (aviso) y el modal sigue abierto,
+      // los botones vuelven a habilitarse en lugar de quedar en "Guardando…".
       setSubmitting(false);
     }
   }
@@ -4982,180 +5335,385 @@ function useModalSave(gallery: GalleryItem[], onClose: () => void) {
   return { submit, cancel, submitting, error };
 }
 
-function SeasonRateModal({
+/**
+ * Guardado de un modal sin imágenes: un solo envío a la vez y, si el guardado
+ * falla, el error se muestra dentro del modal (que sigue abierto).
+ */
+function useAdminSubmit() {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(save: () => void | Promise<void>) {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await save();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No fue posible guardar los cambios.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return { submit, submitting, error };
+}
+
+/** Mensaje de error junto al campo, asociado por `id` a su `aria-describedby`. */
+function FieldError({ id, error }: { id: string; error?: string }) {
+  return error ? (
+    <span id={id} className="hk-form-error">
+      {error}
+    </span>
+  ) : null;
+}
+
+type FieldErrors<Key extends string> = Partial<Record<Key, string>>;
+
+/** Quita los errores vacíos para saber si el formulario puede enviarse. */
+function compactErrors<Key extends string>(
+  errors: Record<Key, string | null | undefined>,
+): FieldErrors<Key> {
+  return Object.fromEntries(
+    Object.entries(errors).filter(([, message]) => Boolean(message)),
+  ) as FieldErrors<Key>;
+}
+
+const inputClass = (error?: string) => `hk-form-select${error ? ' error' : ''}`;
+
+export function SeasonRateModal({
   roomTypes,
   onClose,
   onSave,
 }: {
   roomTypes: AdminRoomType[];
   onClose: () => void;
-  onSave: (sr: SeasonRate) => void;
+  onSave: (sr: SeasonRate) => void | Promise<void>;
 }) {
+  type Field =
+    | 'roomType'
+    | 'seasonName'
+    | 'startDate'
+    | 'endDate'
+    | 'baseRate'
+    | 'seasonalRate'
+    | 'minimumNights';
   const [roomType, setRoomType] = useState(roomTypes[0]?.name ?? '');
   const [seasonName, setSeasonName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [baseRate, setBaseRate] = useState(1850);
-  const [seasonalRate, setSeasonalRate] = useState(0);
+  const [baseRate, setBaseRate] = useState('1850');
+  const [seasonalRate, setSeasonalRate] = useState('');
+  const [minimumNights, setMinimumNights] = useState('1');
+  const [errors, setErrors] = useState<FieldErrors<Field>>({});
+  const save = useAdminSubmit();
+  const clearError = (...fields: Field[]) =>
+    setErrors((current) => ({
+      ...current,
+      ...Object.fromEntries(fields.map((field) => [field, undefined])),
+    }));
+  const submit = () => {
+    // Backend: la fecha fin no puede ser anterior a la de inicio (`RateServiceImpl`).
+    const range = validateDateRange(startDate, endDate);
+    const nextErrors = compactErrors({
+      roomType: roomTypes.some((rt) => rt.name === roomType)
+        ? null
+        : 'Selecciona un tipo de habitación.',
+      seasonName: validateRequiredText(seasonName, 'Ingresa el nombre de la temporada.'),
+      startDate: range.start,
+      endDate: range.end,
+      baseRate: validateMoneyAmount(baseRate, {
+        allowZero: true,
+        requiredMessage: 'Ingresa la tarifa base.',
+      }),
+      // Backend: precio ≥ 0 (`CreateRateRequest`, @PositiveOrZero).
+      seasonalRate: validateMoneyAmount(seasonalRate, {
+        allowZero: true,
+        requiredMessage: 'Ingresa la tarifa especial.',
+      }),
+      // Backend: minimumNights entero > 0 (`CreateRateRequest`, @Positive).
+      minimumNights: validateWholeNumber(minimumNights, {
+        min: 1,
+        requiredMessage: 'Ingresa las noches mínimas.',
+        minMessage: 'Mínimo 1 noche.',
+      }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        id: 0,
+        dbId: '',
+        roomType,
+        seasonName: seasonName.trim(),
+        startDate,
+        endDate,
+        baseRate: (moneyInputToCents(baseRate) ?? 0) / 100,
+        seasonalRate: (moneyInputToCents(seasonalRate) ?? 0) / 100,
+        minimumNights: Number(minimumNights),
+        status: 'Activa',
+      }),
+    );
+  };
+  const moneyField = (
+    field: 'baseRate' | 'seasonalRate',
+    value: string,
+    setValue: (value: string) => void,
+  ) => (
+    <input
+      className={inputClass(errors[field])}
+      type="text"
+      inputMode="decimal"
+      value={value}
+      placeholder="0.00"
+      onChange={(e) => {
+        const next = e.target.value.trim();
+        if (!isMoneyInput(next)) return;
+        setValue(next);
+        clearError(field);
+      }}
+      aria-required="true"
+      {...fieldErrorProps(`season-${field}-error`, errors[field])}
+    />
+  );
   return (
     <AdminModal
       title="Nueva tarifa de temporada"
       eyebrow="TARIFAS POR TEMPORADA"
       onClose={onClose}
-      onSubmit={() =>
-        onSave({
-          id: 0,
-          dbId: '',
-          roomType,
-          seasonName,
-          startDate,
-          endDate,
-          baseRate,
-          seasonalRate,
-          status: 'Activa',
-        })
-      }
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel="Crear tarifa"
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Tipo de habitación
+          Tipo de habitación *
           <select
-            className="hk-form-select"
+            className={inputClass(errors.roomType)}
             value={roomType}
-            onChange={(e) => setRoomType(e.target.value)}
+            disabled={roomTypes.length === 0}
+            onChange={(e) => {
+              setRoomType(e.target.value);
+              clearError('roomType');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('season-room-type-error', errors.roomType)}
           >
+            {roomTypes.length === 0 && <option value="">No hay tipos de habitación</option>}
             {roomTypes.map((rt) => (
               <option key={rt.id} value={rt.name}>
                 {rt.name}
               </option>
             ))}
           </select>
+          <FieldError id="season-room-type-error" error={errors.roomType} />
         </label>
         <label className="hk-form-label">
-          Temporada
+          Temporada *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.seasonName)}
             value={seasonName}
-            onChange={(e) => setSeasonName(e.target.value)}
+            onChange={(e) => {
+              setSeasonName(e.target.value);
+              clearError('seasonName');
+            }}
             placeholder="Ej. Semana Santa"
+            aria-required="true"
+            {...fieldErrorProps('season-name-error', errors.seasonName)}
           />
+          <FieldError id="season-name-error" error={errors.seasonName} />
         </label>
         <label className="hk-form-label">
-          Fecha inicio
+          Fecha inicio *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.startDate)}
             type="date"
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => {
+              setStartDate(e.target.value);
+              clearError('startDate', 'endDate');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('season-start-error', errors.startDate)}
           />
+          <FieldError id="season-start-error" error={errors.startDate} />
         </label>
         <label className="hk-form-label">
-          Fecha fin
+          Fecha fin *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.endDate)}
             type="date"
+            min={startDate || undefined}
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => {
+              setEndDate(e.target.value);
+              clearError('endDate');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('season-end-error', errors.endDate)}
           />
+          <FieldError id="season-end-error" error={errors.endDate} />
         </label>
         <label className="hk-form-label">
-          Tarifa base
-          <input
-            className="hk-form-select"
-            type="number"
-            value={baseRate}
-            onChange={(e) => setBaseRate(Number(e.target.value))}
-          />
+          Tarifa base *{moneyField('baseRate', baseRate, setBaseRate)}
+          <FieldError id="season-baseRate-error" error={errors.baseRate} />
         </label>
         <label className="hk-form-label">
-          Tarifa especial
+          Tarifa especial *{moneyField('seasonalRate', seasonalRate, setSeasonalRate)}
+          <FieldError id="season-seasonalRate-error" error={errors.seasonalRate} />
+        </label>
+        <label className="hk-form-label">
+          Noches mínimas *
           <input
-            className="hk-form-select"
-            type="number"
-            value={seasonalRate}
-            onChange={(e) => setSeasonalRate(Number(e.target.value))}
+            className={inputClass(errors.minimumNights)}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
+            value={minimumNights}
+            onChange={(e) => {
+              if (!isWholeNumberInput(e.target.value)) return;
+              setMinimumNights(e.target.value);
+              clearError('minimumNights');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('season-minimumNights-error', errors.minimumNights)}
           />
+          <FieldError id="season-minimumNights-error" error={errors.minimumNights} />
         </label>
       </div>
     </AdminModal>
   );
 }
 
-function PromoModal({
+export function PromoModal({
   promo,
   onClose,
   onSave,
 }: {
   promo: Promo | null;
   onClose: () => void;
-  onSave: (p: Promo) => void;
+  onSave: (p: Promo) => void | Promise<void>;
 }) {
+  type Field = 'name' | 'code' | 'percentage' | 'startDate' | 'endDate';
   const [name, setName] = useState(promo?.name ?? '');
   const [code, setCode] = useState(promo?.code ?? '');
-  const [percentage, setPercentage] = useState(promo?.percentage ?? 10);
+  const [percentage, setPercentage] = useState(String(promo?.percentage ?? 10));
   const [startDate, setStartDate] = useState(promo?.startDate ?? '');
   const [endDate, setEndDate] = useState(promo?.endDate ?? '');
   const [conditions, setConditions] = useState(promo?.conditions ?? '');
   const [status, setStatus] = useState<'Activa' | 'Inactiva'>(promo?.status ?? 'Activa');
+  const [errors, setErrors] = useState<FieldErrors<Field>>({});
+  const save = useAdminSubmit();
+  const clearError = (...fields: Field[]) =>
+    setErrors((current) => ({
+      ...current,
+      ...Object.fromEntries(fields.map((field) => [field, undefined])),
+    }));
+  const submit = () => {
+    // Backend: inicio obligatorio; fin opcional y no anterior al inicio (`UpsertPromotionRequest`).
+    const range = endDate ? validateDateRange(startDate, endDate) : {};
+    const nextErrors = compactErrors({
+      name:
+        validateRequiredText(name, 'Ingresa el nombre de la promoción.') ??
+        patternError(
+          name,
+          PROMO_NAME_PATTERN,
+          'Usa letras, números, espacios, apóstrofos o guiones (2 a 100).',
+        ),
+      code:
+        validateRequiredText(code, 'Ingresa el código.') ??
+        (code.trim().length < PROMO_CODE_MIN_LENGTH
+          ? `Mínimo ${PROMO_CODE_MIN_LENGTH} caracteres.`
+          : null),
+      percentage: validateWholeNumber(percentage, {
+        min: PROMO_PERCENT_MIN,
+        max: PROMO_PERCENT_MAX,
+        requiredMessage: 'Ingresa el porcentaje.',
+        minMessage: `Entre ${PROMO_PERCENT_MIN} y ${PROMO_PERCENT_MAX}.`,
+        maxMessage: `Entre ${PROMO_PERCENT_MIN} y ${PROMO_PERCENT_MAX}.`,
+      }),
+      startDate: !startDate ? 'Ingresa la fecha de inicio.' : range.start,
+      endDate: range.end,
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        id: promo?.id ?? 0,
+        dbId: promo?.dbId ?? '',
+        name: name.trim(),
+        code: code.trim(),
+        percentage: Number(percentage),
+        startDate,
+        endDate,
+        conditions: conditions.trim(),
+        status,
+      }),
+    );
+  };
   return (
     <AdminModal
       title={promo ? 'Editar promoción' : 'Nueva promoción'}
       eyebrow="GESTIÓN DE PROMOCIONES"
       onClose={onClose}
-      onSubmit={() =>
-        onSave({
-          id: promo?.id ?? 0,
-          dbId: promo?.dbId ?? '',
-          name,
-          code,
-          percentage,
-          startDate,
-          endDate,
-          conditions,
-          status,
-        })
-      }
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel={promo ? 'Guardar cambios' : 'Crear promoción'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Nombre
+          Nombre *
           <input
-            className="hk-form-select"
-            required
-            minLength={2}
+            className={inputClass(errors.name)}
             maxLength={100}
-            pattern="[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ -]{1,99}"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              clearError('name');
+            }}
             placeholder="Ej. Estancia extendida"
+            aria-required="true"
+            {...fieldErrorProps('promo-name-error', errors.name)}
           />
+          <FieldError id="promo-name-error" error={errors.name} />
         </label>
         <label className="hk-form-label">
-          Código
+          Código *
           <input
-            className="hk-form-select"
-            required
-            minLength={2}
+            className={inputClass(errors.code)}
             maxLength={50}
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e) => {
+              setCode(e.target.value);
+              clearError('code');
+            }}
             placeholder="Ej. AURORA15"
+            aria-required="true"
+            {...fieldErrorProps('promo-code-error', errors.code)}
           />
+          <FieldError id="promo-code-error" error={errors.code} />
         </label>
         <label className="hk-form-label">
-          Porcentaje (%)
+          Porcentaje (%) *
           <input
-            className="hk-form-select"
-            type="number"
-            required
-            min={1}
-            max={100}
-            step={1}
+            className={inputClass(errors.percentage)}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
             value={percentage}
-            onChange={(e) => setPercentage(Number(e.target.value))}
+            onChange={(e) => {
+              if (!isWholeNumberInput(e.target.value)) return;
+              setPercentage(e.target.value);
+              clearError('percentage');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('promo-percentage-error', errors.percentage)}
           />
+          <FieldError id="promo-percentage-error" error={errors.percentage} />
         </label>
         <label className="hk-form-label">
           Estado
@@ -5169,25 +5727,36 @@ function PromoModal({
           </select>
         </label>
         <label className="hk-form-label">
-          Fecha inicio
+          Fecha inicio *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.startDate)}
             type="date"
             required
             max={endDate || undefined}
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => {
+              setStartDate(e.target.value);
+              clearError('startDate', 'endDate');
+            }}
+            aria-required="true"
+            {...fieldErrorProps('promo-start-error', errors.startDate)}
           />
+          <FieldError id="promo-start-error" error={errors.startDate} />
         </label>
         <label className="hk-form-label">
           Fecha fin
           <input
-            className="hk-form-select"
+            className={inputClass(errors.endDate)}
             type="date"
             min={startDate || undefined}
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => {
+              setEndDate(e.target.value);
+              clearError('endDate');
+            }}
+            {...fieldErrorProps('promo-end-error', errors.endDate)}
           />
+          <FieldError id="promo-end-error" error={errors.endDate} />
         </label>
       </div>
       <label className="hk-form-label">
@@ -5222,7 +5791,45 @@ function AmenityModal({
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(amenity?.images ?? []),
   );
+  const [errors, setErrors] = useState<FieldErrors<'name' | 'schedule'>>({});
   const save = useModalSave(gallery, onClose);
+  const submit = () => {
+    // Dos selectores de hora (abre/cierra); se valida el mismo texto que se guarda.
+    const schedule = opensAt || closesAt ? `${opensAt} - ${closesAt}` : '';
+    const parsedSchedule = parseAmenityScheduleInput(schedule);
+    const nextErrors = compactErrors({
+      name:
+        validateRequiredText(name, 'Ingresa el nombre de la amenidad.') ?? catalogNameError(name),
+      // Mismo análisis que al guardar, pero el error queda junto al campo.
+      schedule: parsedSchedule.ok ? null : parsedSchedule.error,
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave(
+        {
+          id: amenity?.id ?? 0,
+          dbId: amenity?.dbId ?? '',
+          name: name.trim(),
+          description: description.trim(),
+          category,
+          schedule,
+          // La disponibilidad sale del estado: el backend solo guarda `active`.
+          available: status === 'Activo',
+          status,
+          icon,
+          images: amenity?.images ?? [],
+        },
+        toImageAssignments(gallery),
+      ),
+    );
+  };
+  const scheduleAria = {
+    'aria-invalid': errors.schedule ? true : undefined,
+    'aria-describedby': errors.schedule
+      ? 'amenity-schedule-error amenity-schedule-help'
+      : 'amenity-schedule-help',
+  };
   return (
     <AdminModal
       title={amenity ? 'Editar amenidad' : 'Nueva amenidad'}
@@ -5230,46 +5837,25 @@ function AmenityModal({
       onClose={save.cancel}
       submitting={save.submitting}
       error={save.error}
-      onSubmit={() =>
-        save.submit(() =>
-          onSave(
-            {
-              id: amenity?.id ?? 0,
-              dbId: amenity?.dbId ?? '',
-              name,
-              description,
-              category,
-              schedule: opensAt || closesAt ? `${opensAt} - ${closesAt}` : '',
-              // La disponibilidad sale del estado: el backend solo guarda `active`.
-              available: status === 'Activo',
-              status,
-              icon,
-              images: amenity?.images ?? [],
-            },
-            toImageAssignments(gallery),
-          ),
-        )
-      }
+      onSubmit={submit}
       submitLabel={amenity ? 'Guardar cambios' : 'Crear amenidad'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Nombre
+          Nombre *
           <input
-            className="hk-form-select"
-            required
-            minLength={2}
+            className={inputClass(errors.name)}
             maxLength={120}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
-              e.currentTarget.setCustomValidity('');
+              setErrors((current) => ({ ...current, name: undefined }));
             }}
-            onBlur={(e) =>
-              e.currentTarget.setCustomValidity(catalogNameError(e.target.value) ?? '')
-            }
             placeholder="Ej. Piscina"
+            aria-required="true"
+            {...fieldErrorProps('amenity-name-error', errors.name)}
           />
+          <FieldError id="amenity-name-error" error={errors.name} />
         </label>
         <label className="hk-form-label">
           Categoría
@@ -5286,29 +5872,36 @@ function AmenityModal({
         <label className="hk-form-label">
           Abre
           <input
-            className="hk-form-select"
+            className={inputClass(errors.schedule)}
             type="time"
             step={60}
             value={opensAt}
             required={Boolean(closesAt)}
             max={closesAt || undefined}
-            onChange={(e) => setOpensAt(e.target.value)}
-            aria-describedby="amenity-schedule-help"
+            onChange={(e) => {
+              setOpensAt(e.target.value);
+              setErrors((current) => ({ ...current, schedule: undefined }));
+            }}
+            {...scheduleAria}
           />
         </label>
         <label className="hk-form-label">
           Cierra
           <input
-            className="hk-form-select"
+            className={inputClass(errors.schedule)}
             type="time"
             step={60}
             value={closesAt}
             required={Boolean(opensAt)}
             min={opensAt || undefined}
-            onChange={(e) => setClosesAt(e.target.value)}
-            aria-describedby="amenity-schedule-help"
+            onChange={(e) => {
+              setClosesAt(e.target.value);
+              setErrors((current) => ({ ...current, schedule: undefined }));
+            }}
+            {...scheduleAria}
           />
         </label>
+        <FieldError id="amenity-schedule-error" error={errors.schedule} />
         <small id="amenity-schedule-help" className="adm-field-help">
           Elige ambas horas o déjalas vacías si está disponible todo el día.
         </small>
@@ -5359,7 +5952,7 @@ function AmenityModal({
   );
 }
 
-function RsItemModal({
+export function RsItemModal({
   item,
   onClose,
   onSave,
@@ -5373,12 +5966,40 @@ function RsItemModal({
   const [categoryCode, setCategoryCode] = useState<Product['category']>(
     item?.categoryCode ?? 'foodAndBeverage',
   );
-  const [price, setPrice] = useState(item?.price ?? 0);
+  const [price, setPrice] = useState(item ? amountToMoneyInput(item.price) : '');
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(item?.status ?? 'Activo');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(item?.images ?? []),
   );
+  const [errors, setErrors] = useState<FieldErrors<'name' | 'price'>>({});
   const save = useModalSave(gallery, onClose);
+  const submit = () => {
+    const nextErrors = compactErrors({
+      name: validateRequiredText(name, 'Ingresa el nombre del producto.') ?? catalogNameError(name),
+      // Backend: precio de un producto ≥ 1 centavo (`UpsertProductRequest`, @Min(1)).
+      price: validateMoneyAmount(price, { requiredMessage: 'Ingresa el precio.' }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave(
+        {
+          id: item?.id ?? 0,
+          dbId: item?.dbId ?? '',
+          name: name.trim(),
+          description: description.trim(),
+          category: PRODUCT_CATEGORY_LABELS[categoryCode],
+          categoryCode,
+          price: (moneyInputToCents(price) ?? 0) / 100,
+          // La disponibilidad sale del estado: el backend solo guarda `active`.
+          available: status === 'Activo',
+          status,
+          images: item?.images ?? [],
+        },
+        toImageAssignments(gallery),
+      ),
+    );
+  };
   return (
     <AdminModal
       title={item ? 'Editar producto' : 'Nuevo producto'}
@@ -5386,58 +6007,44 @@ function RsItemModal({
       onClose={save.cancel}
       submitting={save.submitting}
       error={save.error}
-      onSubmit={() =>
-        save.submit(() =>
-          onSave(
-            {
-              id: item?.id ?? 0,
-              dbId: item?.dbId ?? '',
-              name,
-              description,
-              category: PRODUCT_CATEGORY_LABELS[categoryCode],
-              categoryCode,
-              price,
-              // La disponibilidad sale del estado: el backend solo guarda `active`.
-              available: status === 'Activo',
-              status,
-              images: item?.images ?? [],
-            },
-            toImageAssignments(gallery),
-          ),
-        )
-      }
+      onSubmit={submit}
       submitLabel={item ? 'Guardar cambios' : 'Crear producto'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Nombre
+          Nombre *
           <input
-            className="hk-form-select"
-            required
-            minLength={2}
+            className={inputClass(errors.name)}
             maxLength={120}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
-              e.currentTarget.setCustomValidity('');
+              setErrors((current) => ({ ...current, name: undefined }));
             }}
-            onBlur={(e) =>
-              e.currentTarget.setCustomValidity(catalogNameError(e.target.value) ?? '')
-            }
             placeholder="Ej. Desayuno Aurora"
+            aria-required="true"
+            {...fieldErrorProps('rs-item-name-error', errors.name)}
           />
+          <FieldError id="rs-item-name-error" error={errors.name} />
         </label>
         <label className="hk-form-label">
-          Precio
+          Precio *
           <input
-            className="hk-form-select"
-            type="number"
-            min={0}
-            step="0.01"
-            required
+            className={inputClass(errors.price)}
+            type="text"
+            inputMode="decimal"
+            placeholder="0.00"
             value={price}
-            onChange={(e) => setPrice(Number(e.target.value))}
+            onChange={(e) => {
+              const next = e.target.value.trim();
+              if (!isMoneyInput(next)) return;
+              setPrice(next);
+              setErrors((current) => ({ ...current, price: undefined }));
+            }}
+            aria-required="true"
+            {...fieldErrorProps('rs-item-price-error', errors.price)}
           />
+          <FieldError id="rs-item-price-error" error={errors.price} />
         </label>
         <label className="hk-form-label">
           Estado
@@ -5504,13 +6111,72 @@ function ProductModal({
     product?.category ?? INVENTORY_CATEGORY_LABELS.roomService,
   );
   const [unit, setUnit] = useState<InventoryUnit>(product?.unit ?? 'unit');
-  const [stock, setStock] = useState(product?.stock ?? 0);
-  const [minStock, setMinStock] = useState(product?.minStock ?? 0);
+  const [stock, setStock] = useState(String(product?.stock ?? 0));
+  const [minStock, setMinStock] = useState(String(product?.minStock ?? 0));
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(product?.status ?? 'Activo');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(product?.images ?? []),
   );
+  type Field = 'name' | 'sku' | 'stock' | 'minStock';
+  const [errors, setErrors] = useState<FieldErrors<Field>>({});
   const save = useModalSave(gallery, onClose);
+  const clearError = (field: Field) => setErrors((current) => ({ ...current, [field]: undefined }));
+  const submit = () => {
+    // Backend: existencias y mínimo son enteros ≥ 0 (CHECK de inventory_items).
+    const nextErrors = compactErrors({
+      name: validateRequiredText(name, 'Ingresa el nombre del insumo.'),
+      sku: product ? null : validateRequiredText(sku, 'Ingresa el SKU.', 80),
+      stock: product
+        ? validateWholeNumber(stock, { min: 0, requiredMessage: 'Ingresa las existencias.' })
+        : null,
+      minStock: validateWholeNumber(minStock, {
+        min: 0,
+        requiredMessage: 'Ingresa el stock mínimo.',
+      }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave(
+        {
+          id: product?.id ?? 0,
+          dbId: product?.dbId ?? '',
+          sku: sku.trim(),
+          categoryCode:
+            INVENTORY_CATEGORY_BY_LABEL[category] ?? product?.categoryCode ?? 'roomService',
+          unit,
+          name: name.trim(),
+          category,
+          stock: Number(stock),
+          minStock: Number(minStock),
+          price: product?.price ?? 0,
+          status,
+          images: product?.images ?? [],
+        },
+        toImageAssignments(gallery),
+      ),
+    );
+  };
+  const wholeNumberField = (
+    field: 'stock' | 'minStock',
+    value: string,
+    setValue: (v: string) => void,
+  ) => (
+    <input
+      className={inputClass(errors[field])}
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={value}
+      onChange={(e) => {
+        if (!isWholeNumberInput(e.target.value)) return;
+        setValue(e.target.value);
+        clearError(field);
+      }}
+      aria-required="true"
+      {...fieldErrorProps(`inventory-${field}-error`, errors[field])}
+    />
+  );
   return (
     <AdminModal
       title={product ? 'Editar producto' : 'Nuevo producto'}
@@ -5518,51 +6184,41 @@ function ProductModal({
       onClose={save.cancel}
       submitting={save.submitting}
       error={save.error}
-      onSubmit={() =>
-        save.submit(() =>
-          onSave(
-            {
-              id: product?.id ?? 0,
-              dbId: product?.dbId ?? '',
-              sku,
-              categoryCode:
-                INVENTORY_CATEGORY_BY_LABEL[category] ?? product?.categoryCode ?? 'roomService',
-              unit,
-              name,
-              category,
-              stock,
-              minStock,
-              price: product?.price ?? 0,
-              status,
-              images: product?.images ?? [],
-            },
-            toImageAssignments(gallery),
-          ),
-        )
-      }
+      onSubmit={submit}
       submitLabel={product ? 'Guardar cambios' : 'Crear producto'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Nombre
+          Nombre *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.name)}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              clearError('name');
+            }}
             placeholder="Ej. Toallas de baño"
+            aria-required="true"
+            {...fieldErrorProps('inventory-name-error', errors.name)}
           />
+          <FieldError id="inventory-name-error" error={errors.name} />
         </label>
         {!product && (
           <label className="hk-form-label">
-            SKU
+            SKU *
             <input
-              className="hk-form-select"
+              className={inputClass(errors.sku)}
               value={sku}
-              onChange={(e) => setSku(e.target.value)}
+              onChange={(e) => {
+                setSku(e.target.value);
+                clearError('sku');
+              }}
               placeholder="Ej. COC-AGUA-001"
               maxLength={80}
-              required
+              aria-required="true"
+              {...fieldErrorProps('inventory-sku-error', errors.sku)}
             />
+            <FieldError id="inventory-sku-error" error={errors.sku} />
           </label>
         )}
         <label className="hk-form-label">
@@ -5596,29 +6252,15 @@ function ProductModal({
         </label>
         {product ? (
           <label className="hk-form-label">
-            Existencias actuales
-            <input
-              className="hk-form-select"
-              type="number"
-              min="0"
-              step="1"
-              value={stock}
-              onChange={(e) => setStock(Number(e.target.value))}
-            />
+            Existencias actuales *{wholeNumberField('stock', stock, setStock)}
+            <FieldError id="inventory-stock-error" error={errors.stock} />
           </label>
         ) : (
           <p className="login-helper">El nuevo insumo inicia con existencias en cero.</p>
         )}
         <label className="hk-form-label">
-          Stock mínimo
-          <input
-            className="hk-form-select"
-            type="number"
-            min="0"
-            step="1"
-            value={minStock}
-            onChange={(e) => setMinStock(Number(e.target.value))}
-          />
+          Stock mínimo *{wholeNumberField('minStock', minStock, setMinStock)}
+          <FieldError id="inventory-minStock-error" error={errors.minStock} />
         </label>
         <label className="hk-form-label">
           Estado
@@ -5647,7 +6289,7 @@ function ProductModal({
   );
 }
 
-function MovementModal({
+export function MovementModal({
   products,
   onClose,
   onSave,
@@ -5660,35 +6302,69 @@ function MovementModal({
     quantity: number;
     reason: string;
     responsible: string;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
   const [productId, setProductId] = useState(products[0]?.id ?? 0);
   const [type, setType] = useState<'Entrada' | 'Salida'>('Entrada');
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState('1');
   const [reason, setReason] = useState('');
   const [responsible, setResponsible] = useState('Edgar González');
+  const [errors, setErrors] = useState<FieldErrors<'product' | 'quantity'>>({});
+  const save = useAdminSubmit();
+  const submit = () => {
+    const nextErrors = compactErrors({
+      product: products.some((p) => p.id === productId) ? null : 'Selecciona un producto.',
+      // Backend: cantidad entera > 0 (`CreateInventoryMovementRequest`, @Positive).
+      quantity: validateWholeNumber(quantity, {
+        min: 1,
+        requiredMessage: 'Ingresa la cantidad.',
+        minMessage: 'La cantidad debe ser mayor a 0.',
+      }),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        productId,
+        type,
+        quantity: Number(quantity),
+        reason: reason.trim(),
+        responsible: responsible.trim(),
+      }),
+    );
+  };
   return (
     <AdminModal
       title="Registrar movimiento"
       eyebrow="MOVIMIENTO DE INVENTARIO"
       onClose={onClose}
-      onSubmit={() => onSave({ productId, type, quantity, reason, responsible })}
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel="Registrar"
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Producto
+          Producto *
           <select
-            className="hk-form-select"
+            className={inputClass(errors.product)}
             value={productId}
-            onChange={(e) => setProductId(Number(e.target.value))}
+            disabled={products.length === 0}
+            onChange={(e) => {
+              setProductId(Number(e.target.value));
+              setErrors((current) => ({ ...current, product: undefined }));
+            }}
+            aria-required="true"
+            {...fieldErrorProps('movement-product-error', errors.product)}
           >
+            {products.length === 0 && <option value={0}>No hay productos en inventario</option>}
             {products.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
+          <FieldError id="movement-product-error" error={errors.product} />
         </label>
         <label className="hk-form-label">
           Tipo
@@ -5702,13 +6378,22 @@ function MovementModal({
           </select>
         </label>
         <label className="hk-form-label">
-          Cantidad
+          Cantidad *
           <input
-            className="hk-form-select"
-            type="number"
+            className={inputClass(errors.quantity)}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
+            onChange={(e) => {
+              if (!isWholeNumberInput(e.target.value)) return;
+              setQuantity(e.target.value);
+              setErrors((current) => ({ ...current, quantity: undefined }));
+            }}
+            aria-required="true"
+            {...fieldErrorProps('movement-quantity-error', errors.quantity)}
           />
+          <FieldError id="movement-quantity-error" error={errors.quantity} />
         </label>
         <label className="hk-form-label">
           Responsable
@@ -5732,7 +6417,132 @@ function MovementModal({
   );
 }
 
-function CashModal({
+/**
+ * Apertura (saldo inicial) o cierre (efectivo contado) de la caja propia. Antes
+ * la apertura reutilizaba el saldo de la sesión anterior y el cierre enviaba el
+ * saldo esperado como contado, así que el arqueo nunca mostraba diferencias.
+ */
+export function CashSessionModal({
+  mode,
+  expectedCents,
+  ownerLabel,
+  onClose,
+  onSave,
+}: {
+  mode: 'open' | 'close';
+  expectedCents?: number;
+  /** B9: cierre excepcional de la caja de otro usuario; exige motivo. */
+  ownerLabel?: string;
+  onClose: () => void;
+  onSave: (amountCents: number, notes?: string, reason?: string) => void | Promise<void>;
+}) {
+  const [amount, setAmount] = useState('');
+  const [notes, setNotes] = useState('');
+  const [reason, setReason] = useState('');
+  const [amountError, setAmountError] = useState<string | undefined>();
+  const [reasonError, setReasonError] = useState<string | undefined>();
+  const exceptional = mode === 'close' && ownerLabel !== undefined;
+  const save = useAdminSubmit();
+  const isOpening = mode === 'open';
+  const countedCents = moneyInputToCents(amount);
+  const difference =
+    !isOpening && countedCents !== null && expectedCents !== undefined
+      ? countedCents - expectedCents
+      : null;
+  const submit = () => {
+    // Backend: saldo inicial y contado son enteros ≥ 0 (0 es válido).
+    const error = validateMoneyAmount(amount, {
+      allowZero: true,
+      requiredMessage: isOpening ? 'Ingresa el saldo inicial.' : 'Ingresa el efectivo contado.',
+    });
+    setAmountError(error ?? undefined);
+    const missingReason =
+      exceptional && !reason.trim() ? 'Indica el motivo del cierre excepcional.' : undefined;
+    setReasonError(missingReason);
+    if (error || missingReason || countedCents === null) return;
+    void save.submit(() =>
+      onSave(countedCents, notes.trim() || undefined, exceptional ? reason.trim() : undefined),
+    );
+  };
+  return (
+    <AdminModal
+      title={
+        isOpening
+          ? 'Abrir caja'
+          : exceptional
+            ? `Cierre excepcional · ${ownerLabel}`
+            : 'Cerrar caja'
+      }
+      eyebrow="GESTIÓN DE CAJA"
+      onClose={onClose}
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
+      submitLabel={isOpening ? 'Abrir caja' : 'Cerrar caja'}
+      width={420}
+    >
+      {!isOpening && expectedCents !== undefined && (
+        <p className="login-helper">
+          Saldo esperado según el sistema: {formatCurrency(expectedCents, 'GTQ')}
+        </p>
+      )}
+      <label className="hk-form-label">
+        {isOpening ? 'Saldo inicial *' : 'Efectivo contado *'}
+        <input
+          className={inputClass(amountError)}
+          type="text"
+          inputMode="decimal"
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => {
+            const next = e.target.value.trim();
+            if (!isMoneyInput(next)) return;
+            setAmount(next);
+            setAmountError(undefined);
+          }}
+          aria-required="true"
+          {...fieldErrorProps('cash-session-amount-error', amountError)}
+        />
+        <FieldError id="cash-session-amount-error" error={amountError} />
+      </label>
+      {difference !== null && (
+        <p className="login-helper" aria-live="polite">
+          {difference === 0
+            ? 'Sin diferencia.'
+            : `${difference < 0 ? 'Faltante' : 'Sobrante'}: ${formatCurrency(Math.abs(difference), 'GTQ')}`}
+        </p>
+      )}
+      {exceptional && (
+        <label className="hk-form-label">
+          Motivo del cierre excepcional *
+          <textarea
+            className={`hk-form-textarea${reasonError ? ' input-error' : ''}`}
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setReasonError(undefined);
+            }}
+            placeholder="Ej. el cajero terminó su turno sin cerrar"
+            aria-required="true"
+            {...fieldErrorProps('cash-session-reason-error', reasonError)}
+          />
+          <FieldError id="cash-session-reason-error" error={reasonError} />
+        </label>
+      )}
+      <label className="hk-form-label">
+        Notas (opcional)
+        <textarea
+          className="hk-form-textarea"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder={isOpening ? 'Ej. fondo de caja del turno' : 'Ej. motivo de la diferencia'}
+        />
+      </label>
+    </AdminModal>
+  );
+}
+
+export function CashModal({
   onClose,
   onSave,
 }: {
@@ -5742,29 +6552,57 @@ function CashModal({
     type: 'Ingreso' | 'Egreso';
     amount: number;
     responsible: string;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
   const [concept, setConcept] = useState('');
   const [type, setType] = useState<'Ingreso' | 'Egreso'>('Ingreso');
-  const [amount, setAmount] = useState(0);
+  const [amount, setAmount] = useState('');
   const [responsible, setResponsible] = useState('Edgar González');
+  const [errors, setErrors] = useState<FieldErrors<'concept' | 'amount'>>({});
+  const save = useAdminSubmit();
+  const submit = () => {
+    const nextErrors = compactErrors({
+      // Backend: concepto obligatorio de hasta 255 y monto > 0 (`CreateCashMovementRequest`).
+      concept: validateRequiredText(concept, 'Ingresa el concepto.', CASH_CONCEPT_MAX_LENGTH),
+      amount: validateMoneyAmount(amount),
+    });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    void save.submit(() =>
+      onSave({
+        concept: concept.trim(),
+        type,
+        amount: (moneyInputToCents(amount) ?? 0) / 100,
+        responsible: responsible.trim(),
+      }),
+    );
+  };
   return (
     <AdminModal
       title="Nuevo movimiento de caja"
       eyebrow="GESTIÓN DE CAJA"
       onClose={onClose}
-      onSubmit={() => onSave({ concept, type, amount, responsible })}
+      onSubmit={submit}
+      submitting={save.submitting}
+      error={save.error}
       submitLabel="Registrar"
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
-          Concepto
+          Concepto *
           <input
-            className="hk-form-select"
+            className={inputClass(errors.concept)}
             value={concept}
-            onChange={(e) => setConcept(e.target.value)}
+            maxLength={CASH_CONCEPT_MAX_LENGTH}
+            onChange={(e) => {
+              setConcept(e.target.value);
+              setErrors((current) => ({ ...current, concept: undefined }));
+            }}
             placeholder="Ej. Pago de huésped"
+            aria-required="true"
+            {...fieldErrorProps('cash-concept-error', errors.concept)}
           />
+          <FieldError id="cash-concept-error" error={errors.concept} />
         </label>
         <label className="hk-form-label">
           Tipo
@@ -5778,13 +6616,23 @@ function CashModal({
           </select>
         </label>
         <label className="hk-form-label">
-          Monto
+          Monto *
           <input
-            className="hk-form-select"
-            type="number"
+            className={inputClass(errors.amount)}
+            type="text"
+            inputMode="decimal"
+            placeholder="0.00"
             value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
+            onChange={(e) => {
+              const next = e.target.value.trim();
+              if (!isMoneyInput(next)) return;
+              setAmount(next);
+              setErrors((current) => ({ ...current, amount: undefined }));
+            }}
+            aria-required="true"
+            {...fieldErrorProps('cash-amount-error', errors.amount)}
           />
+          <FieldError id="cash-amount-error" error={errors.amount} />
         </label>
         <label className="hk-form-label">
           Responsable

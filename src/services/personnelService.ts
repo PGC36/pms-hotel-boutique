@@ -4,7 +4,14 @@ import { toDomain as toRole, type Role } from '@/shared/types/entities/role';
 import { toDomain as toPermission, type Permission } from '@/shared/types/entities/permission';
 import type { ID } from '@/shared/types/common';
 import { simulateLatency } from './mockUtils';
-import { httpClient } from './http-client';
+import { getControlledBackendMessage, httpClient, HttpError } from './http-client';
+
+/** Reglas de administración de usuarios que el backend aplica (409). */
+const USER_RULE_MESSAGES: Record<string, string> = {
+  'You cannot deactivate your own account': 'No puedes desactivar tu propia cuenta.',
+  'The last active administrator cannot be deactivated or lose the administrator role':
+    'Debe quedar al menos un administrador activo: no puedes desactivar ni quitar el rol de Administración al último.',
+};
 
 type ApiUser = {
   id: string;
@@ -71,6 +78,13 @@ const apiRoleToUserRole: Record<string, User['role']> = {
 };
 
 const normalizeRoleCode = (code: string): string => code.trim().toUpperCase();
+/**
+ * Clave de rol que comparten usuarios y roles: los predefinidos con su nombre de
+ * dominio (`reception`, `roomService`) y los personalizados con su código real en
+ * minúsculas. Nunca convierte un rol personalizado en uno predefinido.
+ */
+const toRoleKey = (code: string): string =>
+  apiRoleToUserRole[normalizeRoleCode(code)] ?? code.trim().toLowerCase();
 const toUserRoleDto = (code: string): UserDto['role'] => {
   const role = apiRoleToUserRole[normalizeRoleCode(code)] ?? 'reception';
   return role === 'roomService' ? 'room_service' : role;
@@ -82,6 +96,7 @@ const toUserDto = (api: ApiUser): UserDto => ({
   last_name: api.lastName,
   email: api.email,
   role: toUserRoleDto(api.roleCode),
+  role_code: toRoleKey(api.roleCode),
   status: api.status,
   created_at: api.createdAt,
   updated_at: api.updatedAt,
@@ -120,7 +135,7 @@ const toRoleDto = (api: ApiRole) => {
   const timestamp = new Date().toISOString();
   return {
     id: api.id,
-    code: apiRoleToUserRole[normalizeRoleCode(api.code)] ?? api.code.toLowerCase(),
+    code: toRoleKey(api.code),
     name: api.name,
     permission_ids: api.permissions,
     active: api.active,
@@ -189,8 +204,16 @@ export const personnelService = {
       status: data.status ?? current.status,
       password: data.password,
     });
-    const user = await httpClient.put<ApiUser>(`/admin/users/${id}`, request);
-    return toUser(toUserDto(user));
+    try {
+      const user = await httpClient.put<ApiUser>(`/admin/users/${id}`, request);
+      return toUser(toUserDto(user));
+    } catch (error) {
+      const message =
+        error instanceof HttpError ? getControlledBackendMessage(error.data) : undefined;
+      const translated = message ? USER_RULE_MESSAGES[message] : undefined;
+      if (translated) throw new Error(translated);
+      throw error;
+    }
   },
   async getRoles(): Promise<Role[]> {
     await simulateLatency();

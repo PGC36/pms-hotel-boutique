@@ -29,6 +29,63 @@ import type {
 } from '@/private/workspace/PrivateWorkspace';
 import { toDomainCalendarDate } from '@/shared/types/common';
 import { calculateNights } from '@/shared/utils/date';
+import {
+  editCheckOutMin,
+  hotelToday,
+  isCalendarDate,
+  isDigitsOnly,
+  nextCalendarDay,
+  normalizeChildren,
+  validateEditedStay,
+  validateGuestCounts,
+} from '@/modules/front-desk/utils/reservationFormValidation';
+import { fieldErrorProps, validateOptionalText } from '@/shared/utils/formValidation';
+
+/** Notas de una reserva del huésped: límite del backend (`CreateGuestBookingRequest`, 1000). */
+export const GUEST_BOOKING_NOTES_MAX_LENGTH = 1000;
+/** Detalles de una solicitud de servicio del huésped (límite propio del formulario). */
+const SERVICE_NOTES_MAX_LENGTH = 300;
+
+type GuestBookingErrors = Partial<
+  Record<'roomType' | 'checkIn' | 'checkOut' | 'adults' | 'children' | 'notes', string>
+>;
+
+/**
+ * Reserva desde el portal: mismas reglas que Nueva reserva de Recepción para
+ * fechas (desde hoy en Guatemala, salida posterior, máximo 90 noches) y
+ * huéspedes (adultos ≥ 1, menores ≥ 0, capacidad del tipo elegido).
+ */
+export function validateGuestBooking(
+  values: {
+    roomTypeId: string;
+    checkIn: string;
+    checkOut: string;
+    adults: string;
+    children: string;
+    notes: string;
+  },
+  capacity: number | undefined,
+  today: string = hotelToday(),
+): GuestBookingErrors {
+  const stay = validateEditedStay(
+    values.checkIn,
+    values.checkOut,
+    { checkIn: '', checkOut: '' },
+    today,
+  );
+  const counts = validateGuestCounts(values.adults, values.children, capacity);
+  const errors: GuestBookingErrors = {
+    roomType: values.roomTypeId ? undefined : 'Selecciona un tipo de habitación.',
+    checkIn: stay.checkIn,
+    checkOut: stay.checkOut,
+    adults: counts.adults ?? counts.capacity,
+    children: counts.children,
+    notes: validateOptionalText(values.notes, GUEST_BOOKING_NOTES_MAX_LENGTH) ?? undefined,
+  };
+  return Object.fromEntries(
+    Object.entries(errors).filter(([, message]) => Boolean(message)),
+  ) as GuestBookingErrors;
+}
 
 export type GuestNotification = {
   id: number;
@@ -155,7 +212,7 @@ export function ReservationDetailModal({
             <p className="eyebrow">DETALLE DE RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -284,7 +341,7 @@ export function ModifyReservationModal({
             <p className="eyebrow">MODIFICAR RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -367,7 +424,7 @@ export function CancelReservationModal({
             <p className="eyebrow">CANCELAR RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -451,7 +508,7 @@ export function ReceiptModal({
             <p className="eyebrow">RECIBO DE RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -574,7 +631,7 @@ export function LinkReservationModal({
             <p className="eyebrow">VINCULAR RESERVA</p>
             <h2>Ingresa tu código</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -632,7 +689,7 @@ export function EditProfileModal({
             <p className="eyebrow">EDITAR PERFIL</p>
             <h2>Mis datos personales</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -744,7 +801,7 @@ export function CancelOrderModal({
             <p className="eyebrow">CANCELAR PEDIDO</p>
             <h2>Pedido #{orderId}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -889,7 +946,9 @@ export function RequestServiceModal({
         : mode === 'Conserjería'
           ? (selectedConciergeService?.name ?? '')
           : (selectedHousekeepingService?.name ?? '');
-    const description = `${baseDescription}${notes ? ` — ${notes}` : ''}`;
+    // Detalles con solo espacios no se agregan a la descripción.
+    const trimmedNotes = notes.trim();
+    const description = `${baseDescription}${trimmedNotes ? ` — ${trimmedNotes}` : ''}`;
     setSubmitting(true);
     try {
       await onSubmit({
@@ -900,7 +959,7 @@ export function RequestServiceModal({
         quantity: mode === 'Articulos' ? quantity : undefined,
         conciergeServiceId: mode === 'Conserjería' ? selectedConciergeService?.id : undefined,
         housekeepingServiceId: mode === 'Limpieza' ? selectedHousekeepingService?.id : undefined,
-        notes,
+        notes: trimmedNotes,
       });
     } finally {
       setSubmitting(false);
@@ -966,7 +1025,13 @@ export function RequestServiceModal({
                   : 'Elige el servicio y cuéntanos los detalles para que conserjería pueda ayudarte.'}
             </p>
           </div>
-          <button className="icon-btn" onClick={onClose} disabled={submitting} aria-label="Cerrar">
+          <button
+            className="icon-btn"
+
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="Cerrar"
+          >
             <X size={18} />
           </button>
         </div>
@@ -1138,11 +1203,13 @@ export function RequestServiceModal({
             id="gs-service-notes"
             className="hk-form-textarea"
             value={notes}
-            maxLength={300}
+            maxLength={SERVICE_NOTES_MAX_LENGTH}
             onChange={(e) => setNotes(e.target.value)}
             placeholder={notesPlaceholder}
           />
-          <small className="gs-service-hint gs-notes-count">{notes.length}/300</small>
+          <small className="gs-service-hint gs-notes-count">
+            {notes.length}/{SERVICE_NOTES_MAX_LENGTH}
+          </small>
         </label>
         <div className="modal-foot">
           <button className="button secondary" onClick={onClose} disabled={submitting}>
@@ -1176,9 +1243,12 @@ export function CreateBookingModal({
   const [selectedRoomTypeId, setSelectedRoomTypeId] = useState('');
   const [checkIn, setCheckIn] = useState('');
   const [checkOut, setCheckOut] = useState('');
-  const [adults, setAdults] = useState(1);
-  const [children, setChildren] = useState(0);
+  // Texto, no número: vacío se informa en lugar de convertirse en 1 o 0.
+  const [adults, setAdults] = useState('1');
+  const [children, setChildren] = useState('0');
   const [notes, setNotes] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<GuestBookingErrors>({});
+  const today = hotelToday();
 
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [availabilityResult, setAvailabilityResult] = useState<{
@@ -1214,15 +1284,26 @@ export function CreateBookingModal({
     };
   }, []);
 
+  const selectedCapacity = roomTypes.find((rt) => rt.id === selectedRoomTypeId)?.capacity;
+  const validate = () => {
+    const nextErrors = validateGuestBooking(
+      { roomTypeId: selectedRoomTypeId, checkIn, checkOut, adults, children, notes },
+      selectedCapacity,
+      hotelToday(),
+    );
+    setFieldErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+  const clearFieldError = (...fields: (keyof GuestBookingErrors)[]) => {
+    setAvailabilityResult(null);
+    setFieldErrors((current) => ({
+      ...current,
+      ...Object.fromEntries(fields.map((field) => [field, undefined])),
+    }));
+  };
+
   const handleCheckAvailability = async () => {
-    if (!checkIn || !checkOut || !selectedRoomTypeId) {
-      setError('Selecciona las fechas y el tipo de habitación para consultar.');
-      return;
-    }
-    if (checkIn >= checkOut) {
-      setError('La fecha de salida debe ser posterior a la de entrada.');
-      return;
-    }
+    if (checkingAvailability || !validate()) return;
     setError(null);
     setCheckingAvailability(true);
     setAvailabilityResult(null);
@@ -1232,8 +1313,8 @@ export function CreateBookingModal({
         m.publicBookingCatalogService.getAvailability({
           checkIn,
           checkOut,
-          adults,
-          children,
+          adults: Number(adults),
+          children: Number(children),
           roomTypeId: selectedRoomTypeId,
         }),
       );
@@ -1256,14 +1337,7 @@ export function CreateBookingModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRoomTypeId || !checkIn || !checkOut) {
-      setError('Por favor completa todos los campos requeridos.');
-      return;
-    }
-    if (checkIn >= checkOut) {
-      setError('La fecha de salida debe ser posterior a la de entrada.');
-      return;
-    }
+    if (submitting || !validate()) return;
     setError(null);
     setSubmitting(true);
     try {
@@ -1272,8 +1346,8 @@ export function CreateBookingModal({
         roomTypeId: selectedRoomTypeId,
         checkIn,
         checkOut,
-        adults,
-        children,
+        adults: Number(adults),
+        children: Number(children),
         notes: notes.trim() || undefined,
       });
       onCreated(`¡Reserva creada exitosamente! Código: ${booking.confirmationCode}`);
@@ -1295,7 +1369,7 @@ export function CreateBookingModal({
             <p className="eyebrow">PORTAL DEL HUÉSPED</p>
             <h2>Nueva reserva</h2>
           </div>
-          <button className="icon-btn" onClick={onClose} disabled={submitting}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose} disabled={submitting}>
             <X size={18} />
           </button>
         </div>
@@ -1325,20 +1399,30 @@ export function CreateBookingModal({
           <label className="hk-form-label">
             Tipo de habitación *
             <select
-              className="hk-form-select"
+              className={`hk-form-select${fieldErrors.roomType ? ' error' : ''}`}
               value={selectedRoomTypeId}
               onChange={(e) => {
                 setSelectedRoomTypeId(e.target.value);
-                setAvailabilityResult(null);
+                clearFieldError('roomType', 'adults');
               }}
-              disabled={loadingRooms || submitting}
+              disabled={loadingRooms || submitting || roomTypes.length === 0}
+              aria-required="true"
+              {...fieldErrorProps('guest-booking-room-type-error', fieldErrors.roomType)}
             >
+              {!loadingRooms && roomTypes.length === 0 && (
+                <option value="">No hay tipos de habitación disponibles</option>
+              )}
               {roomTypes.map((rt) => (
                 <option key={rt.id} value={rt.id}>
                   {rt.name} (Capacidad: {rt.capacity} huéspedes)
                 </option>
               ))}
             </select>
+            {fieldErrors.roomType && (
+              <span id="guest-booking-room-type-error" className="hk-form-error">
+                {fieldErrors.roomType}
+              </span>
+            )}
           </label>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -1346,65 +1430,98 @@ export function CreateBookingModal({
               Fecha de entrada (Check-in) *
               <input
                 type="date"
-                className="hk-form-select"
+                className={`hk-form-select${fieldErrors.checkIn ? ' error' : ''}`}
                 value={checkIn}
-                min={new Date().toISOString().split('T')[0]}
+                // Hoy en Guatemala, no en UTC (toISOString adelantaba un día por la noche).
+                min={today}
                 onChange={(e) => {
                   setCheckIn(e.target.value);
-                  setAvailabilityResult(null);
+                  clearFieldError('checkIn', 'checkOut');
                 }}
                 required
                 disabled={submitting}
+                {...fieldErrorProps('guest-booking-check-in-error', fieldErrors.checkIn)}
               />
+              {fieldErrors.checkIn && (
+                <span id="guest-booking-check-in-error" className="hk-form-error">
+                  {fieldErrors.checkIn}
+                </span>
+              )}
             </label>
             <label className="hk-form-label">
               Fecha de salida (Check-out) *
               <input
                 type="date"
-                className="hk-form-select"
+                className={`hk-form-select${fieldErrors.checkOut ? ' error' : ''}`}
                 value={checkOut}
-                min={checkIn || new Date().toISOString().split('T')[0]}
+                min={
+                  isCalendarDate(checkIn) ? editCheckOutMin(checkIn, today) : nextCalendarDay(today)
+                }
                 onChange={(e) => {
                   setCheckOut(e.target.value);
-                  setAvailabilityResult(null);
+                  clearFieldError('checkOut');
                 }}
                 required
                 disabled={submitting}
+                {...fieldErrorProps('guest-booking-check-out-error', fieldErrors.checkOut)}
               />
+              {fieldErrors.checkOut && (
+                <span id="guest-booking-check-out-error" className="hk-form-error">
+                  {fieldErrors.checkOut}
+                </span>
+              )}
             </label>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <label className="hk-form-label">
               Adultos *
+              {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
               <input
-                type="number"
-                min={1}
-                max={10}
-                className="hk-form-select"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={3}
+                className={`hk-form-select${fieldErrors.adults ? ' error' : ''}`}
                 value={adults}
                 onChange={(e) => {
-                  setAdults(Math.max(1, Number(e.target.value)));
-                  setAvailabilityResult(null);
+                  if (!isDigitsOnly(e.target.value)) return;
+                  setAdults(e.target.value);
+                  clearFieldError('adults');
                 }}
                 required
                 disabled={submitting}
+                {...fieldErrorProps('guest-booking-adults-error', fieldErrors.adults)}
               />
+              {fieldErrors.adults && (
+                <span id="guest-booking-adults-error" className="hk-form-error">
+                  {fieldErrors.adults}
+                </span>
+              )}
             </label>
             <label className="hk-form-label">
               Niños
               <input
-                type="number"
-                min={0}
-                max={10}
-                className="hk-form-select"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={3}
+                className={`hk-form-select${fieldErrors.children ? ' error' : ''}`}
                 value={children}
                 onChange={(e) => {
-                  setChildren(Math.max(0, Number(e.target.value)));
-                  setAvailabilityResult(null);
+                  if (!isDigitsOnly(e.target.value)) return;
+                  setChildren(e.target.value);
+                  clearFieldError('children', 'adults');
                 }}
+                onBlur={() => setChildren(normalizeChildren(children))}
                 disabled={submitting}
+                {...fieldErrorProps('guest-booking-children-error', fieldErrors.children)}
               />
+              {fieldErrors.children && (
+                <span id="guest-booking-children-error" className="hk-form-error">
+                  {fieldErrors.children}
+                </span>
+              )}
             </label>
           </div>
 
@@ -1413,8 +1530,8 @@ export function CreateBookingModal({
               type="button"
               className="button secondary"
               style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-              onClick={handleCheckAvailability}
-              disabled={checkingAvailability || submitting || !checkIn || !checkOut}
+              onClick={() => void handleCheckAvailability()}
+              disabled={checkingAvailability || submitting}
             >
               {checkingAvailability ? 'Verificando...' : 'Verificar disponibilidad y tarifa'}
             </button>
@@ -1440,12 +1557,30 @@ export function CreateBookingModal({
           <label className="hk-form-label">
             Notas u observaciones
             <textarea
-              className="hk-form-textarea"
+              className={`hk-form-textarea${fieldErrors.notes ? ' error' : ''}`}
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              maxLength={GUEST_BOOKING_NOTES_MAX_LENGTH}
+              onChange={(e) => {
+                setNotes(e.target.value);
+                setFieldErrors((current) => ({ ...current, notes: undefined }));
+              }}
               placeholder="Peticiones especiales, hora estimada de llegada, etc."
               disabled={submitting}
+              aria-invalid={fieldErrors.notes ? true : undefined}
+              aria-describedby={
+                fieldErrors.notes
+                  ? 'guest-booking-notes-error guest-booking-notes-count'
+                  : 'guest-booking-notes-count'
+              }
             />
+            <small id="guest-booking-notes-count" className="gs-service-hint gs-notes-count">
+              {notes.length}/{GUEST_BOOKING_NOTES_MAX_LENGTH}
+            </small>
+            {fieldErrors.notes && (
+              <span id="guest-booking-notes-error" className="hk-form-error">
+                {fieldErrors.notes}
+              </span>
+            )}
           </label>
 
           <div className="modal-foot">

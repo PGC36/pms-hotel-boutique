@@ -5,6 +5,10 @@ import { housekeepingChecklistTemplateService } from '@/services/housekeepingChe
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 
+/** Límites del backend (`UpdateHousekeepingChecklistTemplateRequest`): 50 puntos de hasta 240. */
+const CHECKLIST_MAX_ITEMS = 50;
+const CHECKLIST_ITEM_MAX_LENGTH = 240;
+
 export function HousekeepingChecklistTemplatePanel({
   onAction,
 }: {
@@ -15,6 +19,7 @@ export function HousekeepingChecklistTemplatePanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fieldError, setFieldError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,14 +40,21 @@ export function HousekeepingChecklistTemplatePanel({
   }, [load]);
 
   const save = async () => {
+    if (saving) return;
     const items = itemsText
       .split('\n')
       .map((item) => item.trim())
       .filter(Boolean);
-    if (!items.length) {
-      onAction('La checklist debe incluir al menos un punto.');
-      return;
-    }
+    const longItem = items.findIndex((item) => item.length > CHECKLIST_ITEM_MAX_LENGTH);
+    const nextError = !items.length
+      ? 'La checklist debe incluir al menos un punto.'
+      : items.length > CHECKLIST_MAX_ITEMS
+        ? `Máximo ${CHECKLIST_MAX_ITEMS} puntos (hay ${items.length}).`
+        : longItem >= 0
+          ? `El punto ${longItem + 1} supera ${CHECKLIST_ITEM_MAX_LENGTH} caracteres.`
+          : null;
+    setFieldError(nextError);
+    if (nextError) return;
     setSaving(true);
     try {
       const saved = await housekeepingChecklistTemplateService.update(items);
@@ -77,11 +89,22 @@ export function HousekeepingChecklistTemplatePanel({
             <textarea
               rows={8}
               maxLength={12000}
+              className={fieldError ? 'error' : undefined}
               value={itemsText}
-              onChange={(event) => setItemsText(event.target.value)}
+              onChange={(event) => {
+                setItemsText(event.target.value);
+                setFieldError(null);
+              }}
               aria-label="Puntos de la checklist de limpieza, uno por línea"
+              aria-invalid={fieldError ? true : undefined}
+              aria-describedby={fieldError ? 'checklist-template-error' : undefined}
             />
           </label>
+          {fieldError && (
+            <p id="checklist-template-error" className="hk-form-error" role="alert">
+              {fieldError}
+            </p>
+          )}
           <p className="adm-checklist-template-note">
             Se copia a las nuevas solicitudes de limpieza. Las tareas existentes conservan su
             checklist. Los pedidos de artículos no usan esta lista.

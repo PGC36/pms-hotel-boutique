@@ -137,5 +137,38 @@ export const guestService = {
     );
     return toGuest(toGuestDto(guest));
   },
+  /**
+   * Actualiza documento y nacionalidad del huésped conservando el resto de sus
+   * datos. `PUT /guests/{id}` reemplaza todos los campos (exige nombre y apellido
+   * y vacía email, teléfono y notas si no se envían), por eso se parte del
+   * huésped guardado.
+   */
+  async updateGuestIdentification(
+    id: ID,
+    data: {
+      document_type?: UpdateGuestDto['document_type'];
+      document_number?: string;
+      nationality?: string;
+    },
+  ): Promise<Guest> {
+    const current = await guestService.getGuestById(id);
+    if (!current) throw new Error('No fue posible actualizar el huesped. El huesped ya no existe.');
+    const documentType =
+      current.documentType === 'nationalId'
+        ? 'national_id'
+        : current.documentType === 'driverLicense'
+          ? 'driver_license'
+          : current.documentType;
+    return guestService.updateGuest(id, {
+      first_name: current.firstName,
+      last_name: current.lastName,
+      email: current.email,
+      phone: current.phone,
+      notes: current.notes,
+      nationality: data.nationality?.trim() || current.nationality,
+      document_type: data.document_type ?? documentType,
+      document_number: data.document_number?.trim() || current.documentNumber,
+    });
+  },
 };
 export default guestService;

@@ -1344,6 +1344,7 @@ function installGuestBookingFetchMock() {
   };
 }
 
+let lastCashRequest = null;
 function installCashFetchMock() {
   let session = {
     id: '7a4db6cf-d72a-4fc7-b7ec-0d07fbef5104',
@@ -1376,6 +1377,10 @@ function installCashFetchMock() {
       });
 
     if (method === 'GET' && path === '/cash-sessions/current') return json(session);
+    if (method === 'GET' && path === '/cash-sessions') {
+      lastCashRequest = { path, search: url.searchParams };
+      return json(session.status === 'open' ? [session] : []);
+    }
 
     if (method === 'POST' && path === '/cash-sessions/open') {
       const request = JSON.parse(String(init.body ?? '{}'));
@@ -1395,6 +1400,7 @@ function installCashFetchMock() {
 
     if (method === 'POST' && path === `/cash-sessions/${session.id}/close`) {
       const request = JSON.parse(String(init.body ?? '{}'));
+      lastCashRequest = { path, body: request };
       session = {
         ...session,
         status: 'closed',
@@ -1765,6 +1771,86 @@ test('personnelService.getUsers/getRoles/getPermissions: async, con latencia sim
     status: 'inactive',
   });
   assert.equal(disabled.status, 'inactive');
+});
+
+test('B3: personnelService conserva el código real de un rol personalizado', async () => {
+  globalThis.fetch = adminFetchMock;
+  const customRole = {
+    id: '44444444-4444-4444-8444-444444444445',
+    code: 'QA_CESAR',
+    name: 'QA César',
+    active: true,
+    permissions: ['bookings.read', 'navigation.recepcion.reservas'],
+  };
+  apiRoles.push(customRole);
+  try {
+    const created = await personnelService.createUser({
+      firstName: 'César',
+      lastName: 'Ramos',
+      email: 'cesar.qa@example.com',
+      password: 'Temporal123!',
+      roleId: customRole.id,
+    });
+    // Nunca se convierte en Recepción: el código real viaja en roleCode.
+    assert.equal(created.roleCode, 'qa_cesar');
+    const roles = await personnelService.getRoles();
+    assert.ok(roles.some((role) => role.code === created.roleCode));
+    // Editar solo el estado no reasigna el rol.
+    const updated = await personnelService.updateUser(created.id, {
+      roleId: customRole.id,
+      status: 'inactive',
+    });
+    assert.equal(updated.roleCode, 'qa_cesar');
+    // Los predefinidos mantienen su clave de dominio.
+    const users = await personnelService.getUsers();
+    assert.equal(
+      users.find((user) => user.email === 'jose@example.com')?.roleCode,
+      'ADMIN'.toLowerCase(),
+    );
+  } finally {
+    apiRoles.splice(apiRoles.indexOf(customRole), 1);
+  }
+});
+
+test('P1: personnelService traduce las reglas de administración del backend', async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const now = '2026-10-05T10:00:00Z';
+  const user = {
+    id: 'u-1',
+    firstName: 'Ana',
+    lastName: 'Admin',
+    email: 'ana@aurora.test',
+    roleId: 'r-admin',
+    roleCode: 'admin',
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  };
+  for (const [backend, expected] of [
+    ['You cannot deactivate your own account', 'No puedes desactivar tu propia cuenta.'],
+    [
+      'The last active administrator cannot be deactivated or lose the administrator role',
+      'Debe quedar al menos un administrador activo: no puedes desactivar ni quitar el rol de Administración al último.',
+    ],
+  ]) {
+    globalThis.fetch = async (_input, init = {}) =>
+      (init.method ?? 'GET') === 'PUT'
+        ? new Response(JSON.stringify({ status: 409, message: backend }), {
+            status: 409,
+            headers: { 'content-type': 'application/json' },
+          })
+        : new Response(JSON.stringify(user), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+    await assert.rejects(
+      () => personnelService.updateUser(user.id, { roleId: user.roleId, status: 'inactive' }),
+      (error) => error.message === expected,
+    );
+  }
 });
 
 test('inventoryService.getItems: async, con latencia simulada, devuelve Models', async () => {
@@ -2782,6 +2868,24 @@ test('administracion: promociones, tarifas, inventario y caja persisten operacio
     'un movimiento de caja sin usuario operativo no debe atribuirse a un fallback',
   );
   assert.equal((await cashService.getMovements()).length, beforeCashMovements.length + 1);
+});
+
+test('B9: cashService lista cajas abiertas y envía el motivo del cierre excepcional', async () => {
+  installCashFetchMock();
+  const open = await cashService.getOpenSessions();
+  assert.equal(lastCashRequest.path, '/cash-sessions');
+  assert.equal(lastCashRequest.search.get('status'), 'open');
+  assert.equal(open.length, 1);
+  const closed = await cashService.closeSession({
+    sessionId: open[0].id,
+    countedBalanceCents: 99000,
+    reason: '  Turno terminado sin cierre  ',
+  });
+  assert.deepEqual(lastCashRequest.body, {
+    countedBalanceCents: 99000,
+    reason: 'Turno terminado sin cierre',
+  });
+  assert.equal(closed.differenceCents, -1000);
 });
 
 test('promociones: valida inicio, rango y porcentaje antes de llamar a la API', async () => {

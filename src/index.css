@@ -4704,6 +4704,9 @@ button {
   outline: 2px solid var(--color-border);
   outline-offset: 1px;
 }
+.rs-inventory-modal .rs-inventory-field input.error {
+  border-color: var(--color-terracotta);
+}
 .rs-inventory-stock {
   display: flex;
   justify-content: space-between;
@@ -5711,7 +5714,8 @@ button {
 .rc-avail-form {
   display: flex;
   gap: var(--space-5);
-  align-items: flex-end;
+  /* Arriba, no abajo: un mensaje de error bajo un campo no desalinea los demás. */
+  align-items: flex-start;
   flex-wrap: wrap;
   padding: var(--space-7);
   background: var(--color-surface-secondary);
@@ -5719,8 +5723,12 @@ button {
   border-radius: var(--radius-lg);
   margin-bottom: var(--space-8);
 }
-.rc-avail-form > button {
+.rc-avail-action > button {
   height: var(--size-legacy-36);
+}
+/* El mensaje se ajusta en varias líneas en lugar de ensanchar el campo. */
+.rc-avail-form .rc-field-error {
+  max-width: var(--size-legacy-160);
 }
 .rc-avail-results {
   margin-top: var(--space-1);

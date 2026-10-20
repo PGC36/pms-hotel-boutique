@@ -21,6 +21,14 @@ import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatCurrency } from '@/shared/utils/currency';
 import { formatDateGT } from '@/shared/utils/date';
 import { validateBookingCapacity } from '@/shared/utils/bookingCapacity';
+import {
+  NOTES_MAX_LENGTH,
+  isDigitsOnly,
+  normalizeChildren,
+  validateEditedNotes,
+  validateEditedStay,
+  validateGuestCounts,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import './occupancy.css';
 
 type ScreenState =
@@ -68,11 +76,6 @@ function getErrorMessage(cause: unknown): string {
   return getUserFacingErrorMessage(cause, 'No pudimos cargar la reserva. Intenta nuevamente.');
 }
 
-function toCalendarTime(value: string): number {
-  const [year, month, day] = value.split('-').map(Number);
-  return Date.UTC(year, month - 1, day);
-}
-
 function toDateInputValue(date: Date): string {
   const year = String(date.getFullYear()).padStart(4, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -80,25 +83,35 @@ function toDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function validateForm(form: FormState, roomTypes: RoomType[]): FormErrors {
+/** Valores guardados de la reserva, tal como los muestra el formulario de edición. */
+function originalForm(booking: Booking): FormState {
+  return {
+    roomTypeId: booking.roomTypeId,
+    checkIn: toDateInputValue(booking.checkIn),
+    checkOut: toDateInputValue(booking.checkOut),
+    adults: String(booking.adults),
+    children: String(booking.children),
+    notes: booking.notes ?? '',
+  };
+}
+
+/**
+ * Mismas reglas que Editar reserva de Recepción: las fechas y observaciones
+ * guardadas que no se tocan se conservan aunque ya no cumplan (entrada pasada,
+ * más de 90 noches, notas de más de 500); lo que se cambia sí se valida.
+ */
+function validateForm(form: FormState, roomTypes: RoomType[], original: FormState): FormErrors {
   const errors: FormErrors = {};
   const selectedRoomType = roomTypes.find((roomType) => roomType.id === form.roomTypeId);
   if (!form.roomTypeId) errors.roomTypeId = 'Selecciona un tipo de habitación.';
-  if (!form.checkIn) errors.checkIn = 'Ingresa la fecha de entrada.';
-  if (!form.checkOut) errors.checkOut = 'Ingresa la fecha de salida.';
-  if (
-    form.checkIn &&
-    form.checkOut &&
-    toCalendarTime(form.checkOut) <= toCalendarTime(form.checkIn)
-  ) {
-    errors.checkOut = 'La salida debe ser posterior a la entrada.';
-  }
-  if (!Number.isInteger(Number(form.adults)) || Number(form.adults) < 1) {
-    errors.adults = 'Ingresa al menos un adulto.';
-  }
-  if (!Number.isInteger(Number(form.children)) || Number(form.children) < 0) {
-    errors.children = 'Ingresa cero o más menores.';
-  }
+  const stay = validateEditedStay(form.checkIn, form.checkOut, original);
+  if (stay.checkIn) errors.checkIn = stay.checkIn;
+  if (stay.checkOut) errors.checkOut = stay.checkOut;
+  const counts = validateGuestCounts(form.adults, form.children);
+  if (counts.adults) errors.adults = counts.adults;
+  if (counts.children) errors.children = counts.children;
+  const notes = validateEditedNotes(form.notes, original.notes);
+  if (notes.error) errors.notes = notes.error;
   const capacityError = selectedRoomType
     ? validateBookingCapacity({
         adults: Number(form.adults),
@@ -162,14 +175,7 @@ export function BookingDetailScreen() {
         room,
         roomTypes: roomTypes.filter((rt) => rt.active),
       });
-      setForm({
-        roomTypeId: booking.roomTypeId,
-        checkIn: toDateInputValue(booking.checkIn),
-        checkOut: toDateInputValue(booking.checkOut),
-        adults: String(booking.adults),
-        children: String(booking.children),
-        notes: booking.notes ?? '',
-      });
+      setForm(originalForm(booking));
     } catch (cause) {
       setScreen({ status: 'error', message: getErrorMessage(cause) });
     }
@@ -234,7 +240,7 @@ export function BookingDetailScreen() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (screen.status !== 'ready') return;
-    const nextErrors = validateForm(form, screen.roomTypes);
+    const nextErrors = validateForm(form, screen.roomTypes, originalForm(screen.booking));
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
@@ -455,30 +461,45 @@ export function BookingDetailScreen() {
             onChange={(event) => updateField('checkOut', event.target.value)}
           />
 
+          {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
           <Input
             label="Adultos"
-            type="number"
-            min="1"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
             required
             value={form.adults}
             error={errors.adults}
-            onChange={(event) => updateField('adults', event.target.value)}
+            onChange={(event) => {
+              if (isDigitsOnly(event.target.value)) updateField('adults', event.target.value);
+            }}
           />
 
           <Input
             label="Menores"
-            type="number"
-            min="0"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
             required
             value={form.children}
             error={errors.children ?? liveCapacityError}
-            onChange={(event) => updateField('children', event.target.value)}
+            onChange={(event) => {
+              if (isDigitsOnly(event.target.value)) updateField('children', event.target.value);
+            }}
+            onBlur={() => updateField('children', normalizeChildren(form.children))}
           />
 
           <Input
             label="Notas"
             className="occupancy-form-full"
             value={form.notes}
+            error={errors.notes}
+            helpText={
+              validateEditedNotes(form.notes, originalForm(screen.booking).notes).warning ??
+              `${form.notes.length}/${NOTES_MAX_LENGTH}`
+            }
             onChange={(event) => updateField('notes', event.target.value)}
           />
 

@@ -11,6 +11,12 @@ export interface SessionUserDTO {
   email: string;
   name: string;
   role: UserRole;
+  /**
+   * Código real de un rol personalizado (p. ej. `QA_CESAR`). Sin valor para los
+   * seis roles predefinidos. `role` es entonces solo el panel operativo que
+   * corresponde a sus permisos de navegación, no un rol asignado (B3).
+   */
+  roleCode?: string;
   avatarUrl?: string;
   createdAt: ISODateString;
 }
