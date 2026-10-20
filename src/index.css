@@ -4662,6 +4662,9 @@ button {
   outline: 2px solid var(--color-border);
   outline-offset: 1px;
 }
+.rs-inventory-modal .rs-inventory-field input.error {
+  border-color: var(--color-terracotta);
+}
 .rs-inventory-stock {
   display: flex;
   justify-content: space-between;

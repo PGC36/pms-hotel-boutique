@@ -26,6 +26,46 @@ import { ReceptionContent } from '@/modules/front-desk/components/workspace/Rece
 import { PrivateWorkspace } from '@/private/workspace/PrivateWorkspace';
 import { calculateNights } from '@/shared/utils/date';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import {
+  BlockModal,
+  ChargeModal,
+  CheckinModal,
+  PaymentModal,
+  ReasonModal,
+} from '@/modules/front-desk/components/workspace/ReceptionModals';
+import {
+  CashModal,
+  CashSessionModal,
+  MovementModal,
+  PromoModal,
+  RoleModal,
+  RoomModal,
+  SeasonRateModal,
+  UserModal,
+} from '@/modules/administration/components/AdminContent';
+import { validateGuestBooking } from '@/modules/guest-portal/components/GuestModals';
+import {
+  MAX_WHOLE_NUMBER,
+  MONEY_INVALID,
+  MONEY_POSITIVE,
+  MONEY_REQUIRED,
+  MONEY_TOO_LARGE,
+  NUMBER_TOO_LARGE,
+  WHOLE_NUMBER_INVALID as FORM_WHOLE_NUMBER_INVALID,
+  fieldErrorProps,
+  isMoneyInput,
+  isWholeNumberInput,
+  moneyInputToCents,
+  validateDateRange,
+  validateMoneyAmount,
+  validateOptionalText,
+  validateRequiredText,
+  validateWholeNumber,
+  PERSON_NAME_CHARACTERS,
+  normalizePersonNamePart,
+  validatePersonNamePart,
+} from '@/shared/utils/formValidation';
+import { companionCompositionError } from '@/modules/front-desk/utils/checkinComposition';
 
 // Entorno mínimo para los servicios mock (mismo patrón que tests/auth.test.jsx).
 const values = new Map();
@@ -1865,7 +1905,45 @@ function installReceptionBackend({
       updatedAt: now,
     },
     requests: [],
+    companions: [],
+    // Folio, cargos, pagos y depósitos persistidos (mismas reglas que el backend).
+    account: null,
+    charges: [],
+    payments: [...payments],
+    deposits: [],
   };
+  const guest = {
+    id: state.booking.guestId,
+    firstName: 'Elena',
+    lastName: 'Castro',
+    email: 'elena@example.com',
+    phone: '+502 5555-1010',
+    documentType: 'national_id',
+    documentNumber: '1000 20000 0101',
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.guest = guest;
+  const sum = (items) => items.reduce((total, item) => total + item.amountCents, 0);
+  const balance = () =>
+    sum(state.charges.filter((c) => c.status === 'posted')) -
+    sum(state.payments.filter((pay) => pay.status === 'completed')) -
+    sum(state.deposits.filter((d) => d.status === 'applied'));
+  const folio = () => ({
+    accountId: 'acc-126',
+    bookingId: REC_BOOKING_ID,
+    guestId: guest.id,
+    status: state.account,
+    balanceCents: balance(),
+    currency: 'GTQ',
+    openedAt: now,
+    closedAt: null,
+    activeChargesCents: 0,
+    voidedChargesCents: 0,
+    completedPaymentsCents: 0,
+    charges: state.charges,
+  });
+  const notFoundAccount = { message: `Guest account not found for booking: ${REC_BOOKING_ID}` };
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -1886,24 +1964,137 @@ function installReceptionBackend({
     }
     if (method === 'GET' && path === '/bookings') return json([state.booking]);
     if (method === 'GET' && path === `/bookings/${REC_BOOKING_ID}`) return json(state.booking);
-    if (method === 'GET' && path === '/guests') {
-      return json([
-        {
-          id: state.booking.guestId,
-          firstName: 'Elena',
-          lastName: 'Castro',
-          email: 'elena@example.com',
-          phone: '+502 5555-1010',
-          documentType: 'national_id',
-          documentNumber: '1000 20000 0101',
-          createdAt: now,
-          updatedAt: now,
-        },
-      ]);
+    if (method === 'GET' && path === '/guests') return json([guest]);
+    if (method === 'GET' && path === `/guests/${guest.id}`) return json(guest);
+    if (method === 'PUT' && path === `/guests/${guest.id}`) {
+      // PUT reemplaza todo: el frontend debe reenviar nombre, email y teléfono.
+      if (!body.firstName || !body.lastName) {
+        return json({ message: 'First name is required' }, 400);
+      }
+      Object.assign(guest, body);
+      return json(guest);
+    }
+    const bookingBase = `/bookings/${REC_BOOKING_ID}`;
+    if (method === 'GET' && path === `${bookingBase}/companions`) return json(state.companions);
+    if (method === 'POST' && path === `${bookingBase}/companions`) {
+      const companion = {
+        id: `00000000-0000-4000-8000-1000000000${String(state.companions.length + 1).padStart(2, '0')}`,
+        bookingId: REC_BOOKING_ID,
+        ...body,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.companions.push(companion);
+      return json(companion, 201);
+    }
+    if (method === 'POST' && path === `${bookingBase}/folio/open`) {
+      if (state.account === null) state.account = 'open';
+      return json(folio());
+    }
+    if (method === 'GET' && path === `${bookingBase}/folio`) {
+      return state.account ? json(folio()) : json(notFoundAccount, 404);
+    }
+    if (method === 'GET' && path === '/charges') return json(state.charges);
+    if (method === 'GET' && path === '/deposits') return json(state.deposits);
+    if (method === 'POST' && path === `${bookingBase}/charges`) {
+      if (state.account !== 'open') return json(notFoundAccount, 404);
+      const charge = {
+        id: `00000000-0000-4000-8000-2000000000${String(state.charges.length + 1).padStart(2, '0')}`,
+        bookingId: REC_BOOKING_ID,
+        guestAccountId: 'acc-126',
+        description: body.description,
+        quantity: body.quantity,
+        unitPriceCents: body.unitPriceCents,
+        amountCents: body.quantity * body.unitPriceCents,
+        currency: 'GTQ',
+        category: body.category,
+        status: 'posted',
+        chargedAt: now,
+        createdByUserId: null,
+        voidReason: null,
+        createdAt: now,
+      };
+      state.charges.push(charge);
+      return json(charge, 201);
+    }
+    const voidMatch = /^\/bookings\/[^/]+\/charges\/([^/]+)\/void$/.exec(path);
+    if (method === 'POST' && voidMatch) {
+      const charge = state.charges.find((c) => c.id === voidMatch[1]);
+      if (!charge) return json({ message: 'Charge not found' }, 404);
+      if (charge.status === 'voided') return json({ message: 'Charge is already voided' }, 400);
+      Object.assign(charge, { status: 'voided', voidReason: body.reason });
+      return json(charge);
+    }
+    if (method === 'POST' && path === `${bookingBase}/payments`) {
+      if (state.account !== 'open') return json(notFoundAccount, 404);
+      if (body.amountCents > balance()) {
+        return json({ message: 'Payment amount exceeds guest account balance' }, 409);
+      }
+      const payment = {
+        id: `00000000-0000-4000-8000-3000000000${String(state.payments.length + 1).padStart(2, '0')}`,
+        bookingId: REC_BOOKING_ID,
+        amountCents: body.amountCents,
+        currency: 'GTQ',
+        method: body.method,
+        status: 'completed',
+        transactionReference: body.transactionReference ?? null,
+        paidAt: now,
+        createdAt: now,
+      };
+      state.payments.push(payment);
+      return json(payment, 201);
+    }
+    if (method === 'POST' && path === `${bookingBase}/deposits`) {
+      const deposit = {
+        id: `00000000-0000-4000-8000-4000000000${String(state.deposits.length + 1).padStart(2, '0')}`,
+        bookingId: REC_BOOKING_ID,
+        amountCents: body.amountCents,
+        currency: 'GTQ',
+        method: body.method,
+        status: 'held',
+        notes: body.notes ?? null,
+        collectedAt: now,
+        refundedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.deposits.push(deposit);
+      return json(deposit, 201);
+    }
+    const depositActionMatch = path.match(/\/deposits\/([^/]+)\/(apply|refund)$/);
+    if (method === 'POST' && depositActionMatch) {
+      // Mismas reglas que DepositServiceImpl: solo depósitos retenidos, una vez.
+      const deposit = state.deposits.find((d) => d.id === depositActionMatch[1]);
+      if (!deposit) return json({ message: 'Deposit not found' }, 404);
+      const action = depositActionMatch[2];
+      if (deposit.status !== 'held') {
+        return json(
+          { message: `Only held deposits can be ${action === 'apply' ? 'applied' : 'refunded'}` },
+          400,
+        );
+      }
+      if (action === 'apply') {
+        if (state.account !== 'open') return json(notFoundAccount, 404);
+        deposit.status = 'applied';
+      } else {
+        if (!body?.reason?.trim()) return json({ message: 'Refund reason is required' }, 400);
+        deposit.status = 'refunded';
+        deposit.refundedAt = now;
+      }
+      return json(deposit);
+    }
+    if (method === 'POST' && path === `${bookingBase}/check-out`) {
+      if (state.account !== 'open') return json(notFoundAccount, 404);
+      if (balance() !== 0) {
+        return json({ message: 'Guest account balance must be zero before checkout' }, 409);
+      }
+      state.account = 'closed';
+      state.booking.status = 'checked_out';
+      return json(state.booking);
     }
     if (method === 'GET' && path === '/rooms') return json(rooms);
     if (method === 'GET' && path === '/payments') {
-      return paymentsForbidden ? json({ message: 'Forbidden' }, 403) : json(payments);
+      return paymentsForbidden ? json({ message: 'Forbidden' }, 403) : json(state.payments);
     }
     if (method === 'GET' && path === '/room-types') {
       return json([
@@ -1943,6 +2134,15 @@ function installReceptionBackend({
       return json(state.booking);
     }
     if (method === 'POST' && path === `/bookings/${REC_BOOKING_ID}/check-in`) {
+      // Misma regla que el backend: titular + acompañantes = adultos y menores declarados.
+      const adults = 1 + state.companions.filter((c) => c.guestType === 'adult').length;
+      const children = state.companions.filter((c) => c.guestType === 'child').length;
+      if (adults !== state.booking.adults || children !== state.booking.children) {
+        return json(
+          { message: 'Booking companions do not match declared adult and child composition' },
+          400,
+        );
+      }
       state.booking.status = 'checked_in';
       return json({});
     }
@@ -2085,6 +2285,66 @@ test('recepción: si el backend rechaza la cancelación la reserva no cambia', a
   );
 });
 
+const recAriaButtons = (label) =>
+  view.root.findAll((node) => node.type === 'button' && node.props['aria-label'] === label);
+
+test('Fase 4: el detalle ya no ofrece "Anular" y la cancelación exige motivo', async () => {
+  await mountReception();
+  act(() => receptionContent().props.onSelectRes(recReservation().id));
+  assert.equal(recAriaButtons('Anular').length, 0, '"Anular" solo cambiaba la pantalla');
+
+  await act(async () => recAriaButtons('Cancelar')[0].props.onClick());
+  const textarea = view.root.find(
+    (node) => node.type === 'textarea' && node.props.placeholder === 'Indica el motivo...',
+  );
+  const confirmButton = () =>
+    view.root.find(
+      (node) =>
+        node.type === 'button' &&
+        typeof node.props.onClick === 'function' &&
+        text(node).includes('Confirmar'),
+    );
+  await act(async () => textarea.props.onChange({ target: { value: '   ' } }));
+  assert.equal(confirmButton().props.disabled, true, 'un motivo vacío no se envía');
+
+  await act(async () => textarea.props.onChange({ target: { value: 'Cambio de fechas' } }));
+  // Doble clic: una sola solicitud al backend.
+  await act(async () => {
+    confirmButton().props.onClick();
+    confirmButton().props.onClick();
+    await settle();
+  });
+  await settle();
+  assert.deepEqual(recCalls(`/bookings/${REC_BOOKING_ID}/cancel`), [
+    { reason: 'Cambio de fechas' },
+  ]);
+  // Tras recargar desde el backend la reserva queda cancelada y sin acción de cancelar.
+  assert.equal(recBackend.booking.status, 'cancelled');
+  assert.equal(recReservation().status, 'Cancelada');
+  act(() => receptionContent().props.onSelectRes(recReservation().id));
+  assert.equal(
+    recAriaButtons('Cancelar').length,
+    0,
+    'una reserva cancelada no se cancela otra vez',
+  );
+});
+
+test('Fase 4: una reserva con check-in no ofrece cancelar', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  act(() => receptionContent().props.onSelectRes(recReservation().id));
+  assert.equal(recReservation().status, 'Check-in');
+  assert.equal(recAriaButtons('Cancelar').length, 0);
+});
+
+test('Fase 4: la ruta antigua de anulación usa la cancelación persistente', async () => {
+  await mountReception();
+  await act(async () => receptionContent().props.onVoid(recReservation().id, 'Duplicada'));
+  await settle();
+  assert.deepEqual(recCalls(`/bookings/${REC_BOOKING_ID}/cancel`), [{ reason: 'Duplicada' }]);
+  assert.equal(recReservation().status, 'Cancelada');
+  assert.ok(!toasts().some((toast) => toast.includes('anulada')));
+});
+
 test('recepción: confirma una reserva pendiente antes de habilitar check-in', async () => {
   await mountReception({ bookingStatus: 'pending' });
   const reservation = recReservation();
@@ -2171,16 +2431,38 @@ test('recepción: asigna una habitación compatible dentro del check-in', async 
     roomOptions[0].props.onClick();
     await settle();
   });
+  // La reserva declara 2 adultos: titular + un acompañante adulto (regla del check-in).
   await act(async () => {
     buttons('Confirmar check-in')[0].props.onClick();
-    await settle(1500);
+    await settle(300);
+  });
+  assert.equal(recBackend.requests.filter(({ call }) => call.endsWith('/check-in')).length, 0);
+  assert.match(text(view.root), /registra 1 acompañante adulto/);
+  fillCheckinCompanion({ firstName: 'Mario', lastName: 'Castro', documentNumber: 'A-123' });
+  // Huésped, acompañantes, check-in y folio: cada servicio simula 300–600 ms.
+  await act(async () => {
+    buttons('Confirmar check-in')[0].props.onClick();
+    await settle(4500);
   });
 
   const calls = recBackend.requests.map(({ call }) => call);
   const assignmentIndex = calls.indexOf(`PUT /bookings/${REC_BOOKING_ID}`);
+  const companionIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/companions`);
   const checkInIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/check-in`);
+  const folioIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/folio/open`);
   assert.ok(assignmentIndex >= 0, 'asigna la habitación antes del check-in');
-  assert.ok(checkInIndex > assignmentIndex, 'confirma el check-in después de asignar');
+  assert.ok(companionIndex > assignmentIndex, 'guarda el acompañante antes del check-in');
+  assert.ok(checkInIndex > companionIndex, 'confirma el check-in después de asignar');
+  assert.ok(folioIndex > checkInIndex, 'abre el folio después del check-in');
+  assert.deepEqual(
+    (({ firstName, lastName, guestType, documentType }) => ({
+      firstName,
+      lastName,
+      guestType,
+      documentType,
+    }))(recBackend.companions[0]),
+    { firstName: 'Mario', lastName: 'Castro', guestType: 'adult', documentType: 'passport' },
+  );
   assert.equal(
     recBackend.requests[assignmentIndex].body.roomId,
     '20000000-0000-4000-8000-000000000201',
@@ -3230,4 +3512,1073 @@ test('disponibilidad: en el workspace real respeta las reservas existentes', asy
   assert.deepEqual(availCards(), [], 'ocupada por la reserva');
   availSet('avail-check-in', '2026-12-12');
   assert.deepEqual(availCards(), ['Hab. 101'], 'libre desde la salida de la reserva');
+});
+
+// --- Revisión integral de inputs y formularios ------------------------------
+//
+// Utilidades genéricas (shared/utils/formValidation) y formularios fuera de los
+// ya aprobados (Nueva reserva, Editar reserva, Disponibilidad).
+
+const formControl = (label) => {
+  const node = view.root.find(
+    (candidate) => candidate.type === 'label' && text(candidate).trim().startsWith(label),
+  );
+  return node.findAll((candidate) => ['input', 'select', 'textarea'].includes(candidate.type))[0];
+};
+const shownErrors = () =>
+  view.root
+    .findAll((node) => hasClass(node, 'rc-field-error') || hasClass(node, 'hk-form-error'))
+    .map((node) => text(node));
+const typeIn = (input, value) => act(() => input.props.onChange({ target: { value } }));
+const previousCalendarDay = (day) => {
+  const date = toDomainCalendarDate(day);
+  date.setDate(date.getDate() - 1);
+  return toDtoCalendarDate(date);
+};
+
+test('B9 · caja: el cierre excepcional exige conteo y motivo; el propio no pide motivo', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <CashSessionModal
+        mode="close"
+        expectedCents={100000}
+        ownerLabel="Ana López"
+        onClose={() => {}}
+        onSave={(...args) => {
+          saved.push(args);
+        }}
+      />,
+    );
+  });
+  assert.match(text(view.root), /Cierre excepcional · Ana López/);
+  typeIn(formControl('Efectivo contado'), '990');
+  await act(async () => buttons('Cerrar caja')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Indica el motivo del cierre excepcional.']);
+  assert.equal(saved.length, 0);
+  typeIn(formControl('Motivo del cierre excepcional'), ' Turno terminado ');
+  await act(async () => {
+    buttons('Cerrar caja')[0].props.onClick();
+    await settle(50);
+  });
+  assert.deepEqual(saved, [[99000, undefined, 'Turno terminado']]);
+
+  saved.length = 0;
+  act(() => {
+    view = create(
+      <CashSessionModal
+        mode="close"
+        expectedCents={100000}
+        onClose={() => {}}
+        onSave={(...args) => {
+          saved.push(args);
+        }}
+      />,
+    );
+  });
+  assert.ok(!text(view.root).includes('Motivo del cierre excepcional'));
+  typeIn(formControl('Efectivo contado'), '1000');
+  await act(async () => {
+    buttons('Cerrar caja')[0].props.onClick();
+    await settle(50);
+  });
+  assert.deepEqual(saved, [[100000, undefined, undefined]]);
+});
+
+test('formularios · montos: solo dígitos y hasta 2 decimales, sin notación científica', () => {
+  for (const value of ['', '0', '12', '12.', '12.5', '12.50', '.5']) {
+    assert.equal(isMoneyInput(value), true, value);
+  }
+  for (const value of ['-1', '1e3', '12.345', '1,000', 'Q100', ' 1', 'abc', '+5']) {
+    assert.equal(isMoneyInput(value), false, value);
+  }
+  assert.equal(validateMoneyAmount(''), MONEY_REQUIRED);
+  assert.equal(validateMoneyAmount('   '), MONEY_REQUIRED);
+  assert.equal(validateMoneyAmount('0'), MONEY_POSITIVE);
+  assert.equal(validateMoneyAmount('0.00'), MONEY_POSITIVE);
+  assert.equal(validateMoneyAmount('0', { allowZero: true }), null);
+  assert.equal(validateMoneyAmount('.'), MONEY_INVALID);
+  assert.equal(validateMoneyAmount('12.'), MONEY_INVALID);
+  assert.equal(validateMoneyAmount('1e3'), MONEY_INVALID);
+  assert.equal(validateMoneyAmount('-5'), MONEY_INVALID);
+  assert.equal(validateMoneyAmount('9'.repeat(20)), MONEY_TOO_LARGE);
+  assert.equal(validateMoneyAmount('1250.50'), null);
+  // Centavos exactos, sin errores de coma flotante.
+  assert.equal(moneyInputToCents('19.99'), 1999);
+  assert.equal(moneyInputToCents('0.1'), 10);
+  assert.equal(moneyInputToCents('1250.5'), 125050);
+  assert.equal(moneyInputToCents('.5'), 50);
+  assert.equal(moneyInputToCents('abc'), null);
+});
+
+test('formularios · enteros: vacío, signos, decimales y valores enormes', () => {
+  assert.equal(isWholeNumberInput('12'), true);
+  assert.equal(isWholeNumberInput(''), true);
+  for (const value of ['-1', '1.5', '1e2', ' 1', 'uno', '+1']) {
+    assert.equal(isWholeNumberInput(value), false, value);
+  }
+  assert.equal(validateWholeNumber('', { requiredMessage: 'Falta.' }), 'Falta.');
+  assert.equal(validateWholeNumber('0', { min: 1, minMessage: 'Mínimo 1.' }), 'Mínimo 1.');
+  assert.equal(validateWholeNumber('0', { min: 0 }), null, 'cero cuando tiene sentido');
+  assert.equal(validateWholeNumber('101', { max: 100, maxMessage: 'Máx.' }), 'Máx.');
+  assert.equal(validateWholeNumber('1.5'), FORM_WHOLE_NUMBER_INVALID);
+  assert.equal(validateWholeNumber('-3'), FORM_WHOLE_NUMBER_INVALID);
+  assert.equal(validateWholeNumber(String(MAX_WHOLE_NUMBER)), null);
+  assert.equal(validateWholeNumber(String(MAX_WHOLE_NUMBER + 1)), NUMBER_TOO_LARGE);
+  assert.equal(validateWholeNumber('9'.repeat(400)), NUMBER_TOO_LARGE);
+});
+
+test('formularios · textos, rangos de fechas y atributos de accesibilidad', () => {
+  assert.equal(validateRequiredText('   ', 'Requerido.'), 'Requerido.');
+  assert.equal(validateRequiredText('  Ñandú, café.  ', 'Requerido.', 12), null, 'conserva tildes');
+  assert.equal(validateRequiredText('abcd', 'Requerido.', 3), 'Máximo 3 caracteres.');
+  assert.equal(validateOptionalText('', 5), null);
+  assert.equal(validateOptionalText('123456', 5), 'Máximo 5 caracteres.');
+  assert.deepEqual(validateDateRange('2026-10-20', '2026-10-20'), {});
+  assert.deepEqual(validateDateRange('2026-10-20', '2026-10-19'), {
+    end: 'La fecha final no puede ser anterior a la inicial.',
+  });
+  assert.deepEqual(validateDateRange('2026-10-20', '2026-10-20', { allowSameDay: false }), {
+    end: 'La fecha final debe ser posterior a la inicial.',
+  });
+  assert.deepEqual(validateDateRange('', 'x'), {
+    start: 'Ingresa la fecha.',
+    end: 'Fecha no válida.',
+  });
+  assert.deepEqual(fieldErrorProps('a-error', 'Mal'), {
+    'aria-invalid': true,
+    'aria-describedby': 'a-error',
+  });
+  assert.deepEqual(fieldErrorProps('a-error', null), {
+    'aria-invalid': undefined,
+    'aria-describedby': undefined,
+  });
+});
+
+test('cargo (recepción): concepto obligatorio, monto monetario y errores accesibles', () => {
+  const added = [];
+  act(() => {
+    view = create(<ChargeModal onClose={() => {}} onAdd={(...args) => added.push(args)} />);
+  });
+  const amount = () => formControl('Monto');
+  for (const value of ['abc', '1e3', '-5', '12.345']) {
+    typeIn(amount(), value);
+    assert.equal(amount().props.value, '', `rechaza ${value}`);
+  }
+  act(() => buttons('Agregar cargo')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['El concepto es obligatorio.', MONEY_REQUIRED]);
+  assert.equal(formControl('Concepto').props['aria-invalid'], true);
+  assert.equal(amount().props['aria-describedby'], 'charge-amount-error');
+
+  typeIn(formControl('Concepto'), '   ');
+  typeIn(amount(), '0');
+  act(() => buttons('Agregar cargo')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['El concepto es obligatorio.', MONEY_POSITIVE]);
+  assert.equal(added.length, 0);
+
+  typeIn(formControl('Concepto'), '  Minibar  ');
+  typeIn(amount(), ' 125.50 ');
+  assert.deepEqual(shownErrors(), [], 'los errores desaparecen al corregir');
+  act(() => buttons('Agregar cargo')[0].props.onClick());
+  assert.deepEqual(added, [['Minibar', 'Servicios', 125.5, '']]);
+});
+
+test('pago y depósito (recepción): cero no se registra; método real del backend y referencia normalizada', () => {
+  const paid = [];
+  act(() => {
+    view = create(
+      <PaymentModal title="PAGO" onClose={() => {}} onSubmit={(...args) => paid.push(args)} />,
+    );
+  });
+  typeIn(formControl('Monto'), '0.00');
+  act(() => buttons('Confirmar')[0].props.onClick());
+  assert.deepEqual(shownErrors(), [MONEY_POSITIVE]);
+  assert.equal(paid.length, 0);
+  // "Tarjeta" se distingue en crédito o débito, como en el backend.
+  const methods = formControl('Método')
+    .findAllByType('option')
+    .map((option) => option.props.value);
+  assert.deepEqual(methods, ['cash', 'credit_card', 'debit_card', 'bank_transfer']);
+  assert.match(text(view.root), /El efectivo requiere tu caja abierta/);
+  typeIn(formControl('Monto'), '300');
+  typeIn(formControl('Método'), 'debit_card');
+  typeIn(formControl('Referencia'), '  TXN-1  ');
+  act(() => buttons('Confirmar')[0].props.onClick());
+  assert.deepEqual(paid, [[300, 'debit_card', 'TXN-1']]);
+});
+
+test('bloqueo (recepción): parte de hoy y mañana en Guatemala y valida habitación y fechas', () => {
+  const blocks = [];
+  act(() => {
+    view = create(
+      <BlockModal rooms={rooms} onClose={() => {}} onAdd={(...args) => blocks.push(args)} />,
+    );
+  });
+  const click = () => act(() => buttons('Bloquear habitación')[0].props.onClick());
+  assert.equal(dateInputs()[0].props.value, hotelToday(), 'ya no usa fechas fijas de 2024');
+  assert.equal(dateInputs()[1].props.value, nextCalendarDay(hotelToday()));
+  click();
+  assert.deepEqual(shownErrors(), ['Selecciona una habitación.']);
+  typeIn(formControl('Habitación'), '101');
+  typeIn(dateInputs()[0], previousCalendarDay(hotelToday()));
+  click();
+  assert.deepEqual(shownErrors(), ['La fecha inicial no puede ser anterior a hoy.']);
+  typeIn(dateInputs()[0], IN_5);
+  typeIn(dateInputs()[1], IN_5);
+  click();
+  assert.deepEqual(shownErrors(), ['La fecha final debe ser posterior a la inicial.']);
+  assert.equal(dateInputs()[1].props['aria-invalid'], true);
+  typeIn(dateInputs()[1], IN_7);
+  click();
+  assert.deepEqual(blocks, [['101', IN_5, IN_7, 'Mantenimiento', '']]);
+});
+
+test('motivo (recepción): solo espacios no confirma y un segundo clic no repite la operación', async () => {
+  let calls = 0;
+  let release;
+  act(() => {
+    view = create(
+      <ReasonModal
+        title="CANCELAR"
+        label="Cancelar reserva"
+        tone="warning"
+        onClose={() => {}}
+        onConfirm={() => {
+          calls += 1;
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        }}
+      />,
+    );
+  });
+  const confirm = () => buttons('Confirmar')[0];
+  typeIn(view.root.findByType('textarea'), '   ');
+  assert.equal(confirm().props.disabled, true);
+  typeIn(view.root.findByType('textarea'), 'El huésped no llegó');
+  await act(async () => confirm().props.onClick());
+  await act(async () => confirm().props.onClick());
+  assert.equal(calls, 1);
+  assert.equal(confirm().props.disabled, true, 'deshabilitado mientras se procesa');
+  await act(async () => release());
+  assert.equal(confirm().props.disabled, false);
+});
+
+/** Controles de los `<label>` cuyo texto empieza con `label` (en orden del DOM). */
+function labelledControls(label) {
+  return view.root
+    .findAll((node) => node.type === 'label' && text(node).trim().startsWith(label))
+    .map(
+      (node) => node.findAll((child) => ['input', 'select', 'textarea'].includes(child.type))[0],
+    );
+}
+
+/** Completa y agrega un acompañante en el modal de check-in del workspace. */
+function fillCheckinCompanion({
+  firstName,
+  lastName,
+  documentNumber,
+  documentType = 'passport',
+  age = '30',
+  guestType = 'adult',
+}) {
+  const set = (control, value) => act(() => control.props.onChange({ target: { value } }));
+  set(labelledControls('Nombre *')[0], firstName);
+  set(labelledControls('Apellido *')[0], lastName);
+  set(labelledControls('Tipo de documento *')[1], documentType);
+  set(labelledControls('Número de documento *')[1], documentNumber);
+  set(labelledControls('Edad *')[0], age);
+  set(labelledControls('Tipo *')[0], guestType);
+  act(() => buttons('Agregar acompañante')[0].props.onClick());
+}
+
+const checkinReservation = (overrides = {}) => ({
+  id: 1,
+  bookingId: undefined,
+  code: 'AUR-1',
+  roomNumber: '101',
+  roomType: 'Estándar',
+  status: 'Confirmada',
+  checkIn: hotelToday(),
+  checkOut: nextCalendarDay(hotelToday()),
+  adults: 2,
+  children: 1,
+  guest: {
+    name: 'Ana',
+    lastName: 'López',
+    phone: '',
+    email: '',
+    docType: 'nationalId',
+    docNumber: '',
+    birthDate: '',
+    nationality: '',
+  },
+  companions: [],
+  folio: [],
+  ...overrides,
+});
+
+test('check-in (recepción): documento, acompañantes con campos separados, composición y sin doble envío', async () => {
+  const checkins = [];
+  let release;
+  // Sin bookingId no se consultan acompañantes guardados; el envío se valida antes.
+  const reservation = checkinReservation({ bookingId: '33333333-3333-4333-8333-333333333333' });
+  const originalFetchForTest = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  act(() => {
+    view = create(
+      <CheckinModal
+        reservation={reservation}
+        rooms={[{ ...rooms[0], capacity: 3 }]}
+        hasConflict={() => false}
+        isRoomBlocked={() => false}
+        onClose={() => {}}
+        onCheckin={(...args) => {
+          checkins.push(args);
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        }}
+      />,
+    );
+  });
+  await settle(700);
+  try {
+    const confirm = () => buttons('check-in')[0];
+    // Sin nacionalidad por defecto (antes se proponía "Mexicana").
+    assert.equal(labelledControls('Nacionalidad')[0].props.value, '');
+    assert.equal(labelledControls('Tipo de documento *')[0].props.value, 'national_id');
+
+    await act(async () => confirm().props.onClick());
+    assert.deepEqual(shownErrors(), ['El número de documento es obligatorio.']);
+    assert.equal(labelledControls('Número de documento *')[0].props['aria-invalid'], true);
+
+    // Acompañante: nombre y apellido separados con caracteres de nombres reales.
+    act(() => labelledControls('Edad *')[0].props.onChange({ target: { value: 'diez' } }));
+    assert.equal(labelledControls('Edad *')[0].props.value, '', 'la edad solo admite dígitos');
+    fillCheckinCompanion({ firstName: 'Juan💻', lastName: '', documentNumber: '', age: '' });
+    assert.deepEqual(shownErrors(), [
+      'El número de documento es obligatorio.',
+      'Solo se permiten letras, con espacios, guiones o apóstrofos entre ellas.',
+      'Ingresa el apellido.',
+      'Ingresa el número de documento.',
+      'Ingresa la edad.',
+    ]);
+
+    fillCheckinCompanion({ firstName: 'María-José', lastName: "O'Connor", documentNumber: 'P-1' });
+    // Bebé: la edad 0 es válida y no se confunde con un campo vacío.
+    fillCheckinCompanion({
+      firstName: 'Li',
+      lastName: 'Núñez',
+      documentNumber: 'P-2',
+      age: '0',
+      guestType: 'child',
+    });
+    assert.match(text(view.root), /María-José O'Connor · Adulto · P-1 · 30 años/);
+    assert.match(text(view.root), /Li Núñez · Menor · P-2 · 0 años/);
+
+    typeIn(labelledControls('Fecha de nacimiento')[0], nextCalendarDay(hotelToday()));
+    typeIn(labelledControls('Número de documento *')[0], '  1234567890101 ');
+    await act(async () => confirm().props.onClick());
+    assert.deepEqual(shownErrors(), ['La fecha de nacimiento no puede ser futura.']);
+
+    typeIn(labelledControls('Fecha de nacimiento')[0], '1990-05-04');
+    await act(async () => confirm().props.onClick());
+    await act(async () => buttons('Procesando')[0].props.onClick());
+    assert.equal(checkins.length, 1, 'un solo envío mientras se procesa');
+    assert.equal(checkins[0][1].docNumber, '1234567890101');
+    assert.equal(checkins[0][1].docType, 'national_id');
+    assert.deepEqual(
+      checkins[0][2].map(({ name, lastName, guestType, documentType, age }) => ({
+        name,
+        lastName,
+        guestType,
+        documentType,
+        age,
+      })),
+      [
+        {
+          name: 'María-José',
+          lastName: "O'Connor",
+          guestType: 'adult',
+          documentType: 'passport',
+          age: 30,
+        },
+        { name: 'Li', lastName: 'Núñez', guestType: 'child', documentType: 'passport', age: 0 },
+      ],
+    );
+    await act(async () => release());
+  } finally {
+    globalThis.fetch = originalFetchForTest;
+  }
+});
+
+test('check-in (recepción): la composición debe coincidir con adultos y menores declarados', async () => {
+  const checkins = [];
+  const originalFetchForTest = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    act(() => {
+      view = create(
+        <CheckinModal
+          reservation={checkinReservation({
+            bookingId: '33333333-3333-4333-8333-333333333333',
+            adults: 2,
+            children: 0,
+            guest: { ...checkinReservation().guest, docNumber: 'DPI-1' },
+          })}
+          rooms={rooms}
+          hasConflict={() => false}
+          isRoomBlocked={() => false}
+          onClose={() => {}}
+          onCheckin={(...args) => checkins.push(args)}
+        />,
+      );
+    });
+    await settle(700);
+    // Antes se enviaba y el backend respondía 400 sin explicación clara (A3).
+    await act(async () => buttons('check-in')[0].props.onClick());
+    assert.match(
+      text(view.root),
+      /La reserva declara 2 adultos y 0 menores: registra 1 acompañante adulto y 0 menores \(ahora hay 0 y 0\)/,
+    );
+    assert.equal(checkins.length, 0);
+    fillCheckinCompanion({ firstName: 'Mario', lastName: 'López', documentNumber: 'P-9' });
+    await act(async () => buttons('check-in')[0].props.onClick());
+    assert.equal(checkins.length, 1, 'con la composición correcta sí se envía');
+  } finally {
+    globalThis.fetch = originalFetchForTest;
+  }
+});
+
+const adminRoles = [
+  {
+    id: 1,
+    dbId: 'r1',
+    code: 'reception',
+    name: 'Recepción',
+    description: '',
+    permissions: {},
+    permissionKeys: [],
+    userCount: 0,
+  },
+];
+const adminRoomTypes = [
+  {
+    id: 1,
+    dbId: 'rt1',
+    name: 'Deluxe',
+    capacity: 2,
+    description: '',
+    roomFeatureIds: [],
+    features: [],
+    basePrice: 100,
+    status: 'Activo',
+    images: [],
+  },
+];
+
+test('usuarios (administración): nombre y apellido separados, correo, contraseña y un solo envío', async () => {
+  const saved = [];
+  let release;
+  act(() => {
+    view = create(
+      <UserModal
+        user={null}
+        roles={adminRoles}
+        onClose={() => {}}
+        onSave={(user) => {
+          saved.push(user);
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        }}
+      />,
+    );
+  });
+  const submit = () => act(() => buttons('Crear usuario')[0].props.onClick());
+  submit();
+  assert.deepEqual(shownErrors(), [
+    'Ingresa el nombre.',
+    'Ingresa el apellido.',
+    'Ingresa el correo electrónico.',
+    'Ingresa una contraseña temporal.',
+  ]);
+  typeIn(formControl('Nombre'), 'J4ne');
+  typeIn(formControl('Apellido'), 'Doe@');
+  typeIn(formControl('Correo electrónico'), 'ana@');
+  typeIn(formControl('Contraseña temporal'), '1234567');
+  submit();
+  const [firstNameError, lastNameError, emailError, passwordError] = shownErrors();
+  assert.match(firstNameError, /Solo se permiten letras/);
+  assert.match(lastNameError, /Solo se permiten letras/);
+  assert.match(emailError, /formato válido/);
+  assert.equal(passwordError, 'Mínimo 8 caracteres.');
+  assert.equal(formControl('Correo electrónico').props['aria-describedby'], 'user-email-error');
+
+  // Nombre compuesto y apellido compuesto, sin adivinar la división por palabras.
+  typeIn(formControl('Nombre'), '  María   José ');
+  typeIn(formControl('Apellido'), ' Pérez López ');
+  typeIn(formControl('Correo electrónico'), ' ana@aurora.test ');
+  typeIn(formControl('Contraseña temporal'), '12345678');
+  await act(async () => buttons('Crear usuario')[0].props.onClick());
+  await act(async () => buttons('Guardando')[0].props.onClick());
+  assert.equal(saved.length, 1, 'un segundo clic no crea otro usuario');
+  assert.equal(saved[0].firstName, 'María José');
+  assert.equal(saved[0].lastName, 'Pérez López');
+  assert.equal(saved[0].email, 'ana@aurora.test');
+  assert.equal(saved[0].role, 'Recepción');
+  await act(async () => release());
+});
+
+test('usuarios (administración): un nombre guardado que no cumple las reglas no bloquea otros cambios', async () => {
+  const saved = [];
+  const user = {
+    id: 2,
+    dbId: 'u2',
+    name: 'Wu 2 Li',
+    firstName: 'Wu 2',
+    lastName: 'Li',
+    email: 'li@aurora.test',
+    role: 'Recepción',
+    status: 'Activo',
+    lastAccess: '',
+  };
+  act(() => {
+    view = create(
+      <UserModal
+        user={user}
+        roles={adminRoles}
+        onClose={() => {}}
+        onSave={async (next) => {
+          saved.push(next);
+        }}
+      />,
+    );
+  });
+  typeIn(formControl('Estado'), 'Inactivo');
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].firstName, 'Wu 2', 'el dato histórico se conserva sin tocarlo');
+  assert.equal(saved[0].status, 'Inactivo');
+
+  typeIn(formControl('Nombre'), 'Wu 3');
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  assert.equal(shownErrors().length, 1, 'un nombre editado sí se valida');
+  assert.match(shownErrors()[0], /Solo se permiten letras/);
+  assert.equal(saved.length, 1);
+});
+
+test('roles (administración): nombre obligatorio y código de un rol nuevo dentro del límite', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <RoleModal role={null} onClose={() => {}} onSave={async (role) => saved.push(role)} />,
+    );
+  });
+  typeIn(formControl('Nombre del rol'), '    ');
+  await act(async () => buttons('Crear rol')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Ingresa el nombre del rol.']);
+  typeIn(formControl('Nombre del rol'), 'a '.repeat(41));
+  await act(async () => buttons('Crear rol')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Máximo 80 caracteres para un rol nuevo.']);
+  typeIn(formControl('Nombre del rol'), '  Jefe   de turno ');
+  await act(async () => buttons('Crear rol')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].name, 'Jefe de turno');
+  assert.equal(saved[0].code, 'jefe_de_turno');
+});
+
+test('habitaciones (administración): número, piso con número, capacidad entera y tarifa', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <RoomModal
+        room={null}
+        roomTypes={adminRoomTypes}
+        onClose={() => {}}
+        onSave={async (room) => saved.push(room)}
+      />,
+    );
+  });
+  typeIn(formControl('Piso'), 'Planta baja');
+  typeIn(formControl('Capacidad'), '0');
+  typeIn(formControl('Tarifa'), '1e3');
+  assert.equal(formControl('Tarifa').props.value, '1850', 'rechaza notación científica');
+  await act(async () => buttons('Crear habitación')[0].props.onClick());
+  assert.deepEqual(shownErrors(), [
+    'Ingresa el número de habitación.',
+    'Ingresa el piso (ej. 2 o Piso 2).',
+    'Mínimo 1 huésped.',
+  ]);
+  typeIn(formControl('Número'), '  204 ');
+  typeIn(formControl('Piso'), 'Piso 2');
+  typeIn(formControl('Capacidad'), '3');
+  typeIn(formControl('Tarifa'), '1250.5');
+  await act(async () => buttons('Crear habitación')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  const { number, floor, capacity, rate, roomTypeId } = saved[0];
+  assert.deepEqual(
+    { number, floor, capacity, rate, roomTypeId },
+    { number: '204', floor: 'Piso 2', capacity: 3, rate: 1250.5, roomTypeId: 'rt1' },
+  );
+});
+
+test('habitaciones (administración): sin tipos de habitación no se puede guardar', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <RoomModal
+        room={null}
+        roomTypes={[]}
+        onClose={() => {}}
+        onSave={async (room) => saved.push(room)}
+      />,
+    );
+  });
+  assert.equal(formControl('Tipo').props.disabled, true);
+  typeIn(formControl('Número'), '301');
+  await act(async () => buttons('Crear habitación')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Selecciona un tipo de habitación.']);
+  assert.equal(saved.length, 0);
+});
+
+test('promociones (administración): porcentaje de 1 a 100 y fin no anterior al inicio', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <PromoModal promo={null} onClose={() => {}} onSave={async (promo) => saved.push(promo)} />,
+    );
+  });
+  typeIn(formControl('Porcentaje'), '1e2');
+  assert.equal(formControl('Porcentaje').props.value, '10');
+  typeIn(formControl('Porcentaje'), '0');
+  await act(async () => buttons('Crear promoción')[0].props.onClick());
+  assert.deepEqual(shownErrors(), [
+    'Ingresa el nombre de la promoción.',
+    'Ingresa el código.',
+    'Entre 1 y 100.',
+    'Ingresa la fecha de inicio.',
+  ]);
+  typeIn(formControl('Nombre'), 'Estancia larga');
+  typeIn(formControl('Código'), ' AURORA15 ');
+  typeIn(formControl('Porcentaje'), '101');
+  typeIn(formControl('Fecha inicio'), '2026-12-10');
+  typeIn(formControl('Fecha fin'), '2026-12-01');
+  await act(async () => buttons('Crear promoción')[0].props.onClick());
+  assert.deepEqual(shownErrors(), [
+    'Entre 1 y 100.',
+    'La fecha final no puede ser anterior a la inicial.',
+  ]);
+  typeIn(formControl('Porcentaje'), '15');
+  typeIn(formControl('Fecha fin'), '2026-12-10');
+  await act(async () => buttons('Crear promoción')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].code, 'AURORA15');
+  assert.equal(saved[0].percentage, 15);
+});
+
+test('tarifas de temporada (administración): fechas, nombre y tarifa especial obligatoria', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <SeasonRateModal
+        roomTypes={adminRoomTypes}
+        onClose={() => {}}
+        onSave={async (rate) => saved.push(rate)}
+      />,
+    );
+  });
+  typeIn(formControl('Fecha inicio'), '2027-04-05');
+  typeIn(formControl('Fecha fin'), '2027-04-01');
+  await act(async () => buttons('Crear tarifa')[0].props.onClick());
+  assert.deepEqual(shownErrors(), [
+    'Ingresa el nombre de la temporada.',
+    'La fecha final no puede ser anterior a la inicial.',
+    'Ingresa la tarifa especial.',
+  ]);
+  typeIn(formControl('Temporada'), 'Semana Santa');
+  typeIn(formControl('Fecha fin'), '2027-04-12');
+  typeIn(formControl('Tarifa especial'), '2100.75');
+  await act(async () => buttons('Crear tarifa')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].seasonalRate, 2100.75);
+});
+
+test('caja (administración): concepto y monto obligatorios; un rechazo del backend se muestra en el modal', async () => {
+  act(() => {
+    view = create(
+      <CashModal
+        onClose={() => {}}
+        onSave={async () => {
+          throw new Error('La caja está cerrada.');
+        }}
+      />,
+    );
+  });
+  typeIn(formControl('Concepto'), '   ');
+  await act(async () => buttons('Registrar')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Ingresa el concepto.', MONEY_REQUIRED]);
+  assert.equal(formControl('Concepto').props.maxLength, 255);
+  typeIn(formControl('Concepto'), 'Compra de insumos');
+  typeIn(formControl('Monto'), '45.90');
+  await act(async () => buttons('Registrar')[0].props.onClick());
+  assert.ok(text(view.root).includes('La caja está cerrada.'), 'error dentro del modal');
+  assert.equal(buttons('Registrar')[0].props.disabled, false, 'se puede reintentar');
+});
+
+test('inventario (administración): producto existente y cantidad entera mayor a 0', async () => {
+  const saved = [];
+  act(() => {
+    view = create(
+      <MovementModal products={[]} onClose={() => {}} onSave={async (m) => saved.push(m)} />,
+    );
+  });
+  typeIn(formControl('Cantidad'), '0');
+  typeIn(formControl('Cantidad'), '2.5');
+  assert.equal(formControl('Cantidad').props.value, '0');
+  await act(async () => buttons('Registrar')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Selecciona un producto.', 'La cantidad debe ser mayor a 0.']);
+  assert.equal(saved.length, 0);
+});
+
+test('portal del huésped · nueva reserva: mismas reglas de fechas y huéspedes que Recepción', () => {
+  const today = '2026-10-19';
+  const base = {
+    roomTypeId: 'rt',
+    checkIn: '2026-10-20',
+    checkOut: '2026-10-22',
+    adults: '2',
+    children: '0',
+    notes: '',
+  };
+  assert.deepEqual(validateGuestBooking(base, 2, today), {});
+  assert.deepEqual(validateGuestBooking({ ...base, checkIn: '2026-10-18' }, 2, today), {
+    checkIn: 'No puede ser anterior a hoy.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, checkOut: '2026-10-20' }, 2, today), {
+    checkOut: 'La salida debe ser posterior a la entrada.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, checkOut: '2027-01-18' }, 2, today), {});
+  assert.deepEqual(validateGuestBooking({ ...base, checkOut: '2027-01-19' }, 2, today), {
+    checkOut: 'Máximo 90 noches.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, checkIn: '', checkOut: '' }, 2, today), {
+    checkIn: 'Ingresa la fecha de entrada.',
+    checkOut: 'Ingresa la fecha de salida.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, adults: '0' }, 2, today), {
+    adults: 'Mínimo 1 adulto.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, adults: '' }, 2, today), {
+    adults: 'Ingresa la cantidad de adultos.',
+  });
+  assert.match(
+    validateGuestBooking({ ...base, children: '1' }, 2, today).adults,
+    /admite 2 huéspedes como máximo/,
+  );
+  assert.deepEqual(validateGuestBooking({ ...base, notes: 'x'.repeat(1001) }, 2, today), {
+    notes: 'Máximo 1000 caracteres.',
+  });
+  assert.deepEqual(validateGuestBooking({ ...base, roomTypeId: '' }, undefined, today), {
+    roomType: 'Selecciona un tipo de habitación.',
+  });
+});
+
+// --- Auditoría A2/A1/A7/B10/B11: acciones financieras de Recepción ----------
+//
+// Antes: cargos, anulaciones, pagos, depósitos y check-out solo cambiaban el
+// estado de React y se perdían al recargar. Ahora pasan por el backend
+// (simulado con sus reglas: folio obligatorio, sin sobrepagos, check-out con
+// saldo exactamente 0) y la lista se recarga desde él.
+
+const openFolioTab = async () => {
+  const reservation = recReservation();
+  act(() => receptionContent().props.onSelectRes(reservation.id));
+  await act(async () => {
+    buttons('Cuenta / Folio')[0].props.onClick();
+    await settle(50);
+  });
+};
+const clickAria = async (label, ms = 2500) => {
+  const button = view.root.findAll(
+    (node) => node.type === 'button' && node.props['aria-label']?.startsWith(label),
+  )[0];
+  assert.ok(button, `botón ${label}`);
+  await act(async () => {
+    button.props.onClick();
+    await settle(ms);
+  });
+};
+const clickText = async (label, ms = 2500) => {
+  await act(async () => {
+    buttons(label)[0].props.onClick();
+    await settle(ms);
+  });
+};
+const toastText = () => text(view.root);
+
+test('A2 · cargo: se guarda en el backend con folio abierto y sobrevive a la recarga', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), '  Minibar QA ');
+  typeIn(formControl('Monto'), '10.50');
+  await clickText('Agregar cargo', 3000);
+
+  // A1: el folio se abre (idempotente) antes del primer movimiento.
+  assert.equal(recCalls(`/bookings/${REC_BOOKING_ID}/folio/open`).length, 1);
+  assert.deepEqual(recCalls(`/bookings/${REC_BOOKING_ID}/charges`), [
+    {
+      description: 'Minibar QA · (Servicios)',
+      quantity: 1,
+      unitPriceCents: 1050,
+      category: 'consumption',
+    },
+  ]);
+  // La lista del workspace viene del backend: el cargo tiene su id real y el
+  // monto exacto (antes Q10.50 se redondeaba a Q11).
+  const entry = recReservation().folio.find((item) => item.type === 'Cargo');
+  assert.equal(entry.backendId, '00000000-0000-4000-8000-200000000001');
+  assert.equal(entry.amount, 10.5);
+});
+
+test('A2 · anular cargo: llama al backend y el estado anulado persiste', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), 'Lavandería');
+  typeIn(formControl('Monto'), '10');
+  await clickText('Agregar cargo', 3000);
+
+  await openFolioTab();
+  await clickAria('Anular cargo', 50);
+  typeIn(view.root.findByType('textarea'), 'Cargo duplicado');
+  await clickText('Confirmar', 3000);
+
+  assert.deepEqual(recCalls(`/charges/00000000-0000-4000-8000-200000000001/void`), [
+    { reason: 'Cargo duplicado' },
+  ]);
+  assert.equal(recBackend.charges[0].status, 'voided');
+  const entry = recReservation().folio.find(
+    (item) => item.backendId === '00000000-0000-4000-8000-200000000001',
+  );
+  assert.equal(entry.status, 'Anulado');
+  assert.equal(entry.voidReason, 'Cargo duplicado');
+});
+
+test('A7/B10 · pago: método real del backend, sin sobrepago y mensaje en español', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), 'Cena');
+  typeIn(formControl('Monto'), '100');
+  await clickText('Agregar cargo', 3000);
+
+  // Sobrepago: el backend responde 409 y no queda saldo negativo.
+  await openFolioTab();
+  await clickAria('Registrar pago', 50);
+  typeIn(formControl('Monto'), '150');
+  typeIn(formControl('Método'), 'credit_card');
+  await clickText('Confirmar', 1200);
+  assert.equal(recBackend.payments.length, 0);
+  assert.match(toastText(), /El pago supera el saldo pendiente/);
+
+  // Pago exacto con tarjeta de crédito: llega con el método real y persiste.
+  typeIn(formControl('Monto'), '100');
+  await clickText('Confirmar', 3000);
+  assert.equal(recBackend.payments.length, 1);
+  assert.equal(recBackend.payments[0].method, 'credit_card');
+  assert.equal(recBackend.payments[0].amountCents, 10000);
+  const payment = recReservation().folio.find((item) => item.type === 'Pago');
+  assert.equal(payment.backendId, '00000000-0000-4000-8000-300000000001');
+  assert.equal(payment.method, 'Tarjeta');
+});
+
+test('B11 · depósito: queda retenido en el backend y no reduce el saldo', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), 'Spa');
+  typeIn(formControl('Monto'), '50');
+  await clickText('Agregar cargo', 3000);
+
+  await openFolioTab();
+  await clickAria('Depósito', 50);
+  typeIn(formControl('Monto'), '20');
+  typeIn(formControl('Método'), 'bank_transfer');
+  await clickText('Confirmar', 3000);
+
+  assert.equal(recBackend.deposits.length, 1);
+  assert.equal(recBackend.deposits[0].method, 'bank_transfer');
+  assert.equal(recBackend.deposits[0].status, 'held');
+  const deposit = recReservation().folio.find((item) => item.type === 'Depósito');
+  assert.equal(deposit.depositStatus, 'held');
+  assert.match(deposit.concept, /retenido/);
+  // Igual que el backend: el saldo sigue en Q50.00 hasta aplicar el depósito.
+  const totals = receptionContent().props.folioTotals(recReservation().folio);
+  assert.equal(totals.balance, 50);
+});
+
+const addHeldDeposit = async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), 'Spa');
+  typeIn(formControl('Monto'), '50');
+  await clickText('Agregar cargo', 3000);
+  await openFolioTab();
+  await clickAria('Depósito', 50);
+  typeIn(formControl('Monto'), '20');
+  typeIn(formControl('Método'), 'cash');
+  await clickText('Confirmar', 3000);
+  assert.equal(recBackend.deposits[0].status, 'held');
+  await openFolioTab();
+};
+const depositCalls = (action) =>
+  recBackend.requests.filter(({ call }) => call.startsWith('POST') && call.endsWith(`/${action}`));
+
+test('B11 · aplicar depósito: confirma, persiste una vez y reduce el saldo tras el backend', async () => {
+  await addHeldDeposit();
+  await clickAria('Aplicar depósito', 50);
+  // Sin confirmar no se envía nada.
+  assert.equal(depositCalls('apply').length, 0);
+  await act(async () => {
+    buttons('Aplicar')[0].props.onClick();
+    buttons('Aplicar')[0].props.onClick();
+    await settle(3000);
+  });
+  assert.equal(depositCalls('apply').length, 1, 'un doble clic no aplica dos veces');
+  assert.equal(recBackend.deposits[0].status, 'applied');
+  const deposit = recReservation().folio.find((item) => item.type === 'Depósito');
+  assert.equal(deposit.depositStatus, 'applied');
+  assert.equal(receptionContent().props.folioTotals(recReservation().folio).balance, 30);
+  assert.ok(toastText().includes('Depósito aplicado'));
+  // Ya aplicado: no se ofrece aplicar ni devolver otra vez.
+  await openFolioTab();
+  assert.equal(recAriaButtons('Aplicar depósito Q20.00').length, 0);
+  assert.equal(recAriaButtons('Devolver depósito Q20.00').length, 0);
+});
+
+test('B11 · devolver depósito: exige motivo, no cambia el saldo y muestra errores del backend', async () => {
+  await addHeldDeposit();
+  await clickAria('Devolver depósito', 50);
+  const textarea = () =>
+    view.root.find(
+      (node) => node.type === 'textarea' && node.props.placeholder === 'Indica el motivo...',
+    );
+  const confirmButton = () => buttons('Confirmar').at(-1);
+  await act(async () => textarea().props.onChange({ target: { value: '  ' } }));
+  assert.equal(confirmButton().props.disabled, true, 'sin motivo no se devuelve');
+
+  // Si el backend rechaza (p. ej. ya aplicado en otra pestaña) la UI no cambia.
+  recBackend.deposits[0].status = 'applied';
+  await act(async () => textarea().props.onChange({ target: { value: 'Salida sin daños' } }));
+  await act(async () => {
+    confirmButton().props.onClick();
+    await settle(3000);
+  });
+  assert.match(toastText(), /Only held deposits can be refunded|retenid/);
+  assert.equal(
+    recReservation().folio.find((item) => item.type === 'Depósito').depositStatus,
+    'held',
+    'sin éxito del backend no se marca devuelto',
+  );
+
+  recBackend.deposits[0].status = 'held';
+  await act(async () => {
+    confirmButton().props.onClick();
+    await settle(3000);
+  });
+  assert.deepEqual(depositCalls('refund').at(-1).body, { reason: 'Salida sin daños' });
+  assert.equal(recBackend.deposits[0].status, 'refunded');
+  assert.equal(receptionContent().props.folioTotals(recReservation().folio).balance, 50);
+});
+
+test('A2 · check-out: con saldo se informa en español; con saldo 0 se guarda en el backend', async () => {
+  await mountReception({ bookingStatus: 'checked_in' });
+  await openFolioTab();
+  await clickAria('Agregar cargo', 50);
+  typeIn(formControl('Concepto'), 'Desayuno');
+  typeIn(formControl('Monto'), '25');
+  await clickText('Agregar cargo', 3000);
+
+  act(() => receptionContent().props.onSelectRes(recReservation().id));
+  await clickText('Información', 50);
+  await clickAria('Check-out', 50);
+  await clickText('Finalizar check-out', 1200);
+  assert.equal(recBackend.booking.status, 'checked_in', 'no sale con saldo pendiente');
+  assert.match(toastText(), /El saldo de la cuenta debe ser Q0\.00/);
+
+  await openFolioTab();
+  await clickAria('Registrar pago', 50);
+  typeIn(formControl('Monto'), '25');
+  typeIn(formControl('Método'), 'debit_card');
+  await clickText('Confirmar', 3000);
+
+  act(() => receptionContent().props.onSelectRes(recReservation().id));
+  await clickText('Información', 50);
+  await clickAria('Check-out', 50);
+  await clickText('Finalizar check-out', 3000);
+  assert.equal(recBackend.booking.status, 'checked_out');
+  assert.equal(recBackend.account, 'closed');
+  assert.equal(recReservation().status, 'Check-out', 'el estado viene del backend tras recargar');
+});
+
+// --- Fase 1-A: nombres de empleados y acompañantes -------------------------
+
+test('nombres de personas: acepta los ejemplos válidos y rechaza los inválidos sin eliminar caracteres', () => {
+  for (const name of [
+    'José',
+    'María Fernanda',
+    'María José',
+    'José Luis',
+    'Muñoz',
+    'Núñez',
+    'María-José',
+    "O'Connor",
+    'Pérez López',
+    'Li',
+    'José',
+  ]) {
+    assert.equal(validatePersonNamePart(name, 'nombre'), null, name);
+  }
+  for (const name of [
+    'Juan123',
+    'M4ría',
+    'Pedro@',
+    'Ana#',
+    '12345',
+    '@@@',
+    'Juan💻',
+    'María--José',
+    '-Ana',
+    'Ana-',
+    "O''Connor",
+    'Ana\u0000',
+    'Ana‍Lu',
+  ]) {
+    assert.equal(
+      validatePersonNamePart(name, 'nombre'),
+      PERSON_NAME_CHARACTERS,
+      JSON.stringify(name),
+    );
+  }
+  assert.equal(validatePersonNamePart('   ', 'apellido'), 'Ingresa el apellido.');
+  assert.equal(normalizePersonNamePart('  María   José '), 'María José');
+});
+
+test('check-in: la composición exige titular + acompañantes = adultos y menores declarados', () => {
+  assert.equal(companionCompositionError([], 1, 0), null);
+  assert.equal(
+    companionCompositionError([{ guestType: 'adult' }, { guestType: 'child' }], 2, 1),
+    null,
+  );
+  assert.match(companionCompositionError([], 2, 0), /registra 1 acompañante adulto y 0 menores/);
+  assert.match(
+    companionCompositionError([{ guestType: 'adult' }, { guestType: 'adult' }], 2, 0),
+    /ahora hay 2 y 0/,
+  );
 });

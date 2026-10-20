@@ -56,12 +56,41 @@ function decodeJwt(token: string): JwtPayload {
   };
 }
 
-function roleFromAuthorities(authorities: readonly string[]): UserRole {
+/**
+ * Panel operativo de un rol personalizado según sus permisos `navigation.<área>.*`.
+ * Administración y Huésped nunca se derivan: un rol personalizado no obtiene el
+ * panel de administración ni la identidad de huésped por sus etiquetas (B3).
+ */
+const customRoleAreas: Record<string, UserRole> = {
+  recepcion: 'RECEPTION',
+  limpieza: 'HOUSEKEEPING',
+  conserjeria: 'CONCIERGE',
+  'room-service': 'ROOM_SERVICE',
+};
+
+type ResolvedRole = { role: UserRole; roleCode?: string };
+
+function roleFromAuthorities(authorities: readonly string[]): ResolvedRole {
   const authority = authorities.find((item) => item.startsWith('ROLE_'));
   const code = authority?.replace(/^ROLE_/, '').toUpperCase();
-  const role = code ? roleCodes[code] : undefined;
-  if (!role) throw new Error('El token no incluye un rol reconocido para el PMS.');
-  return role;
+  if (!code) throw new Error('El token no incluye un rol reconocido para el PMS.');
+  const role = roleCodes[code];
+  if (role) return { role };
+  // Rol personalizado: conserva su código y elige el panel por sus permisos reales.
+  const areas = new Set(
+    authorities
+      .map((item) => /^navigation\.([a-z-]+)\./.exec(item)?.[1])
+      .filter((area): area is string => Boolean(area)),
+  );
+  const workspaces = [...new Set([...areas].map((area) => customRoleAreas[area]))];
+  if (workspaces.length === 1 && workspaces[0] && areas.size === 1) {
+    return { role: workspaces[0], roleCode: code };
+  }
+  throw new Error(
+    areas.size === 0
+      ? 'Tu rol no tiene secciones asignadas en el PMS. Solicita acceso a Administración.'
+      : 'Tu rol combina varias áreas o un área no disponible para roles personalizados. Solicita a Administración que lo ajuste.',
+  );
 }
 
 function displayNameFromEmail(email: string): string {
@@ -92,7 +121,7 @@ function normalizeAuthResponse(
   const email = payload.sub?.trim().toLowerCase();
   if (!email) throw new Error('El token no incluye la identidad del usuario.');
   const authorities = payload.authorities ?? [];
-  const role = roleFromAuthorities(authorities);
+  const { role, roleCode } = roleFromAuthorities(authorities);
   const issuedAt = payload.iat ? new Date(payload.iat * 1000) : new Date();
   const accessExpiresAt = payload.exp
     ? new Date(payload.exp * 1000)
@@ -103,6 +132,7 @@ function normalizeAuthResponse(
       email,
       name: displayNameFromEmail(email),
       role,
+      ...(roleCode ? { roleCode } : {}),
       createdAt: issuedAt.toISOString(),
     },
     token: response.accessToken,
@@ -143,8 +173,9 @@ function normalizeGuestSession(
   const subject = payload.sub?.trim();
   if (!subject) throw new Error('El token de huésped no incluye la reserva.');
   const authorities = payload.authorities ?? [];
-  const role = roleFromAuthorities(authorities);
-  if (role !== 'GUEST') throw new Error('El acceso recibido no corresponde a un huésped.');
+  const { role, roleCode } = roleFromAuthorities(authorities);
+  if (role !== 'GUEST' || roleCode)
+    throw new Error('El acceso recibido no corresponde a un huésped.');
   const issuedAt = payload.iat ? new Date(payload.iat * 1000) : new Date();
   const accessExpiresAt = payload.exp
     ? new Date(payload.exp * 1000)

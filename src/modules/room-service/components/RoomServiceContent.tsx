@@ -23,6 +23,14 @@ import { inventoryService } from '@/services/inventoryService';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
+import {
+  fieldErrorProps,
+  isWholeNumberInput,
+  validateWholeNumber,
+} from '@/shared/utils/formValidation';
+
+/** Motivos y observaciones de un pedido: límite del backend (notes, @Size(max = 1000)). */
+const ORDER_NOTES_MAX_LENGTH = 1000;
 
 const money = (n: number) =>
   `Q${n.toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -148,6 +156,7 @@ export function RoomServiceContent({
   const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
   const [inventoryItemId, setInventoryItemId] = useState('');
   const [inventoryQuantity, setInventoryQuantity] = useState('1');
+  const [inventoryQuantityError, setInventoryQuantityError] = useState<string | undefined>();
   const [inventoryNotes, setInventoryNotes] = useState('');
   const [inventorySaving, setInventorySaving] = useState(false);
   const [refreshingOrders, setRefreshingOrders] = useState(false);
@@ -224,11 +233,20 @@ export function RoomServiceContent({
   };
 
   const registerInventoryMovement = async () => {
-    const quantity = Number(inventoryQuantity);
-    if (!inventoryItemId || !Number.isInteger(quantity) || quantity <= 0) {
-      onAction('Selecciona un insumo y una cantidad válida');
+    if (inventorySaving) return;
+    // Backend: cantidad entera > 0 (`CreateInventoryMovementRequest`, @Positive).
+    const quantityError = validateWholeNumber(inventoryQuantity, {
+      min: 1,
+      requiredMessage: 'Ingresa la cantidad recibida.',
+      minMessage: 'La cantidad debe ser mayor a 0.',
+    });
+    setInventoryQuantityError(quantityError ?? undefined);
+    if (!inventoryItemId) {
+      onAction('Selecciona un insumo.');
       return;
     }
+    if (quantityError) return;
+    const quantity = Number(inventoryQuantity);
 
     setInventorySaving(true);
     try {
@@ -237,7 +255,7 @@ export function RoomServiceContent({
         type: 'in',
         reason: 'restock',
         quantity,
-        notes: inventoryNotes,
+        notes: inventoryNotes.trim(),
       });
       await loadInventory();
       setInventoryModalOpen(false);
@@ -400,6 +418,7 @@ export function RoomServiceContent({
               <div className="search-box">
                 <Search size={17} />
                 <input
+                  aria-label="Buscar pedidos"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Buscar pedido, habitación, huésped..."
@@ -559,6 +578,8 @@ export function RoomServiceContent({
                 El huésped podrá consultar por qué no fue posible atender su pedido.
               </p>
               <textarea
+                aria-label="Motivo del rechazo"
+                maxLength={ORDER_NOTES_MAX_LENGTH}
                 className="rs-rejection-textarea"
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
@@ -601,6 +622,8 @@ export function RoomServiceContent({
                 El sistema y el huésped conocerán el estado correcto del pedido.
               </p>
               <textarea
+                aria-label="Motivo de la cancelación"
+                maxLength={ORDER_NOTES_MAX_LENGTH}
                 className="rs-rejection-textarea"
                 value={cancelReason}
                 onChange={(e) => setCancelReason(e.target.value)}
@@ -855,14 +878,26 @@ export function RoomServiceContent({
               )}
               <label className="rs-inventory-field">
                 Cantidad recibida
+                {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
                 <input
-                  className="rs-inventory-quantity"
-                  type="number"
-                  min="1"
-                  step="1"
+                  className={`rs-inventory-quantity${inventoryQuantityError ? ' error' : ''}`}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={inventoryQuantity}
-                  onChange={(event) => setInventoryQuantity(event.target.value)}
+                  onChange={(event) => {
+                    if (!isWholeNumberInput(event.target.value)) return;
+                    setInventoryQuantity(event.target.value);
+                    setInventoryQuantityError(undefined);
+                  }}
+                  aria-required="true"
+                  {...fieldErrorProps('rs-inventory-quantity-error', inventoryQuantityError)}
                 />
+                {inventoryQuantityError && (
+                  <span id="rs-inventory-quantity-error" className="hk-form-error">
+                    {inventoryQuantityError}
+                  </span>
+                )}
               </label>
               <label className="rs-inventory-field">
                 Observaciones
@@ -973,6 +1008,7 @@ function RoomServiceOrderModal({
         <label className="rs-note-label">
           Observaciones
           <textarea
+            maxLength={ORDER_NOTES_MAX_LENGTH}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Agrega información sobre la preparación o entrega..."

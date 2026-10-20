@@ -66,6 +66,14 @@ import { cashService } from '@/services/cashService';
 import { catalogService } from '@/services/catalogService';
 import { guestAccountService } from '@/services/guestAccountService';
 import { guestService } from '@/services/guestService';
+import { bookingCompanionService } from '@/services/bookingCompanionService';
+import { describeFrontDeskError } from '@/modules/front-desk/utils/frontDeskErrors';
+import { toDocumentTypeDto } from '@/modules/front-desk/utils/documentTypes';
+import {
+  paymentMethodLabel,
+  toDepositMethod,
+  type FrontDeskPaymentMethod,
+} from '@/modules/front-desk/utils/paymentMethods';
 import { inventoryService } from '@/services/inventoryService';
 import {
   housekeepingService,
@@ -99,6 +107,7 @@ import type { Room } from '@/shared/types/entities/room';
 import type { RoomFeature } from '@/shared/types/entities/room-feature';
 import type { RoomType as RoomTypeModel } from '@/shared/types/entities/room-type';
 import type { ServiceRequest } from '@/shared/types/entities/service-request';
+import type { GuestDocumentTypeDto } from '@/shared/types/entities/guest';
 
 export type RoleId =
   'reception' | 'admin' | 'housekeeping' | 'room-service' | 'concierge' | 'guest';
@@ -262,7 +271,14 @@ export type Companion = {
   name: string;
   lastName: string;
   document: string;
-  age: number;
+  /** Tipo de documento del backend; vacío si no se registró. */
+  documentType: GuestDocumentTypeDto | '';
+  /** Edad capturada en el check-in (el backend no la guarda): null si no se conoce. */
+  age: number | null;
+  /** Adulto o menor: el check-in exige que coincida con lo declarado en la reserva. */
+  guestType: 'adult' | 'child';
+  /** Id del acompañante ya guardado en el backend. */
+  backendId?: string;
 };
 
 export type FolioEntry = {
@@ -276,11 +292,17 @@ export type FolioEntry = {
   method?: PaymentMethod;
   reference?: string;
   voidReason?: string;
+  /** Id del cargo, pago o depósito en el backend (necesario para anularlo o aplicarlo). */
+  backendId?: string;
+  /** Estado real del depósito: solo uno `applied` reduce el saldo del folio. */
+  depositStatus?: 'held' | 'applied' | 'refunded';
 };
 
 export type Reservation = {
   id: number;
   bookingId?: string;
+  /** Huésped titular en el backend (para guardar su documento en el check-in). */
+  guestId?: string;
   roomTypeId?: string;
   code: string;
   /** Código que recepción entrega al huésped para entrar a su portal (INT-12). */
@@ -391,7 +413,8 @@ const parseDbId = (id: string, fallback: number) => {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-const centsToAmount = (cents: number) => Math.round(cents / 100);
+// Sin redondear: Q10.50 debe mostrarse como Q10.50, no como Q11.
+const centsToAmount = (cents: number) => cents / 100;
 const formatGTQ = (amount: number) =>
   `Q${amount.toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -531,6 +554,7 @@ const toCleaningRoom = (
   id: number,
   type: string,
   checklist?: HousekeepingChecklistItem[],
+  checklistId?: string,
 ): CleaningRoom => {
   const status = cleaningStatusLabels[room.housekeepingStatus];
   const done = isCleaningDone(status);
@@ -551,8 +575,25 @@ const toCleaningRoom = (
     startTime: startedAt ? formatDbTime(startedAt) : null,
     endTime: completedAt ? formatDbTime(completedAt) : null,
     duration: formatCleaningDuration(startedAt, completedAt),
+    checklistId,
     checklist: checklist ?? DEFAULT_CLEANING_CHECKLIST.map((label) => ({ label, done })),
   };
+};
+
+/**
+ * Checklist de limpieza de salida activo de cada habitación (creado con `roomId`,
+ * sin solicitud de stayover). El backend permite uno pendiente o en curso por habitación.
+ */
+const activeTurnoverChecklistByRoom = (checklists: HousekeepingChecklist[]) => {
+  const byRoom = new Map<string, HousekeepingChecklist>();
+  for (const checklist of checklists) {
+    if (checklist.serviceRequestId || !checklist.roomId) continue;
+    if (checklist.status !== 'pending' && checklist.status !== 'in_progress') continue;
+    const current = byRoom.get(checklist.roomId);
+    if (!current || checklist.createdAt > current.createdAt)
+      byRoom.set(checklist.roomId, checklist);
+  }
+  return byRoom;
 };
 
 const toCleaningHistoryEntry = (
@@ -618,9 +659,11 @@ function buildHousekeepingState(
     checklists.map((checklist) => [checklist.serviceRequestId, checklist]),
   );
 
-  const cleaningRooms = rooms.map((room, index) =>
-    toCleaningRoom(room, index + 1, getRoomType(room)),
-  );
+  const turnoverChecklists = activeTurnoverChecklistByRoom(checklists);
+  const cleaningRooms = rooms.map((room, index) => {
+    const checklist = turnoverChecklists.get(room.id);
+    return toCleaningRoom(room, index + 1, getRoomType(room), checklist?.items, checklist?.id);
+  });
 
   const guestRequests = stayovers.map((request, index) =>
     toStayoverRequest(
@@ -945,6 +988,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         type: 'Cargo',
         status: charge.status === 'voided' ? 'Anulado' : 'Activo',
         voidReason: charge.voidReason ?? '',
+        backendId: charge.id,
       })),
       ...bookingPayments.map((payment, paymentIndex): FolioEntry => ({
         id: parseDbId(payment.id, 4000 + paymentIndex),
@@ -956,10 +1000,16 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         status: payment.status === 'refunded' || payment.status === 'failed' ? 'Anulado' : 'Activo',
         method: mapPaymentMethod(payment.method),
         reference: payment.transactionReference,
+        backendId: payment.id,
       })),
       ...bookingDeposits.map((deposit, depositIndex): FolioEntry => ({
         id: parseDbId(deposit.id, 6000 + depositIndex),
-        concept: 'Depósito garantía',
+        concept:
+          deposit.status === 'applied'
+            ? 'Depósito aplicado al folio'
+            : deposit.status === 'refunded'
+              ? 'Depósito devuelto'
+              : 'Depósito en garantía (retenido)',
         category: 'Depósito',
         amount: centsToAmount(deposit.amountCents),
         date: toDtoCalendarDate(deposit.collectedAt),
@@ -967,12 +1017,15 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         status: deposit.status === 'refunded' ? 'Anulado' : 'Activo',
         method: mapPaymentMethod(deposit.method),
         reference: deposit.id,
+        backendId: deposit.id,
+        depositStatus: deposit.status,
       })),
     ];
 
     return {
       id: index + 1,
       bookingId: booking.id,
+      guestId: booking.guestId,
       roomTypeId: booking.roomTypeId,
       code: booking.confirmationCode,
       guestLinkCode: booking.guestLinkCode,
@@ -1642,7 +1695,11 @@ function PrivateWorkspaceReady({
   const recFolioTotals = (folio: FolioEntry[]) => {
     const active = folio.filter((f) => f.status === 'Activo');
     const charges = active.filter((f) => f.type === 'Cargo').reduce((s, f) => s + f.amount, 0);
-    const deposits = active.filter((f) => f.type === 'Depósito').reduce((s, f) => s + f.amount, 0);
+    // Igual que el backend: un depósito retenido es garantía y no reduce el saldo;
+    // solo lo reduce el que se aplica al folio.
+    const deposits = active
+      .filter((f) => f.type === 'Depósito' && f.depositStatus === 'applied')
+      .reduce((s, f) => s + f.amount, 0);
     const payments = active.filter((f) => f.type === 'Pago').reduce((s, f) => s + f.amount, 0);
     return { charges, deposits, payments, balance: charges - payments - deposits };
   };
@@ -2360,9 +2417,22 @@ function PrivateWorkspaceReady({
     const room = hkRooms.find((item) => item.id === roomId);
     if (!room) return;
 
+    if (room.checklistId && room.checklist.some((item) => !item.done)) {
+      notify('Marca todos los puntos del checklist antes de finalizar la limpieza.');
+      return;
+    }
+
     try {
       const updated = await housekeepingService.completeCleaning(room.roomId);
-      const checklist = room.checklist.map((item) => ({ ...item, done: true }));
+      // Con la habitación ya limpia se cierra el checklist guardado (si existe).
+      const checklist = room.checklistId
+        ? (
+            await housekeepingService.saveChecklist(room.checklistId, {
+              status: 'completed',
+              items: room.checklist,
+            })
+          ).items
+        : room.checklist.map((item) => ({ ...item, done: true }));
       replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist));
       if (updated.cleaningCompletedAt) {
         const entry = toCleaningHistoryEntry(
@@ -2532,15 +2602,19 @@ function PrivateWorkspaceReady({
     );
 
     try {
-      if (room.checklistId) {
-        await housekeepingService.saveChecklist(room.checklistId, { items: checklist });
-      }
+      // El backend sí guarda el checklist de salida (por roomId): antes solo se
+      // marcaba en pantalla y se perdía al recargar.
+      const saved = room.checklistId
+        ? await housekeepingService.saveChecklist(room.checklistId, { items: checklist })
+        : await housekeepingService.createChecklist({
+            roomId: room.roomId,
+            items: checklist.map((item, position) => ({ ...item, position })),
+          });
       setHkRooms((current) =>
-        current.map((item) => (item.id === roomId ? { ...item, checklist } : item)),
+        current.map((item) =>
+          item.id === roomId ? { ...item, checklistId: saved.id, checklist: saved.items } : item,
+        ),
       );
-      if (!room.checklistId) {
-        notify('Checklist visual actualizado; el backend solo persiste checklists de stayover.');
-      }
     } catch (cause) {
       notifyError(cause);
     }
@@ -2904,10 +2978,35 @@ function PrivateWorkspaceReady({
     return saved;
   };
 
+  /** Recarga reservas, pagos y habitaciones desde el backend (fuente oficial del folio). */
+  const recReloadReception = async () => {
+    try {
+      const data = await loadWorkspaceData(workspaceDataRole);
+      setRecReservationList(data.recReservations);
+      setRecPayments(data.recPayments);
+      setRecRoomList(data.recRooms);
+    } catch (cause) {
+      notifyError(cause);
+    }
+  };
+
+  /** Error del backend de Recepción traducido al español. */
+  const recNotifyError = (cause: unknown) => {
+    notify(describeFrontDeskError(getErrorMessage(cause)));
+  };
+
+  /**
+   * Abre el folio de la reserva si todavía no existe (idempotente). El check-in
+   * del backend no lo abre, y sin folio no se registran cargos ni pagos.
+   */
+  const recEnsureFolio = async (bookingId: string) => {
+    await guestAccountService.openFolio(bookingId);
+  };
+
   const recDoCheckin = async (
     id: number,
-    _updates: Partial<GuestInfo>,
-    _companions: Companion[],
+    updates: Partial<GuestInfo>,
+    companions: Companion[],
     res: Reservation,
     roomId?: string,
   ) => {
@@ -2928,43 +3027,44 @@ function PrivateWorkspaceReady({
 
     try {
       if (roomId) await bookingService.assignRoom(res.bookingId, roomId);
+      // Documento y nacionalidad del titular (antes se descartaban).
+      if (res.guestId && (updates.docNumber || updates.nationality)) {
+        await guestService.updateGuestIdentification(res.guestId, {
+          document_type: toDocumentTypeDto(updates.docType) || undefined,
+          document_number: updates.docNumber,
+          nationality: updates.nationality,
+        });
+      }
+      // El backend exige que los acompañantes guardados coincidan con adultos y
+      // menores declarados; antes no se guardaban y el check-in fallaba con 2 adultos.
+      await bookingCompanionService.saveCompanionsForBooking(
+        res.bookingId,
+        companions.map((companion) => ({
+          id: companion.backendId,
+          first_name: companion.name,
+          last_name: companion.lastName,
+          // El servicio exige tipo de documento: un acompañante sin tipo se informa antes de enviar.
+          document_type: companion.documentType as GuestDocumentTypeDto,
+          document_number: companion.document,
+          guest_type: companion.guestType,
+        })),
+      );
       await bookingService.checkIn(res.bookingId);
     } catch (cause) {
-      notifyError(cause);
+      recNotifyError(cause);
       return;
     }
 
-    const now = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    setRecReservationList((current) =>
-      current.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status: 'Check-in',
-              checkInTime: now,
-              checkIn: res.checkIn,
-              checkOut: res.checkOut,
-              roomNumber: assignedRoom?.number ?? res.roomNumber,
-            }
-          : r,
-      ),
-    );
-    setRecRoomList((current) =>
-      current.map((rm) =>
-        rm.number === (assignedRoom?.number ?? res.roomNumber) ? { ...rm, status: 'Ocupada' } : rm,
-      ),
-    );
     setRecShowCheckin(null);
-    notify(`Check-in realizado · ${res.code}`);
-
     try {
-      const data = await loadWorkspaceData(workspaceDataRole);
-      setRecReservationList(data.recReservations);
-      setRecPayments(data.recPayments);
-      setRecRoomList(data.recRooms);
+      await recEnsureFolio(res.bookingId);
+      notify(`Check-in realizado · ${res.code}`);
     } catch (cause) {
-      notifyError(cause);
+      notify(
+        `Check-in realizado, pero no se pudo abrir la cuenta: ${describeFrontDeskError(getErrorMessage(cause))}`,
+      );
     }
+    await recReloadReception();
   };
 
   const recConfirmReservation = async (id: number) => {
@@ -2987,18 +3087,22 @@ function PrivateWorkspaceReady({
     notify(`Reserva confirmada · ${reservation.code}`);
   };
 
-  const recDoCheckout = (id: number) => {
+  const recDoCheckout = async (id: number) => {
     const res = recReservationList.find((r) => r.id === id);
-    const now = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    setRecReservationList((current) =>
-      current.map((r) => (r.id === id ? { ...r, status: 'Check-out', checkOutTime: now } : r)),
-    );
-    if (res)
-      setRecRoomList((current) =>
-        current.map((rm) => (rm.number === res.roomNumber ? { ...rm, status: 'Limpieza' } : rm)),
-      );
+    if (!res?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+    try {
+      // El backend cierra el folio (saldo exactamente Q0.00) y deja la habitación sucia.
+      await bookingService.checkOut(res.bookingId);
+    } catch (cause) {
+      recNotifyError(cause);
+      return;
+    }
     setRecShowCheckout(null);
-    notify(`Check-out completado · ${res?.code}`);
+    notify(`Check-out completado · ${res.code}`);
+    await recReloadReception();
   };
 
   const recCancelReservation = async (id: number, reason: string) => {
@@ -3028,12 +3132,11 @@ function PrivateWorkspaceReady({
     }
   };
 
-  const recVoidReservation = (id: number, reason: string) => {
-    setRecReservationList((current) =>
-      current.map((r) => (r.id === id ? { ...r, status: 'Anulada', voidReason: reason } : r)),
-    );
+  // "Anular" solo cambiaba el estado en pantalla. No hay anulación en el backend:
+  // cualquier llamada restante usa la cancelación persistente, con su motivo (Fase 4).
+  const recVoidReservation = async (id: number, reason: string) => {
     setRecShowVoid(null);
-    notify('Reserva anulada · conservada para auditoría');
+    await recCancelReservation(id, reason);
   };
 
   const recChangeRoom = async (id: number, newRoomNumber: string) => {
@@ -3058,119 +3161,149 @@ function PrivateWorkspaceReady({
     }
   };
 
-  const recAddCharge = (
+  const recAddCharge = async (
     resId: number,
     concept: string,
     category: string,
     amount: number,
     observation: string,
   ) => {
-    setRecReservationList((current) =>
-      current.map((r) =>
-        r.id === resId
-          ? {
-              ...r,
-              folio: [
-                ...r.folio,
-                {
-                  id: Date.now(),
-                  concept,
-                  category,
-                  amount,
-                  date: toDtoCalendarDate(new Date()),
-                  type: 'Cargo' as const,
-                  status: 'Activo' as const,
-                },
-              ],
-            }
-          : r,
-      ),
-    );
+    const res = recReservationList.find((r) => r.id === resId);
+    if (!res?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+    // El backend no guarda categoría libre ni observación: se conservan en la descripción.
+    const description = [
+      concept,
+      category && category !== 'Otro' ? `(${category})` : '',
+      observation,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    try {
+      await recEnsureFolio(res.bookingId);
+      await guestAccountService.createCharge({
+        booking_id: res.bookingId,
+        description,
+        quantity: 1,
+        unit_price_cents: Math.round(amount * 100),
+        currency: 'GTQ',
+        category: 'consumption',
+      });
+    } catch (cause) {
+      recNotifyError(cause);
+      return;
+    }
     setRecShowCharge(null);
     notify('Cargo agregado a la cuenta');
+    await recReloadReception();
   };
 
-  const recVoidCharge = (resId: number, entryId: number, reason: string) => {
-    setRecReservationList((current) =>
-      current.map((r) =>
-        r.id === resId
-          ? {
-              ...r,
-              folio: r.folio.map((f) =>
-                f.id === entryId ? { ...f, status: 'Anulado' as const, voidReason: reason } : f,
-              ),
-            }
-          : r,
-      ),
-    );
+  const recVoidCharge = async (resId: number, entryId: number, reason: string) => {
+    const res = recReservationList.find((r) => r.id === resId);
+    const entry = res?.folio.find((f) => f.id === entryId && f.type === 'Cargo');
+    if (!res?.bookingId || !entry?.backendId) {
+      notify('El cargo no está vinculado al backend.');
+      return;
+    }
+    try {
+      await guestAccountService.voidCharge(entry.backendId, reason, res.bookingId);
+    } catch (cause) {
+      recNotifyError(cause);
+      return;
+    }
     setRecShowVoidCharge(null);
     notify('Cargo anulado · saldo recalculado');
+    await recReloadReception();
   };
 
-  const recAddPayment = (
+  // B11: el saldo solo cambia tras la respuesta del backend (que evita aplicar o
+  // devolver dos veces); la devolución exige motivo y ambas quedan auditadas.
+  const recDepositAction = async (
+    resId: number,
+    entryId: number,
+    action: 'apply' | 'refund',
+    reason?: string,
+  ): Promise<boolean> => {
+    const res = recReservationList.find((r) => r.id === resId);
+    const entry = res?.folio.find((f) => f.id === entryId && f.type === 'Depósito');
+    if (!res?.bookingId || !entry?.backendId) {
+      notify('El depósito no está vinculado al backend.');
+      return false;
+    }
+    try {
+      if (action === 'apply') {
+        await recEnsureFolio(res.bookingId);
+        await guestAccountService.applyDeposit(res.bookingId, entry.backendId);
+      } else {
+        await guestAccountService.refundDeposit(res.bookingId, entry.backendId, reason);
+      }
+    } catch (cause) {
+      recNotifyError(cause);
+      return false;
+    }
+    notify(action === 'apply' ? 'Depósito aplicado · saldo recalculado' : 'Depósito devuelto');
+    await recReloadReception();
+    return true;
+  };
+
+  const recAddPayment = async (
     resId: number,
     amount: number,
-    method: PaymentMethod,
+    method: FrontDeskPaymentMethod,
     reference: string,
   ) => {
-    setRecReservationList((current) =>
-      current.map((r) =>
-        r.id === resId
-          ? {
-              ...r,
-              folio: [
-                ...r.folio,
-                {
-                  id: Date.now(),
-                  concept: `Pago ${method}`,
-                  category: 'Pago',
-                  amount,
-                  date: toDtoCalendarDate(new Date()),
-                  type: 'Pago' as const,
-                  status: 'Activo' as const,
-                  method,
-                  reference,
-                },
-              ],
-            }
-          : r,
-      ),
-    );
+    const res = recReservationList.find((r) => r.id === resId);
+    if (!res?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+    try {
+      await recEnsureFolio(res.bookingId);
+      // El backend rechaza sobrepagos (409) y exige caja abierta para efectivo.
+      await guestAccountService.createPayment({
+        booking_id: res.bookingId,
+        amount_cents: Math.round(amount * 100),
+        currency: 'GTQ',
+        method,
+        transaction_reference: reference || undefined,
+      });
+    } catch (cause) {
+      recNotifyError(cause);
+      return;
+    }
     setRecShowPayment(null);
-    notify('Pago registrado correctamente');
+    notify(`Pago registrado · ${paymentMethodLabel(method)}`);
+    await recReloadReception();
   };
 
-  const recAddDeposit = (
+  const recAddDeposit = async (
     resId: number,
     amount: number,
-    method: PaymentMethod,
+    method: FrontDeskPaymentMethod,
     reference: string,
   ) => {
-    setRecReservationList((current) =>
-      current.map((r) =>
-        r.id === resId
-          ? {
-              ...r,
-              folio: [
-                ...r.folio,
-                {
-                  id: Date.now(),
-                  concept: 'Depósito / garantía',
-                  category: 'Depósito',
-                  amount,
-                  date: toDtoCalendarDate(new Date()),
-                  type: 'Depósito' as const,
-                  status: 'Activo' as const,
-                  method,
-                  reference,
-                },
-              ],
-            }
-          : r,
-      ),
-    );
+    const res = recReservationList.find((r) => r.id === resId);
+    if (!res?.bookingId) {
+      notify('La reserva no está vinculada al backend.');
+      return;
+    }
+    try {
+      // Queda retenido como garantía: no reduce el saldo hasta aplicarse al folio.
+      await guestAccountService.createDeposit({
+        bookingId: res.bookingId,
+        amountCents: Math.round(amount * 100),
+        method: toDepositMethod(method),
+        notes: reference || undefined,
+      });
+    } catch (cause) {
+      recNotifyError(cause);
+      return;
+    }
     setRecShowDeposit(null);
-    notify('Depósito registrado correctamente');
+    notify('Depósito registrado en garantía');
+    await recReloadReception();
   };
 
   const recAddBlock = (
@@ -3618,6 +3751,7 @@ function PrivateWorkspaceReady({
               showVoidCharge={recShowVoidCharge}
               setShowVoidCharge={setRecShowVoidCharge}
               onVoidCharge={recVoidCharge}
+              onDepositAction={recDepositAction}
               showPayment={recShowPayment}
               setShowPayment={setRecShowPayment}
               onAddPayment={recAddPayment}
@@ -4171,6 +4305,7 @@ function ConciergeContent({
             <div className="search-box">
               <Search size={17} />
               <input
+                aria-label="Buscar"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar solicitud, habitación, huésped..."
@@ -4325,6 +4460,7 @@ function ConciergeContent({
               El huésped podrá consultar por qué no fue posible atender su solicitud.
             </p>
             <textarea
+              aria-label="Motivo del rechazo"
               className="cg-rejection-textarea"
               value={rejectionReason}
               onChange={(event) => setRejectionReason(event.target.value)}
@@ -4371,6 +4507,7 @@ function ConciergeContent({
               La solicitud dejará de atenderse y el huésped verá el motivo.
             </p>
             <textarea
+              aria-label="Motivo de la cancelación"
               className="cg-rejection-textarea"
               value={cancelReason}
               onChange={(event) => setCancelReason(event.target.value)}
@@ -4855,6 +4992,7 @@ function HousekeepingContent({
             <div className="search-box">
               <Search size={17} />
               <input
+                aria-label="Buscar"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar habitación, piso, tipo..."
@@ -5035,6 +5173,7 @@ function HousekeepingContent({
             <div className="search-box">
               <Search size={17} />
               <input
+                aria-label="Buscar"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar habitación o tarea..."
@@ -5435,8 +5574,19 @@ function DefectModal({
       setErrors(e);
       return;
     }
-    onSubmit({ room, category, description: description.trim(), priority, observation });
+    onSubmit({
+      room,
+      category,
+      description: description.trim(),
+      priority,
+      observation: observation.trim(),
+    });
   };
+  const errorProps = (field: string) => ({
+    'aria-invalid': errors[field] ? true : undefined,
+    'aria-describedby': errors[field] ? `defect-${field}-error` : undefined,
+    'aria-required': true,
+  });
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" style={{ width: 440 }} onMouseDown={(e) => e.stopPropagation()}>
@@ -5450,17 +5600,32 @@ function DefectModal({
           </button>
         </div>
         <label className="hk-form-label">
-          Habitación
-          <select className="hk-form-select" value={room} onChange={(e) => setRoom(e.target.value)}>
+          Habitación *
+          <select
+            className={`hk-form-select ${errors.room ? 'error' : ''}`}
+            value={room}
+            disabled={rooms.length === 0}
+            onChange={(e) => {
+              setRoom(e.target.value);
+              setErrors((p) => ({ ...p, room: '' }));
+            }}
+            {...errorProps('room')}
+          >
+            {rooms.length === 0 && <option value="">No hay habitaciones</option>}
             {rooms.map((r) => (
               <option key={r.id} value={r.number}>
                 {r.number} · {r.floor}
               </option>
             ))}
           </select>
+          {errors.room && (
+            <span id="defect-room-error" className="hk-form-error">
+              {errors.room}
+            </span>
+          )}
         </label>
         <label className="hk-form-label">
-          Categoría
+          Categoría *
           <select
             className={`hk-form-select ${errors.category ? 'error' : ''}`}
             value={category}
@@ -5468,6 +5633,7 @@ function DefectModal({
               setCategory(e.target.value);
               setErrors((p) => ({ ...p, category: '' }));
             }}
+            {...errorProps('category')}
           >
             <option value="">Selecciona...</option>
             <option>Plomería</option>
@@ -5476,10 +5642,14 @@ function DefectModal({
             <option>Climatización</option>
             <option>Otro</option>
           </select>
-          {errors.category && <span className="hk-form-error">{errors.category}</span>}
+          {errors.category && (
+            <span id="defect-category-error" className="hk-form-error">
+              {errors.category}
+            </span>
+          )}
         </label>
         <label className="hk-form-label">
-          Descripción
+          Descripción *
           <textarea
             className={`hk-form-textarea ${errors.description ? 'error' : ''}`}
             value={description}
@@ -5488,11 +5658,16 @@ function DefectModal({
               setErrors((p) => ({ ...p, description: '' }));
             }}
             placeholder="Describe el problema encontrado..."
+            {...errorProps('description')}
           />
-          {errors.description && <span className="hk-form-error">{errors.description}</span>}
+          {errors.description && (
+            <span id="defect-description-error" className="hk-form-error">
+              {errors.description}
+            </span>
+          )}
         </label>
         <label className="hk-form-label">
-          Prioridad
+          Prioridad *
           <select
             className={`hk-form-select ${errors.priority ? 'error' : ''}`}
             value={priority}
@@ -5500,6 +5675,7 @@ function DefectModal({
               setPriority(e.target.value);
               setErrors((p) => ({ ...p, priority: '' }));
             }}
+            {...errorProps('priority')}
           >
             <option value="">Selecciona...</option>
             <option>Baja</option>
@@ -5507,7 +5683,11 @@ function DefectModal({
             <option>Alta</option>
             <option>Urgente</option>
           </select>
-          {errors.priority && <span className="hk-form-error">{errors.priority}</span>}
+          {errors.priority && (
+            <span id="defect-priority-error" className="hk-form-error">
+              {errors.priority}
+            </span>
+          )}
         </label>
         <label className="hk-form-label">
           Observación
@@ -6814,6 +6994,7 @@ function TaskTable({
         <div className="search-box">
           <Search size={17} />
           <input
+            aria-label="Buscar"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={

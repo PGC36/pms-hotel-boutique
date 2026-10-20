@@ -400,11 +400,19 @@ export const housekeepingService = {
     );
     return response.items;
   },
-  async createChecklist(data: SaveChecklistPayload & { serviceRequestId: ID }) {
+  /**
+   * Crea un checklist de stayover (`serviceRequestId`) o de limpieza de salida
+   * (`roomId`); el backend exige exactamente uno de los dos.
+   */
+  async createChecklist(
+    data: SaveChecklistPayload &
+      ({ serviceRequestId: ID; roomId?: never } | { roomId: ID; serviceRequestId?: never }),
+  ) {
     const response = await request(
       () =>
         httpClient.post<HousekeepingChecklistResponse>('/housekeeping/checklists', {
           serviceRequestId: data.serviceRequestId,
+          roomId: data.roomId,
           ...toChecklistRequest(data),
         }),
       'No fue posible crear el checklist de limpieza.',

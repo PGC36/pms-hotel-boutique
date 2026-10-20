@@ -211,7 +211,9 @@ export function calculateAccountBalanceCents(bookingId: ID): number {
 
 export function openOrSyncAccountForBooking(booking: BookingDto): GuestAccountDto {
   assertBackendId(booking.id, 'La apertura o sincronizacion local de cuenta');
-  throw new Error('La apertura del folio se ejecuta en el backend durante check-in.');
+  throw new Error(
+    'La apertura del folio se ejecuta en el backend con POST /bookings/{id}/folio/open.',
+  );
 }
 
 export function closeAccountForCheckout(booking: BookingDto): GuestAccountDto {
@@ -239,6 +241,18 @@ export const guestAccountService = {
       if (error instanceof HttpError && error.status === 404) return undefined;
       throw new Error(getHttpErrorMessage(error, 'No fue posible cargar la cuenta del huesped.'));
     }
+  },
+  /**
+   * Abre el folio de la reserva (POST /bookings/{id}/folio/open). Es idempotente:
+   * si ya existe, el backend lo devuelve sin cambios. El check-in no lo abre.
+   */
+  async openFolio(bookingId: ID): Promise<GuestAccount> {
+    assertBackendId(bookingId, 'La apertura de folio');
+    const response = await request(
+      () => httpClient.post<GuestFolioResponse>(`/bookings/${bookingId}/folio/open`),
+      'No fue posible abrir la cuenta del huesped.',
+    );
+    return toGuestAccount(toGuestAccountDto(response));
   },
   async getCharges(): Promise<Charge[]> {
     await simulateLatency();

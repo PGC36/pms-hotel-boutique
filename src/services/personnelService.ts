@@ -70,6 +70,13 @@ const apiRoleToUserRole: Record<string, User['role']> = {
 };
 
 const normalizeRoleCode = (code: string): string => code.trim().toUpperCase();
+/**
+ * Clave de rol que comparten usuarios y roles: los predefinidos con su nombre de
+ * dominio (`reception`, `roomService`) y los personalizados con su código real en
+ * minúsculas. Nunca convierte un rol personalizado en uno predefinido.
+ */
+const toRoleKey = (code: string): string =>
+  apiRoleToUserRole[normalizeRoleCode(code)] ?? code.trim().toLowerCase();
 const toUserRoleDto = (code: string): UserDto['role'] => {
   const role = apiRoleToUserRole[normalizeRoleCode(code)] ?? 'reception';
   return role === 'roomService' ? 'room_service' : role;
@@ -81,6 +88,7 @@ const toUserDto = (api: ApiUser): UserDto => ({
   last_name: api.lastName,
   email: api.email,
   role: toUserRoleDto(api.roleCode),
+  role_code: toRoleKey(api.roleCode),
   status: api.status,
   created_at: api.createdAt,
   updated_at: api.updatedAt,
@@ -118,7 +126,7 @@ const toRoleDto = (api: ApiRole) => {
   const timestamp = new Date().toISOString();
   return {
     id: api.id,
-    code: apiRoleToUserRole[normalizeRoleCode(api.code)] ?? api.code.toLowerCase(),
+    code: toRoleKey(api.code),
     name: api.name,
     permission_ids: api.permissions,
     active: api.active,

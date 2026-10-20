@@ -67,6 +67,10 @@
   resize: vertical;
 }
 
+.adm-checklist-template-field textarea.error {
+  border-color: var(--color-terracotta);
+}
+
 .adm-checklist-template-note {
   margin-bottom: 0;
   color: var(--color-text-muted);

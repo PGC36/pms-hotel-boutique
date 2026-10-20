@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
+import { formatCurrency } from '@/shared/utils/currency';
 import { useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight,
@@ -28,6 +29,7 @@ import type {
 } from '@/private/workspace/PrivateWorkspace';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
 import { formatStayRange } from '@/shared/utils/date';
+import type { FrontDeskPaymentMethod } from '@/modules/front-desk/utils/paymentMethods';
 import {
   getArrivalsForDay,
   getDeparturesForDay,
@@ -43,7 +45,7 @@ import {
   nextCalendarDay,
   validateAvailabilityQuery,
 } from '@/modules/front-desk/utils/reservationFormValidation';
-import { ReservationDetail } from './ReservationDetail';
+import { ReservationDetail, type DepositAction } from './ReservationDetail';
 import {
   BlockModal,
   ChargeModal,
@@ -56,7 +58,8 @@ import {
   RoomChangeModal,
 } from './ReceptionModals';
 
-const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+// Quetzales con el formato único del proyecto (antes se mostraba "$" con formato de México).
+const money = (n: number) => formatCurrency(Math.round(n * 100), 'GTQ');
 const fmtDate = (d: string) =>
   new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
 
@@ -122,6 +125,7 @@ export function ReceptionContent({
   showVoidCharge,
   setShowVoidCharge,
   onVoidCharge,
+  onDepositAction,
   showPayment,
   setShowPayment,
   onAddPayment,
@@ -205,12 +209,28 @@ export function ReceptionContent({
   showVoidCharge: { resId: number; entryId: number } | null;
   setShowVoidCharge: (v: { resId: number; entryId: number } | null) => void;
   onVoidCharge: (resId: number, entryId: number, reason: string) => void;
+  onDepositAction: (
+    resId: number,
+    entryId: number,
+    action: DepositAction,
+    reason?: string,
+  ) => Promise<boolean>;
   showPayment: number | null;
   setShowPayment: (v: number | null) => void;
-  onAddPayment: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddPayment: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   showDeposit: number | null;
   setShowDeposit: (v: number | null) => void;
-  onAddDeposit: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddDeposit: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   showRoomChange: number | null;
   setShowRoomChange: (v: number | null) => void;
   onRoomChange: (id: number, room: string) => void;
@@ -538,6 +558,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -644,16 +667,21 @@ export function ReceptionContent({
         </div>
         <div className="toolbar rc-cal-toolbar">
           <div className="rc-cal-filters">
+            {/* Tipos de las habitaciones cargadas (igual que Disponibilidad), sin opciones inexistentes. */}
             <select
+              aria-label="Filtrar por tipo de habitación"
               value={calFilter.type}
               onChange={(e) => setCalFilter({ ...calFilter, type: e.target.value })}
             >
               <option>Todos</option>
-              <option>Estándar</option>
-              <option>Deluxe</option>
-              <option>Suite</option>
+              {availTypeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
             </select>
             <select
+              aria-label="Filtrar por estado de la reserva"
               value={calFilter.status}
               onChange={(e) => setCalFilter({ ...calFilter, status: e.target.value })}
             >
@@ -664,6 +692,7 @@ export function ReceptionContent({
               <option>Check-out</option>
             </select>
             <select
+              aria-label="Filtrar por habitación"
               value={calFilter.room}
               onChange={(e) => setCalFilter({ ...calFilter, room: e.target.value })}
             >
@@ -804,6 +833,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -873,6 +905,7 @@ export function ReceptionContent({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar reservas"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por código, huésped, habitación..."
@@ -989,6 +1022,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1059,6 +1095,7 @@ export function ReceptionContent({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar huéspedes"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Nombre, teléfono, correo o código de reserva..."
@@ -1114,6 +1151,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1660,6 +1700,9 @@ export function ReceptionContent({
             onRoomChange={() => setShowRoomChange(selectedRes.id)}
             onAddCharge={() => setShowCharge(selectedRes.id)}
             onVoidCharge={(eid) => setShowVoidCharge({ resId: selectedRes.id, entryId: eid })}
+            onDepositAction={(eid, action, reason) =>
+              onDepositAction(selectedRes.id, eid, action, reason)
+            }
             onAddPayment={() => setShowPayment(selectedRes.id)}
             onAddDeposit={() => setShowDeposit(selectedRes.id)}
             onShowInvoice={() => setShowInvoice(selectedRes.id)}
@@ -1785,8 +1828,18 @@ type ModalsArgs = {
     observation: string,
   ) => void;
   onVoidCharge: (resId: number, entryId: number, reason: string) => void;
-  onAddPayment: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
-  onAddDeposit: (resId: number, amount: number, method: PaymentMethod, reference: string) => void;
+  onAddPayment: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
+  onAddDeposit: (
+    resId: number,
+    amount: number,
+    method: FrontDeskPaymentMethod,
+    reference: string,
+  ) => void | Promise<void>;
   onRoomChange: (id: number, room: string) => void;
   folioTotals: (f: FolioEntry[]) => Totals;
 };
@@ -1941,6 +1994,7 @@ function CashResSelectorModal({
           <div className="search-box">
             <Search size={17} />
             <input
+              aria-label="Buscar reserva por huésped o código"
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}

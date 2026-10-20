@@ -121,6 +121,18 @@ export const cashService = {
     const current = await getCurrentSessionOrUndefined();
     return current?.id === id ? current : undefined;
   },
+  /**
+   * B9: cajas abiertas de todos los usuarios (`GET /cash-sessions?status=open`).
+   * Solo Administración; el backend responde 403 al resto.
+   */
+  async getOpenSessions(): Promise<CashSession[]> {
+    try {
+      const response = await httpClient.get<CashSessionResponse[]>('/cash-sessions?status=open');
+      return response.map((item) => toCashSession(toCashSessionDto(item)));
+    } catch (error) {
+      throw new Error(getHttpErrorMessage(error, 'No fue posible cargar las cajas abiertas.'));
+    }
+  },
   async getMovementsBySessionId(sessionId: ID): Promise<CashMovement[]> {
     try {
       const response = await httpClient.get<CashMovementResponse[]>(
@@ -160,6 +172,8 @@ export const cashService = {
       countedBalanceCents?: number;
       responsibleUserId?: ID;
       notes?: string;
+      /** Obligatorio cuando Administración cierra la caja de otro usuario (B9). */
+      reason?: string;
     } = {},
   ): Promise<CashSession> {
     const session = data.sessionId ? undefined : await getCurrentSessionOrUndefined();
@@ -181,6 +195,7 @@ export const cashService = {
         {
           countedBalanceCents: countedBalance,
           notes: data.notes?.trim() || undefined,
+          reason: data.reason?.trim() || undefined,
         },
       );
       return toCashSession(toCashSessionDto(response));

@@ -25,6 +25,10 @@ import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatAmenitySchedule } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights, formatDateGT } from '@/shared/utils/date';
+import {
+  hotelToday,
+  validateStayDates,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import './booking-engine.css';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -132,7 +136,8 @@ export function SearchScreen() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialRange = useMemo<DateRangeValue>(() => {
-    const today = new Date();
+    // Hoy en Guatemala: con la fecha del navegador, otra zona horaria podía proponer ayer.
+    const today = parseDateKey(hotelToday()) ?? new Date();
     return {
       start: parseDateKey(searchParams.get('checkIn')) ?? today,
       end: parseDateKey(searchParams.get('checkOut')) ?? addDays(today, 3),
@@ -197,6 +202,12 @@ export function SearchScreen() {
   const searchAvailability = useCallback(async () => {
     if (!isCompleteStayRange(range)) {
       setRangeError('Selecciona una fecha de entrada y una salida posterior.');
+      return;
+    }
+    // Entrada desde hoy en Guatemala y como máximo 90 noches (mismas reglas que la reserva).
+    const stayError = validateStayDates(dateKey(range.start), dateKey(range.end));
+    if (stayError) {
+      setRangeError(stayError);
       return;
     }
 
@@ -305,7 +316,9 @@ export function SearchScreen() {
             <input
               type="date"
               value={range.start ? dateKey(range.start) : ''}
-              min={dateKey(new Date())}
+              min={hotelToday()}
+              aria-invalid={rangeError ? true : undefined}
+              aria-describedby={rangeError ? 'search-range-error' : undefined}
               onChange={(event) => {
                 setRange((current) => ({ ...current, start: parseDateKey(event.target.value) }));
                 setRangeError(undefined);
@@ -317,7 +330,9 @@ export function SearchScreen() {
             <input
               type="date"
               value={range.end ? dateKey(range.end) : ''}
-              min={range.start ? dateKey(addDays(range.start, 1)) : dateKey(new Date())}
+              min={range.start ? dateKey(addDays(range.start, 1)) : hotelToday()}
+              aria-invalid={rangeError ? true : undefined}
+              aria-describedby={rangeError ? 'search-range-error' : undefined}
               onChange={(event) => {
                 setRange((current) => ({ ...current, end: parseDateKey(event.target.value) }));
                 setRangeError(undefined);
@@ -344,7 +359,11 @@ export function SearchScreen() {
         </button>
       </form>
 
-      {rangeError ? <p className="search-error">{rangeError}</p> : null}
+      {rangeError ? (
+        <p className="search-error" id="search-range-error" role="alert">
+          {rangeError}
+        </p>
+      ) : null}
       {status === 'error' ? (
         <div className="booking-public-state">
           <ErrorState description={error ?? 'Intenta nuevamente.'} onRetry={searchAvailability} />

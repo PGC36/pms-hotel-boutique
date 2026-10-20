@@ -32,7 +32,7 @@ export function PrivateSessionWorkspace({ role, initialNav }: PrivateSessionWork
       sessionName={session.user.name}
       sessionEmail={session.user.email}
       sessionUserId={session.user.id}
-      sessionRoleLabel={roleLabels[session.role]}
+      sessionRoleLabel={session.user.roleCode ?? roleLabels[session.role]}
       onLogout={() => {
         navigate(routePaths.public.home, { replace: true, flushSync: true });
         logout();

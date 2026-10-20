@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
+import { formatCurrency } from '@/shared/utils/currency';
 import { useState } from 'react';
 import {
   Ban,
@@ -21,7 +22,10 @@ import type {
   ReservationStatus,
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
-import { ReservationEditModal } from './ReceptionModals';
+import { ConfirmActionModal, ReasonModal, ReservationEditModal } from './ReceptionModals';
+
+/** B11: aplicar o devolver un depósito retenido; el backend valida estado y saldo. */
+export type DepositAction = 'apply' | 'refund';
 
 const statusClass = (status: ReservationStatus): string =>
   status === 'Pendiente'
@@ -34,7 +38,8 @@ const statusClass = (status: ReservationStatus): string =>
           ? 'success'
           : 'terracotta';
 
-const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+// Quetzales con el formato único del proyecto (antes se mostraba "$" con formato de México).
+const money = (n: number) => formatCurrency(Math.round(n * 100), 'GTQ');
 
 const formatDate = (d: string) =>
   new Date(d + 'T00:00:00').toLocaleDateString('es-MX', {
@@ -54,10 +59,10 @@ export function ReservationDetail({
   onConfirmReservation,
   onCheckout,
   onCancel,
-  onVoid,
   onRoomChange,
   onAddCharge,
   onVoidCharge,
+  onDepositAction,
   onAddPayment,
   onAddDeposit,
   onShowInvoice,
@@ -74,10 +79,13 @@ export function ReservationDetail({
   onConfirmReservation: () => Promise<void>;
   onCheckout: () => void;
   onCancel: () => void;
-  onVoid: () => void;
+  /** Sin uso: "Anular" no tenía persistencia y se retiró (Fase 4). */
+  onVoid?: () => void;
   onRoomChange: () => void;
   onAddCharge: () => void;
   onVoidCharge: (entryId: number) => void;
+  /** Devuelve `true` solo si el backend confirmó la operación. */
+  onDepositAction?: (entryId: number, action: DepositAction, reason?: string) => Promise<boolean>;
   onAddPayment: () => void;
   onAddDeposit: () => void;
   onShowInvoice: () => void;
@@ -101,6 +109,19 @@ export function ReservationDetail({
   const canCheckin = reservation.status === 'Confirmada';
   const canCheckout = reservation.status === 'Check-in';
   const isActive = !['Cancelada', 'Anulada', 'Check-out'].includes(reservation.status);
+  // El backend solo cancela reservas pendientes o confirmadas (Fase 4).
+  const isCancellable = ['Pendiente', 'Confirmada'].includes(reservation.status);
+  const [depositAction, setDepositAction] = useState<{
+    entry: FolioEntry;
+    action: DepositAction;
+  } | null>(null);
+  const runDepositAction = async (reason?: string) => {
+    if (!depositAction || !onDepositAction) return;
+    // Si el backend la rechaza, el modal sigue abierto con el error visible.
+    if (await onDepositAction(depositAction.entry.id, depositAction.action, reason)) {
+      setDepositAction(null);
+    }
+  };
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -327,7 +348,7 @@ export function ReservationDetail({
                   <Wallet size={16} />
                 </button>
               )}
-              {isActive && (
+              {isCancellable && (
                 <button
                   className="button small secondary rc-action-icon-btn"
                   onClick={onCancel}
@@ -335,16 +356,6 @@ export function ReservationDetail({
                   title="Cancelar"
                 >
                   <Ban size={16} />
-                </button>
-              )}
-              {isActive && (
-                <button
-                  className="button small secondary rc-action-icon-btn"
-                  onClick={onVoid}
-                  aria-label="Anular"
-                  title="Anular"
-                >
-                  <TriangleAlert size={16} />
                 </button>
               )}
               {reservation.status === 'Check-out' && (
@@ -404,9 +415,33 @@ export function ReservationDetail({
                       <button
                         className="button small secondary"
                         onClick={() => onVoidCharge(entry.id)}
+                        aria-label={`Anular cargo ${entry.concept}`}
+                        title="Anular cargo"
                       >
                         <Ban size={13} />
                       </button>
+                    ) : entry.type === 'Depósito' &&
+                      entry.depositStatus === 'held' &&
+                      isActive &&
+                      onDepositAction ? (
+                      <span style={{ display: 'inline-flex', gap: 4 }}>
+                        <button
+                          className="button small secondary"
+                          onClick={() => setDepositAction({ entry, action: 'apply' })}
+                          aria-label={`Aplicar depósito ${money(entry.amount)}`}
+                          title="Aplicar al folio"
+                        >
+                          <Check size={13} />
+                        </button>
+                        <button
+                          className="button small secondary"
+                          onClick={() => setDepositAction({ entry, action: 'refund' })}
+                          aria-label={`Devolver depósito ${money(entry.amount)}`}
+                          title="Devolver depósito"
+                        >
+                          <Wallet size={13} />
+                        </button>
+                      </span>
                     ) : (
                       <span />
                     )}
@@ -474,6 +509,25 @@ export function ReservationDetail({
           />
         )}
       </div>
+      {depositAction?.action === 'apply' && (
+        <ConfirmActionModal
+          title="APLICAR DEPÓSITO"
+          label={`Aplicar ${money(depositAction.entry.amount)} al folio`}
+          message="El depósito se descuenta del saldo de la estancia. Una vez aplicado no se puede devolver."
+          confirmLabel="Aplicar"
+          onClose={() => setDepositAction(null)}
+          onConfirm={() => runDepositAction()}
+        />
+      )}
+      {depositAction?.action === 'refund' && (
+        <ReasonModal
+          title="DEVOLVER DEPÓSITO"
+          label={`Devolver ${money(depositAction.entry.amount)}`}
+          tone="warning"
+          onClose={() => setDepositAction(null)}
+          onConfirm={(reason) => runDepositAction(reason)}
+        />
+      )}
     </div>
   );
 }
