@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { act, create } from 'react-test-renderer';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BookingConfirmationScreen } from '@/modules/booking-engine/screens/BookingConfirmationScreen';
 import { BookingFormScreen } from '@/modules/booking-engine/screens/BookingFormScreen';
 import { RoomDetailScreen } from '@/modules/booking-engine/screens/RoomDetailScreen';
@@ -575,26 +575,26 @@ test('RoomDetailScreen: sin disponibilidad deshabilita "Reservar"', async () => 
   assert.equal(reserve.props.disabled, true);
 });
 
-test('BookingConfirmationScreen: muestra "Reserva registrada" y pendiente de confirmación', () => {
-  const confirmation = {
-    confirmationCode: 'BKG-TEST0001',
-    status: 'pending',
-    roomTypeId: ROOM_TYPE_ID,
-    roomTypeName: 'Doble Deluxe',
-    checkIn: CHECK_IN,
-    checkOut: CHECK_OUT,
-    nights: 3,
-    adults: 2,
-    children: 0,
-    rateName: 'Flexible',
-    totalAmountCents: 150000,
-    currency: 'GTQ',
-    guestFirstName: 'Ana',
-    guestLastName: 'Lopez',
-    guestEmail: 'ana@aurora.test',
-    createdAt: '2026-10-05T12:00:00Z',
-  };
+const confirmation = {
+  confirmationCode: 'BKG-TEST0001',
+  status: 'pending',
+  roomTypeId: ROOM_TYPE_ID,
+  roomTypeName: 'Doble Deluxe',
+  checkIn: CHECK_IN,
+  checkOut: CHECK_OUT,
+  nights: 3,
+  adults: 2,
+  children: 0,
+  rateName: 'Flexible',
+  totalAmountCents: 150000,
+  currency: 'GTQ',
+  guestFirstName: 'Ana',
+  guestLastName: 'Lopez',
+  guestEmail: 'ana@aurora.test',
+  createdAt: '2026-10-05T12:00:00Z',
+};
 
+test('BookingConfirmationScreen: muestra "Reserva registrada" y pendiente de confirmación', () => {
   renderAt(
     '/booking/BKG-TEST0001/done',
     '/booking/:bookingId/done',
@@ -608,12 +608,35 @@ test('BookingConfirmationScreen: muestra "Reserva registrada" y pendiente de con
   assert.ok(content.includes('Reserva registrada'));
   assert.ok(content.includes('Pendiente de confirmación por el hotel'));
   assert.ok(!content.includes('Reserva confirmada'));
-  const roomLink = view.root.find((node) => node.type === 'a' && text(node) === 'Ver habitación');
-  const roomUrl = new URL(roomLink.props.href, 'http://localhost');
+  const roomLink = view.root.find((node) => node.type === Link && text(node) === 'Ver habitación');
+  const roomUrl = new URL(roomLink.props.to, 'http://localhost');
   assert.equal(roomUrl.pathname, `/rooms/${ROOM_TYPE_ID}`);
-  assert.equal(roomUrl.searchParams.get('checkIn'), CHECK_IN);
-  assert.equal(roomUrl.searchParams.get('checkOut'), CHECK_OUT);
-  assert.equal(roomUrl.searchParams.get('adults'), '2');
-  assert.equal(roomUrl.searchParams.get('children'), '0');
+  assert.equal(roomUrl.search, '');
+  assert.deepEqual(roomLink.props.state, { publicBookingConfirmation: confirmation });
   assert.equal(requests.length, 0, 'la confirmación no consulta endpoints privados');
+});
+
+test('RoomDetailScreen: desde la confirmación muestra la reserva sin ofrecer otra', async () => {
+  handler = (request) =>
+    pathOf(request) === '/public/room-types' ? json([apiRoomType]) : json([]);
+
+  renderAt(`/rooms/${ROOM_TYPE_ID}`, '/rooms/:roomTypeId', <RoomDetailScreen />, {
+    publicBookingConfirmation: confirmation,
+  });
+  await settle(1200);
+
+  const content = text(view.toJSON());
+  assert.ok(content.includes('Habitación de tu reserva'));
+  assert.ok(content.includes(confirmation.confirmationCode));
+  assert.ok(content.includes(formatCurrency(confirmation.totalAmountCents, confirmation.currency)));
+  assert.ok(
+    !view.root.findAll((node) => node.type === 'button' && text(node) === 'Reservar').length,
+  );
+  assert.ok(!requests.some((request) => pathOf(request) === '/public/availability'));
+  assert.ok(!requests.some((request) => pathOf(request) === '/public/rates'));
+  const returnLink = view.root.find(
+    (node) => node.type === Link && text(node) === 'Volver a mi reserva',
+  );
+  assert.equal(returnLink.props.to, `/booking/${confirmation.confirmationCode}/done`);
+  assert.deepEqual(returnLink.props.state, { publicBookingConfirmation: confirmation });
 });

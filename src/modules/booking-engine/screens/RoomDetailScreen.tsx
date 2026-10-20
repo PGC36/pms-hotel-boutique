@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   publicBookingCatalogService,
   type PublicAvailableRoomType,
+  type PublicBookingConfirmation,
 } from '@/services/publicBookingCatalogService';
 import { Badge } from '@/shared/components/Badge';
 import { Button } from '@/shared/components/Button';
@@ -58,6 +59,11 @@ function parseDateKey(value: string | null): Date | null {
   return date;
 }
 
+function formatBookedDate(value: string): string {
+  const date = parseDateKey(value);
+  return date ? formatDateGT(date) : value;
+}
+
 function isValidStay(checkIn: Date | null, checkOut: Date | null): checkIn is Date {
   if (!checkIn || !checkOut) return false;
   try {
@@ -82,7 +88,15 @@ function findFallbackRate(rates: Rate[], roomTypeId: string): Rate | undefined {
 
 export function RoomDetailScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { roomTypeId } = useParams<'roomTypeId'>();
+  const locationBooking = (
+    location.state as {
+      publicBookingConfirmation?: PublicBookingConfirmation;
+    } | null
+  )?.publicBookingConfirmation;
+  const bookedReservation =
+    locationBooking?.roomTypeId === roomTypeId ? locationBooking : undefined;
   const [searchParams] = useSearchParams();
   const checkIn = parseDateKey(searchParams.get('checkIn'));
   const checkOut = parseDateKey(searchParams.get('checkOut'));
@@ -92,7 +106,7 @@ export function RoomDetailScreen() {
   const checkInKey = hasValidDates ? dateKey(checkIn) : '';
   const checkOutKey = hasValidDates && checkOut ? dateKey(checkOut) : '';
   // Sin fechas válidas y adultos no se consulta disponibilidad ni se inventa.
-  const canQuote = hasValidDates && adults !== null;
+  const canQuote = !bookedReservation && hasValidDates && adults !== null;
 
   const [status, setStatus] = useState<DetailStatus>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -110,12 +124,12 @@ export function RoomDetailScreen() {
     try {
       const [catalog, rates] = await Promise.all([
         publicBookingCatalogService.getRoomTypeCatalog(),
-        publicBookingCatalogService.getRates(),
+        bookedReservation ? Promise.resolve([]) : publicBookingCatalogService.getRates(),
       ]);
 
       setDetail({
         roomType: catalog.roomTypes.find(
-          (roomType) => roomType.id === roomTypeId && roomType.active,
+          (roomType) => roomType.id === roomTypeId && (bookedReservation || roomType.active),
         ),
         features: catalog.features,
         rates,
@@ -125,7 +139,7 @@ export function RoomDetailScreen() {
       setError(cause instanceof Error ? cause.message : 'No fue posible cargar el detalle.');
       setStatus('error');
     }
-  }, [roomTypeId]);
+  }, [bookedReservation, roomTypeId]);
 
   useEffect(() => {
     void loadDetail();
@@ -242,13 +256,25 @@ export function RoomDetailScreen() {
     <section className="content booking-detail-page">
       <div className="booking-detail-heading">
         <div>
-          <p className="eyebrow">Detalle de habitación</p>
+          <p className="eyebrow">
+            {bookedReservation ? 'Habitación de tu reserva' : 'Detalle de habitación'}
+          </p>
           <h1>{detail.roomType.name}</h1>
           <p>{detail.roomType.description}</p>
         </div>
-        <Link className="ui-action" to="/">
-          Cambiar fechas
-        </Link>
+        {bookedReservation ? (
+          <Link
+            className="ui-action"
+            to={`/booking/${bookedReservation.confirmationCode}/done`}
+            state={{ publicBookingConfirmation: bookedReservation }}
+          >
+            Volver a mi reserva
+          </Link>
+        ) : (
+          <Link className="ui-action" to="/">
+            Cambiar fechas
+          </Link>
+        )}
       </div>
 
       <div className="booking-detail-layout">
@@ -292,53 +318,86 @@ export function RoomDetailScreen() {
         </div>
 
         <aside className="booking-rate-card">
-          <h2>Tarifa</h2>
-          {rate ? (
+          {bookedReservation ? (
             <>
-              <p className="booking-rate-name">{rate.name}</p>
-              <p className="booking-rate-price">{formatCurrency(rate.priceCents, rate.currency)}</p>
-              <p className="booking-muted">por noche</p>
+              <h2>Tu reserva</h2>
+              <p className="booking-rate-name">{bookedReservation.rateName}</p>
+              <p className="booking-rate-price">
+                {formatCurrency(bookedReservation.totalAmountCents, bookedReservation.currency)}
+              </p>
+              <p className="booking-muted">Total registrado</p>
+              <div className="booking-rate-summary">
+                <div>
+                  <span>Entrada</span>
+                  <strong>{formatBookedDate(bookedReservation.checkIn)}</strong>
+                </div>
+                <div>
+                  <span>Salida</span>
+                  <strong>{formatBookedDate(bookedReservation.checkOut)}</strong>
+                </div>
+                <div>
+                  <span>Noches</span>
+                  <strong>{bookedReservation.nights}</strong>
+                </div>
+                <div>
+                  <span>Código</span>
+                  <strong>{bookedReservation.confirmationCode}</strong>
+                </div>
+              </div>
             </>
-          ) : canQuote ? null : (
-            <p className="booking-muted">No hay tarifa activa para este tipo de habitación.</p>
+          ) : (
+            <>
+              <h2>Tarifa</h2>
+              {rate ? (
+                <>
+                  <p className="booking-rate-name">{rate.name}</p>
+                  <p className="booking-rate-price">
+                    {formatCurrency(rate.priceCents, rate.currency)}
+                  </p>
+                  <p className="booking-muted">por noche</p>
+                </>
+              ) : canQuote ? null : (
+                <p className="booking-muted">No hay tarifa activa para este tipo de habitación.</p>
+              )}
+              {availabilityMessage ? (
+                <p className="booking-muted" role="status">
+                  {availabilityMessage}
+                </p>
+              ) : null}
+
+              <div className="booking-rate-summary">
+                <div>
+                  <span>Entrada</span>
+                  <strong>{hasValidDates ? formatDateGT(checkIn) : 'Por definir'}</strong>
+                </div>
+                <div>
+                  <span>Salida</span>
+                  <strong>{hasValidDates ? formatDateGT(checkOut!) : 'Por definir'}</strong>
+                </div>
+                <div>
+                  <span>Noches</span>
+                  <strong>{hasValidDates ? nights : 'Por definir'}</strong>
+                </div>
+                <div>
+                  <span>Total estimado</span>
+                  <strong>
+                    {totalAmount !== undefined
+                      ? formatCurrency(totalAmount, rate?.currency)
+                      : 'Por definir'}
+                  </strong>
+                </div>
+              </div>
+
+              <Button
+                disabled={!canBook}
+                onClick={() => {
+                  navigate(bookingUrl);
+                }}
+              >
+                Reservar
+              </Button>
+            </>
           )}
-          {availabilityMessage ? (
-            <p className="booking-muted" role="status">
-              {availabilityMessage}
-            </p>
-          ) : null}
-
-          <div className="booking-rate-summary">
-            <div>
-              <span>Entrada</span>
-              <strong>{hasValidDates ? formatDateGT(checkIn) : 'Por definir'}</strong>
-            </div>
-            <div>
-              <span>Salida</span>
-              <strong>{hasValidDates ? formatDateGT(checkOut!) : 'Por definir'}</strong>
-            </div>
-            <div>
-              <span>Noches</span>
-              <strong>{hasValidDates ? nights : 'Por definir'}</strong>
-            </div>
-            <div>
-              <span>Total estimado</span>
-              <strong>
-                {totalAmount !== undefined
-                  ? formatCurrency(totalAmount, rate?.currency)
-                  : 'Por definir'}
-              </strong>
-            </div>
-          </div>
-
-          <Button
-            disabled={!canBook}
-            onClick={() => {
-              navigate(bookingUrl);
-            }}
-          >
-            Reservar
-          </Button>
         </aside>
       </div>
     </section>

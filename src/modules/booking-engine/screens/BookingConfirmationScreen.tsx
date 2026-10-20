@@ -41,12 +41,6 @@ export function BookingConfirmationScreen() {
   const checkOut = parseDate(booking.checkOut);
   const nights = booking.nights || calculateNights(checkIn, checkOut);
   const guestName = `${booking.guestFirstName} ${booking.guestLastName}`;
-  const roomDetailsParams = new URLSearchParams({
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    adults: String(booking.adults),
-    children: String(booking.children),
-  });
   // El backend crea toda reserva pública como pending; confirmarla le toca al hotel.
   const statusLabel =
     booking.status === 'pending' ? 'Pendiente de confirmación por el hotel' : 'Reserva registrada';
@@ -121,7 +115,8 @@ export function BookingConfirmationScreen() {
           <div className="booking-form-actions">
             <Link
               className="ui-action"
-              to={`/rooms/${booking.roomTypeId}?${roomDetailsParams.toString()}`}
+              to={`/rooms/${booking.roomTypeId}`}
+              state={{ publicBookingConfirmation: booking }}
             >
               Ver habitación
             </Link>

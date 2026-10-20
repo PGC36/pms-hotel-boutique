@@ -134,6 +134,12 @@ disponibilidad de una estadia siempre salen de `/public/availability`; ninguna
 pantalla los calcula. La reserva se crea `pending` y la confirmacion muestra la
 respuesta del POST. Ver `docs/DECISIONES.md`, D-016.
 
+Nota 2026-10-20 (`feature/fixss`): desde la confirmacion, `Ver habitacion`
+abre `/rooms/:roomTypeId` con la respuesta de la reserva en el estado de
+navegacion. Esa vista muestra el tipo de habitacion y el resumen registrado,
+sin volver a consultar disponibilidad ni ofrecer otra reserva. El acceso
+directo a la ruta conserva el detalle comercial normal.
+
 Nota 2026-09-26 (#76): en pantallas orientadas a personas, el nombre completo
 del huesped es la etiqueta primaria cuando puede resolverse por `guestService`;
 `GST-*` se mantiene solo como referencia secundaria.
