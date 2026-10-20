@@ -1982,7 +1982,7 @@ function CashResSelectorModal({
             <p className="eyebrow">SELECCIONAR RESERVA</p>
             <h2>{title}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>

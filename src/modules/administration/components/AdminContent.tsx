@@ -49,7 +49,13 @@ import { inventoryService } from '@/services/inventoryService';
 import { personnelService } from '@/services/personnelService';
 import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
-import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
+import { auditDescription } from '@/modules/administration/utils/auditDescription';
+import {
+  customRoleSelectionError,
+  editableRoleGroups,
+  rolePermissionKeysFromUi,
+  uiPermissionsFromBackend,
+} from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
 import { getUserFacingErrorMessage } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
@@ -128,6 +134,8 @@ type AdminUser = {
   email: string;
   password?: string;
   role: string;
+  /** Id real del rol (resuelto por código): no depende del nombre visible. */
+  roleDbId?: string;
   status: 'Activo' | 'Inactivo';
   lastAccess: string;
 };
@@ -345,138 +353,6 @@ const withFixedAdminPermissions = (permissions: Record<string, boolean>) => ({
   ...Object.fromEntries(ADMIN_ACCESS_PERMISSION_KEYS.map((key) => [key, true])),
 });
 
-const backendPermissionsByAccessKey: Record<string, string[]> = {
-  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: ['bookings.read', 'rooms.read', 'cash.read'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]: [],
-  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: [
-    'rooms.read',
-    'rooms.write',
-    'room-types.read',
-    'room-types.write',
-    'room-features.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: ['rates.read', 'rates.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: ['rates.read', 'rates.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: [
-    'room-service.read',
-    'room-service.write',
-    'concierge.read',
-    'concierge.write',
-    'housekeeping.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: [
-    'bookings.read',
-    'cash.read',
-    'payments.read',
-    'deposits.read',
-    'charges.read',
-  ],
-  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: ['inventory.read', 'inventory.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: ['cash.read', 'cash.write'],
-  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: [],
-  [roleAccessKey('RECEPCIÓN', 'Resumen')]: ['bookings.read', 'guests.read', 'rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Calendario')]: ['bookings.read', 'rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Reservas')]: ['bookings.read', 'bookings.write'],
-  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: ['guests.read', 'guests.write'],
-  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: ['rooms.read', 'rates.read'],
-  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: ['rooms.read'],
-  [roleAccessKey('RECEPCIÓN', 'Caja')]: ['cash.read', 'cash.write'],
-  [roleAccessKey('LIMPIEZA', 'Inicio')]: ['housekeeping.read'],
-  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: ['housekeeping.read', 'rooms.read'],
-  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: ['housekeeping.read', 'housekeeping.write'],
-  [roleAccessKey('LIMPIEZA', 'Historial')]: ['housekeeping.read'],
-  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: ['room-service.read', 'room-service.write'],
-  [roleAccessKey('ROOM SERVICE', 'Menú')]: ['room-service.read'],
-  [roleAccessKey('ROOM SERVICE', 'Historial')]: ['room-service.read'],
-  [roleAccessKey('ROOM SERVICE', 'Inventario')]: ['inventory.read'],
-  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: ['concierge.read', 'concierge.write'],
-  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: ['concierge.read', 'bookings.read'],
-  [roleAccessKey('CONSERJERÍA', 'Historial')]: ['concierge.read'],
-  [roleAccessKey('HUÉSPED', 'Inicio')]: ['guest-portal.home'],
-  [roleAccessKey('HUÉSPED', 'Mis reservas')]: ['guest-portal.reservations'],
-  [roleAccessKey('HUÉSPED', 'Mi estancia')]: ['guest-portal.stay'],
-  [roleAccessKey('HUÉSPED', 'Amenidades')]: ['guest-portal.amenities'],
-  [roleAccessKey('HUÉSPED', 'Conserjería')]: ['guest-portal.requests'],
-  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: ['guest-portal.services'],
-  [roleAccessKey('HUÉSPED', 'Room service')]: ['guest-portal.room-service'],
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]: ['guest-portal.requests'],
-  [roleAccessKey('HUÉSPED', 'Notificaciones')]: ['guest-portal.notifications'],
-};
-
-const adminNavigationPermissionByAccessKey: Record<string, string> = {
-  [roleAccessKey('ADMINISTRACIÓN', 'Dashboard')]: 'navigation.administracion.dashboard',
-  [roleAccessKey('ADMINISTRACIÓN', 'Usuarios y roles')]:
-    'navigation.administracion.usuarios-y-roles',
-  [roleAccessKey('ADMINISTRACIÓN', 'Habitaciones')]: 'navigation.administracion.habitaciones',
-  [roleAccessKey('ADMINISTRACIÓN', 'Tarifas')]: 'navigation.administracion.tarifas',
-  [roleAccessKey('ADMINISTRACIÓN', 'Promociones')]: 'navigation.administracion.promociones',
-  [roleAccessKey('ADMINISTRACIÓN', 'Servicios')]: 'navigation.administracion.servicios',
-  [roleAccessKey('ADMINISTRACIÓN', 'Reportes')]: 'navigation.administracion.reportes',
-  [roleAccessKey('ADMINISTRACIÓN', 'Inventario')]: 'navigation.administracion.inventario',
-  [roleAccessKey('ADMINISTRACIÓN', 'Caja')]: 'navigation.administracion.caja',
-  [roleAccessKey('ADMINISTRACIÓN', 'Auditoría')]: 'navigation.administracion.auditoria',
-  [roleAccessKey('RECEPCIÓN', 'Resumen')]: 'navigation.recepcion.resumen',
-  [roleAccessKey('RECEPCIÓN', 'Calendario')]: 'navigation.recepcion.calendario',
-  [roleAccessKey('RECEPCIÓN', 'Reservas')]: 'navigation.recepcion.reservas',
-  [roleAccessKey('RECEPCIÓN', 'Huéspedes')]: 'navigation.recepcion.huespedes',
-  [roleAccessKey('RECEPCIÓN', 'Disponibilidad')]: 'navigation.recepcion.disponibilidad',
-  [roleAccessKey('RECEPCIÓN', 'Habitaciones')]: 'navigation.recepcion.habitaciones',
-  [roleAccessKey('RECEPCIÓN', 'Caja')]: 'navigation.recepcion.caja',
-  [roleAccessKey('LIMPIEZA', 'Inicio')]: 'navigation.limpieza.inicio',
-  [roleAccessKey('LIMPIEZA', 'Habitaciones')]: 'navigation.limpieza.habitaciones',
-  [roleAccessKey('LIMPIEZA', 'Solicitudes')]: 'navigation.limpieza.solicitudes',
-  [roleAccessKey('LIMPIEZA', 'Historial')]: 'navigation.limpieza.historial',
-  [roleAccessKey('ROOM SERVICE', 'Pedidos activos')]: 'navigation.room-service.pedidos-activos',
-  [roleAccessKey('ROOM SERVICE', 'Menú')]: 'navigation.room-service.menu',
-  [roleAccessKey('ROOM SERVICE', 'Historial')]: 'navigation.room-service.historial',
-  [roleAccessKey('ROOM SERVICE', 'Inventario')]: 'navigation.room-service.inventario',
-  [roleAccessKey('CONSERJERÍA', 'Solicitudes')]: 'navigation.conserjeria.solicitudes',
-  [roleAccessKey('CONSERJERÍA', 'Por habitación')]: 'navigation.conserjeria.por-habitacion',
-  [roleAccessKey('CONSERJERÍA', 'Historial')]: 'navigation.conserjeria.historial',
-  [roleAccessKey('HUÉSPED', 'Inicio')]: 'navigation.huesped.inicio',
-  [roleAccessKey('HUÉSPED', 'Mis reservas')]: 'navigation.huesped.mis-reservas',
-  [roleAccessKey('HUÉSPED', 'Mi estancia')]: 'navigation.huesped.mi-estancia',
-  [roleAccessKey('HUÉSPED', 'Amenidades')]: 'navigation.huesped.amenidades',
-  [roleAccessKey('HUÉSPED', 'Conserjería')]: 'navigation.huesped.conserjeria',
-  [roleAccessKey('HUÉSPED', 'Limpieza y artículos')]: 'navigation.huesped.servicios-de-habitacion',
-  [roleAccessKey('HUÉSPED', 'Room service')]: 'navigation.huesped.room-service',
-  [roleAccessKey('HUÉSPED', 'Mis solicitudes y pedidos')]:
-    'navigation.huesped.mis-solicitudes-y-pedidos',
-  [roleAccessKey('HUÉSPED', 'Notificaciones')]: 'navigation.huesped.notificaciones',
-};
-
-const uiPermissionsFromBackend = (role: Role): Record<string, boolean> => {
-  if (role.permissionIds.length === 0) {
-    const fallbackPermissions = getRoleDashboardPermissions(role.code);
-    return normalizeRoleCode(role.code) === 'admin'
-      ? withFixedAdminPermissions(fallbackPermissions)
-      : fallbackPermissions;
-  }
-  const granted = new Set(role.permissionIds);
-  const hasConfiguredNavigation = granted.has('navigation.configured');
-  if (normalizeRoleCode(role.code) === 'admin' || hasConfiguredNavigation) {
-    const navigationPermissions = Object.fromEntries(
-      ALL_PERMISSIONS.map((key) => {
-        const permission = adminNavigationPermissionByAccessKey[key];
-        return [key, permission ? granted.has(permission) : false];
-      }),
-    );
-    return normalizeRoleCode(role.code) === 'admin'
-      ? withFixedAdminPermissions(navigationPermissions)
-      : navigationPermissions;
-  }
-  const permissions = Object.fromEntries(
-    ALL_PERMISSIONS.map((key) => {
-      const backendKeys = backendPermissionsByAccessKey[key] ?? [];
-      return [
-        key,
-        backendKeys.length === 0 ? false : backendKeys.some((item) => granted.has(item)),
-      ];
-    }),
-  ) as Record<string, boolean>;
-  return permissions;
-};
-
 const reportTabsByGroup: Record<ReportGroup, AdminReportTab[]> = {
   'Resumen operativo': ['Ocupación', 'Reservas', 'Cancelaciones'],
   'Reportes financieros': ['Ingresos'],
@@ -573,18 +449,6 @@ const roleDisplayName = (role?: Role) => {
     roomService: 'Room Service',
   };
   return labels[normalizeRoleCode(role.code)] ?? role.name;
-};
-
-const getRoleDashboardPermissions = (roleCode: string) => {
-  const normalized = normalizeRoleCode(roleCode);
-  return Object.fromEntries(
-    ROLE_ACCESS_GROUPS.flatMap((group) =>
-      group.items.map((item) => [
-        roleAccessKey(group.name, item),
-        normalized === 'admin' || (group.roleCodes as readonly string[]).includes(normalized),
-      ]),
-    ),
-  ) as Record<string, boolean>;
 };
 
 const roomStatusLabel = (
@@ -693,6 +557,7 @@ const adminUserFromAdminRoles = (user: User, roles: AdminRole[], index: number):
     lastName: user.lastName,
     email: user.email,
     role: role?.name ?? roleKey,
+    roleDbId: role?.dbId,
     status: user.status === 'active' ? 'Activo' : 'Inactivo',
     lastAccess: toDtoCalendarDate(user.updatedAt),
   };
@@ -798,11 +663,41 @@ const AUDIT_ACTION_LABELS: Record<KnownAuditAction, string> = {
 
 const dashboardPeriodOptions: DashboardPeriod[] = ['Hoy', '7 días', '30 días', '90 días'];
 const reportPeriodOptions: ReportPeriod[] = ['Día', 'Semana', 'Mes', 'Año', 'Temporada'];
+/** Módulos y acciones que registra el backend (AuditTrail) además del vocabulario base. */
+const AUDIT_MODULE_EXTRA_LABELS: Record<string, string> = {
+  folio: 'Folio',
+  payments: 'Pagos',
+  deposits: 'Depósitos',
+  roles: 'Roles',
+  demo_seed: 'Datos de demostración',
+};
+const AUDIT_ACTION_EXTRA_LABELS: Record<string, string> = {
+  created: 'Creación',
+  cancel: 'Cancelación',
+  close_exceptional: 'Cierre excepcional',
+  charge_create: 'Cargo',
+  charge_void: 'Anulación de cargo',
+  payment_create: 'Pago',
+  deposit_create: 'Depósito',
+  deposit_apply: 'Aplicación de depósito',
+  deposit_refund: 'Devolución de depósito',
+  user_password_change: 'Cambio de contraseña',
+  user_role_change: 'Cambio de rol',
+  user_status_change: 'Cambio de estado',
+  role_create: 'Creación de rol',
+  role_update: 'Actualización de rol',
+  role_permissions_replace: 'Cambio de permisos',
+};
+
 const auditModuleLabel = (module: AuditModule) =>
-  module in AUDIT_MODULE_LABELS ? AUDIT_MODULE_LABELS[module as KnownAuditModule] : module;
+  module in AUDIT_MODULE_LABELS
+    ? AUDIT_MODULE_LABELS[module as KnownAuditModule]
+    : (AUDIT_MODULE_EXTRA_LABELS[module] ?? module);
 
 const auditActionLabel = (action: AuditAction) =>
-  action in AUDIT_ACTION_LABELS ? AUDIT_ACTION_LABELS[action as KnownAuditAction] : action;
+  action in AUDIT_ACTION_LABELS
+    ? AUDIT_ACTION_LABELS[action as KnownAuditAction]
+    : (AUDIT_ACTION_EXTRA_LABELS[action] ?? action);
 
 /*
 const dashboardSeries: Record<
@@ -1170,7 +1065,11 @@ function AdminToolbar({
         </div>
       )}
       {onAction && (
-        <button className="icon-btn" onClick={() => onAction('Más filtros abiertos')}>
+        <button
+          className="icon-btn"
+          aria-label="Más filtros"
+          onClick={() => onAction('Más filtros abiertos')}
+        >
           <Settings size={18} />
         </button>
       )}
@@ -1210,17 +1109,23 @@ function StatusSwitch({
   checked,
   label,
   onChange,
+  disabled = false,
+  disabledReason,
 }: {
   checked: boolean;
   label: string;
   onChange: () => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   return (
     <button
       type="button"
       className={`adm-status-switch ${checked ? 'on' : ''}`}
       aria-label={label}
-      title={label}
+      aria-pressed={checked}
+      title={disabled && disabledReason ? disabledReason : label}
+      disabled={disabled}
       onClick={onChange}
     >
       <span />
@@ -1357,7 +1262,7 @@ function buildAuditEntries(logs: AuditLog[], users: User[]): AuditEntry[] {
     time: formatDbTime(entry.occurredAt),
     module: auditModuleLabel(entry.module),
     action: auditActionLabel(entry.action),
-    description: `${entry.entityType} ${entry.entityId}`,
+    description: auditDescription(entry.entityType, entry.entityId, entry.details),
   }));
 }
 
@@ -1366,11 +1271,14 @@ export function AdminContent({
   onAction,
   onNavigate,
   onRolePermissionsChange,
+  currentUserEmail,
 }: {
   nav: string;
   onAction: (message: string) => void;
   onNavigate?: (nav: string) => void;
   onRolePermissionsChange?: (roleCode: string, permissions: Record<string, boolean>) => void;
+  /** Correo de la sesión: la propia cuenta no se puede desactivar. */
+  currentUserEmail?: string;
 }) {
   const [screen, setScreen] = useState<ScreenState>({ status: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
@@ -1604,6 +1512,7 @@ export function AdminContent({
       onNavigate={onNavigate}
       onRefresh={() => setReloadKey((current) => current + 1)}
       onRolePermissionsChange={onRolePermissionsChange}
+      currentUserEmail={currentUserEmail}
       initialAdminUsers={screen.users}
       initialAdminRoles={screen.roles}
       initialAdminRooms={screen.rooms}
@@ -1630,6 +1539,7 @@ function AdminContentReady({
   onNavigate,
   onRefresh,
   onRolePermissionsChange,
+  currentUserEmail,
   initialAdminUsers,
   initialAdminRoles,
   initialAdminRooms,
@@ -1652,6 +1562,7 @@ function AdminContentReady({
   onNavigate?: (nav: string) => void;
   onRefresh: () => void;
   onRolePermissionsChange?: (roleCode: string, permissions: Record<string, boolean>) => void;
+  currentUserEmail?: string;
   initialAdminUsers: AdminUser[];
   initialAdminRoles: AdminRole[];
   initialAdminRooms: AdminRoom[];
@@ -1680,6 +1591,28 @@ function AdminContentReady({
   const [rsItems, setRsItems] = useState(initialRoomServiceItems);
   const [deletingRsId, setDeletingRsId] = useState<string | null>(null);
   const [pendingDeleteRsItem, setPendingDeleteRsItem] = useState<RoomServiceItem | null>(null);
+  const [pendingDeactivateUser, setPendingDeactivateUser] = useState<AdminUser | null>(null);
+  const [changingUserStatusId, setChangingUserStatusId] = useState<string | null>(null);
+
+  const changeUserStatus = async (target: AdminUser, status: 'active' | 'inactive') => {
+    setChangingUserStatusId(target.dbId);
+    try {
+      const updated = await personnelService.updateUser(target.dbId, {
+        roleId: target.roleDbId ?? roleIdFromDisplay(roles, target.role),
+        status,
+      });
+      setUsers((current) =>
+        current.map((item, index) =>
+          item.dbId === target.dbId ? adminUserFromAdminRoles(updated, roles, index) : item,
+        ),
+      );
+      onAction(status === 'inactive' ? 'Usuario desactivado' : 'Usuario activado');
+    } catch (error) {
+      onAction(serviceErrorMessage(error));
+    } finally {
+      setChangingUserStatusId(null);
+    }
+  };
   const [inventory, setInventory] = useState(initialInventory);
   const [movements, setMovements] = useState(initialMovements);
   const [cashMovements, setCashMovements] = useState(initialCashMovements);
@@ -2245,6 +2178,22 @@ function AdminContentReady({
     });
     return (
       <>
+        <ConfirmDialog
+          open={pendingDeactivateUser !== null}
+          title="Desactivar usuario"
+          description={`¿Seguro que quieres desactivar a ${pendingDeactivateUser?.name ?? ''} (${pendingDeactivateUser?.email ?? ''})? No podrá iniciar sesión hasta que lo vuelvas a activar.`}
+          confirmLabel="Desactivar"
+          pendingLabel="Desactivando..."
+          pending={
+            pendingDeactivateUser !== null && changingUserStatusId === pendingDeactivateUser.dbId
+          }
+          onClose={() => setPendingDeactivateUser(null)}
+          onConfirm={async () => {
+            if (!pendingDeactivateUser) return;
+            await changeUserStatus(pendingDeactivateUser, 'inactive');
+            setPendingDeactivateUser(null);
+          }}
+        />
         {usersSection === 'Gestión de usuarios' && (
           <div className="panel">
             <div className="panel-heading">
@@ -2301,23 +2250,19 @@ function AdminContentReady({
                       <StatusSwitch
                         checked={u.status === 'Activo'}
                         label={u.status === 'Activo' ? 'Desactivar usuario' : 'Activar usuario'}
-                        onChange={async () => {
-                          try {
-                            const updated = await personnelService.updateUser(u.dbId, {
-                              roleId: roleIdFromDisplay(roles, u.role),
-                              status: u.status === 'Activo' ? 'inactive' : 'active',
-                            });
-                            setUsers((current) =>
-                              current.map((item, index) =>
-                                item.dbId === u.dbId
-                                  ? adminUserFromAdminRoles(updated, roles, index)
-                                  : item,
-                              ),
-                            );
-                            onAction('Usuario actualizado correctamente');
-                          } catch (error) {
-                            onAction(serviceErrorMessage(error));
+                        disabled={
+                          changingUserStatusId === u.dbId ||
+                          (u.status === 'Activo' &&
+                            Boolean(currentUserEmail) &&
+                            u.email.toLowerCase() === currentUserEmail?.toLowerCase())
+                        }
+                        disabledReason="No puedes desactivar tu propia cuenta"
+                        onChange={() => {
+                          if (u.status === 'Activo') {
+                            setPendingDeactivateUser(u);
+                            return;
                           }
+                          void changeUserStatus(u, 'active');
                         }}
                       />
                     </td>
@@ -2448,7 +2393,11 @@ function AdminContentReady({
               try {
                 const isEditingProtectedAdminRole =
                   editRole !== null && normalizeRoleCode(editRole.code) === 'admin';
-                const nextPermissionKeys = rolePermissionKeysFromUi(r.code, r.permissions);
+                const nextPermissionKeys = rolePermissionKeysFromUi(
+                  r.code,
+                  r.permissions,
+                  editRole?.permissionKeys ?? [],
+                );
                 let saved = editRole
                   ? await personnelService.updateRole(editRole.dbId, { name: r.name })
                   : await personnelService.createRole({
@@ -4578,6 +4527,8 @@ export function RoleModal({
   onSave: (r: AdminRole) => void | Promise<void>;
 }) {
   const isProtectedAdminRole = normalizeRoleCode(role?.code ?? '') === 'admin';
+  const editableGroups = editableRoleGroups(role?.code);
+  const [permissionsError, setPermissionsError] = useState<string | undefined>();
   const [name, setName] = useState(role?.name ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
   const [permissions, setPermissions] = useState<Record<string, boolean>>(
@@ -4589,6 +4540,8 @@ export function RoleModal({
   );
   const setGroupPermissions = (group: (typeof ROLE_ACCESS_GROUPS)[number], selected: boolean) => {
     if (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) return;
+    if (!editableGroups.includes(group.name)) return;
+    setPermissionsError(undefined);
     setPermissions((current) => ({
       ...current,
       ...Object.fromEntries(group.items.map((p) => [roleAccessKey(group.name, p), selected])),
@@ -4607,6 +4560,9 @@ export function RoleModal({
         : null);
     setNameError(error ?? undefined);
     if (error) return;
+    const selectionError = customRoleSelectionError(role?.code, permissions);
+    setPermissionsError(selectionError ?? undefined);
+    if (selectionError) return;
     const finalPermissions = isProtectedAdminRole
       ? withFixedAdminPermissions(permissions)
       : permissions;
@@ -4670,7 +4626,10 @@ export function RoleModal({
                   <button
                     type="button"
                     className="button secondary"
-                    disabled={isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME}
+                    disabled={
+                      (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) ||
+                      !editableGroups.includes(group.name)
+                    }
                     onClick={() => setGroupPermissions(group, true)}
                   >
                     Seleccionar todo
@@ -4678,7 +4637,10 @@ export function RoleModal({
                   <button
                     type="button"
                     className="button secondary"
-                    disabled={isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME}
+                    disabled={
+                      (isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME) ||
+                      !editableGroups.includes(group.name)
+                    }
                     onClick={() => setGroupPermissions(group, false)}
                   >
                     Deseleccionar todo
@@ -4689,19 +4651,26 @@ export function RoleModal({
                 const key = roleAccessKey(group.name, p);
                 const isLockedAdminPermission =
                   isProtectedAdminRole && group.name === ADMIN_ACCESS_GROUP_NAME;
+                const isOutsideRoleArea = !editableGroups.includes(group.name);
                 const checked = isLockedAdminPermission ? true : permissions[key];
                 return (
                   <button
                     type="button"
                     key={key}
                     className={`adm-perm-toggle ${checked ? 'on' : ''}`}
-                    disabled={isLockedAdminPermission}
+                    disabled={isLockedAdminPermission || isOutsideRoleArea}
+                    aria-pressed={Boolean(checked)}
                     title={
                       isLockedAdminPermission
                         ? 'El grupo Administración permanece habilitado para este rol.'
-                        : undefined
+                        : isOutsideRoleArea
+                          ? 'Esta área no está disponible para este rol.'
+                          : undefined
                     }
-                    onClick={() => setPermissions((cur) => ({ ...cur, [key]: !cur[key] }))}
+                    onClick={() => {
+                      setPermissionsError(undefined);
+                      setPermissions((cur) => ({ ...cur, [key]: !cur[key] }));
+                    }}
                   >
                     <span className="adm-perm-check">{checked && <Check size={12} />}</span>
                     <span>{p}</span>
@@ -4711,6 +4680,7 @@ export function RoleModal({
             </div>
           ))}
         </div>
+        <FieldError id="role-permissions-error" error={permissionsError} />
       </label>
     </AdminModal>
   );

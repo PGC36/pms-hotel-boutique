@@ -1,3 +1,4 @@
+import { auditDescription } from '@/modules/administration/utils/auditDescription';
 import assert from 'node:assert/strict';
 import { test, beforeEach, afterEach } from 'node:test';
 import { create, act } from 'react-test-renderer';
@@ -5,8 +6,12 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { router as configuredRouter } from '@/app/router';
 import {
   rolePermissionsFromBackendRoles,
+  customRoleSelectionError,
+  customRoleWorkspace,
+  editableRoleGroups,
   rolePermissionKeysFromUi,
   rolePermissionsFromSessionPermissions,
+  uiPermissionsFromBackend,
 } from '@/modules/administration/utils/rolePermissions';
 import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { authService, sessionStorageKey } from '@/modules/auth/services/auth-service';
@@ -762,7 +767,8 @@ test('ADMIN keeps its administration group fixed and reads other views from navi
       'bookings.read',
     ]),
   ]).concierge;
-  assert.equal(configuredConcierge['ADMINISTRACIÓN::Dashboard'], true);
+  // P4: la pantalla muestra lo que verá la sesión; Conserjería no abre Administración.
+  assert.equal(configuredConcierge['ADMINISTRACIÓN::Dashboard'], false);
   assert.equal(configuredConcierge['CONSERJERÍA::Solicitudes'], true);
   assert.equal(configuredConcierge['CONSERJERÍA::Por habitación'], false);
   assert.equal(configuredConcierge['CONSERJERÍA::Historial'], false);
@@ -1313,4 +1319,195 @@ test('al vencer el token del huésped se le pide de nuevo el acceso', async () =
   });
   assert.equal(router.state.location.pathname, '/auth/register');
   assert.ok(text().includes('Tu acceso venció'));
+});
+
+// --- P4/P5: roles personalizados coherentes entre administración, login y backend ----
+
+const RECEPTION_BUILT_IN = [
+  'booking-companions.read',
+  'booking-companions.write',
+  'bookings.check-in',
+  'bookings.check-out',
+  'bookings.read',
+  'bookings.write',
+  'cash.read',
+  'cash.write',
+  'charges.read',
+  'charges.write',
+  'concierge.read',
+  'concierge.write',
+  'deposits.read',
+  'deposits.write',
+  'folios.read',
+  'folios.write',
+  'guests.read',
+  'guests.write',
+  'payments.read',
+  'payments.write',
+  'rates.read',
+  'room-features.read',
+  'room-service.read',
+  'room-service.write',
+  'room-types.read',
+  'rooms.read',
+  'service-requests.read',
+  'service-requests.write',
+];
+const HOUSEKEEPING_BUILT_IN = [
+  'housekeeping.read',
+  'housekeeping.write',
+  'rooms.read',
+  'service-requests.read',
+  'service-requests.write',
+];
+const allOf = (group, items) =>
+  Object.fromEntries(items.map((item) => [`${group}::${item}`, true]));
+const operational = (keys) => keys.filter((key) => !key.startsWith('navigation.')).sort();
+
+test('P4: un rol personalizado sin secciones no muestra ninguna (el login lo rechaza)', () => {
+  const sections = uiPermissionsFromBackend({
+    code: 'it_fin',
+    permissionIds: ['payments.read', 'bookings.read'],
+  });
+  assert.ok(
+    Object.values(sections).every((enabled) => !enabled),
+    JSON.stringify(sections),
+  );
+  assert.equal(customRoleWorkspace(['payments.read']), null);
+});
+
+test('P4: un rol personalizado muestra solo lo que su sesión verá', () => {
+  const keys = [
+    'navigation.configured',
+    'navigation.recepcion.reservas',
+    'bookings.read',
+    'bookings.write',
+  ];
+  assert.equal(customRoleWorkspace(keys), 'reception');
+  assert.deepEqual(
+    uiPermissionsFromBackend({ code: 'recepcion_nocturna', permissionIds: keys }),
+    rolePermissionsFromSessionPermissions('reception', keys),
+  );
+  const mixed = [...keys, 'navigation.limpieza.inicio', 'housekeeping.read'];
+  assert.equal(customRoleWorkspace(mixed), null, 'dos áreas: sin panel');
+  assert.ok(
+    Object.values(uiPermissionsFromBackend({ code: 'mixto', permissionIds: mixed })).every(
+      (v) => !v,
+    ),
+  );
+});
+
+test('P4: el editor limita las áreas y rechaza combinar áreas en roles personalizados', () => {
+  assert.deepEqual(editableRoleGroups('reception'), ['RECEPCIÓN']);
+  assert.deepEqual(editableRoleGroups('room_service'), ['ROOM SERVICE']);
+  assert.ok(editableRoleGroups('admin').includes('HUÉSPED'));
+  assert.deepEqual(editableRoleGroups(undefined), [
+    'RECEPCIÓN',
+    'LIMPIEZA',
+    'ROOM SERVICE',
+    'CONSERJERÍA',
+  ]);
+  assert.ok(!editableRoleGroups('it_custom').includes('ADMINISTRACIÓN'));
+  assert.match(
+    customRoleSelectionError(undefined, { 'RECEPCIÓN::Reservas': true, 'LIMPIEZA::Inicio': true }),
+    /un área/,
+  );
+  assert.equal(customRoleSelectionError(undefined, { 'RECEPCIÓN::Reservas': true }), null);
+  assert.equal(customRoleSelectionError('reception', { 'RECEPCIÓN::Reservas': true }), null);
+});
+
+test('P5: Limpieza completa concede exactamente lo del rol predefinido (incluye solicitudes)', () => {
+  const keys = rolePermissionKeysFromUi(
+    'it_limpieza',
+    allOf('LIMPIEZA', ['Inicio', 'Habitaciones', 'Solicitudes', 'Historial']),
+  );
+  assert.deepEqual(operational(keys), [...HOUSEKEEPING_BUILT_IN].sort());
+  assert.equal(customRoleWorkspace(keys), 'housekeeping');
+});
+
+test('P5: Recepción completa concede lo del rol predefinido salvo lo que su panel no usa', () => {
+  const keys = rolePermissionKeysFromUi(
+    'it_recepcion',
+    allOf('RECEPCIÓN', [
+      'Resumen',
+      'Calendario',
+      'Reservas',
+      'Huéspedes',
+      'Disponibilidad',
+      'Habitaciones',
+      'Caja',
+    ]),
+  );
+  const expected = RECEPTION_BUILT_IN.filter(
+    (key) => !/^(concierge|room-service|service-requests)\./.test(key),
+  ).sort();
+  assert.deepEqual(operational(keys), expected);
+});
+
+test('P5: secciones de consulta no conceden escrituras', () => {
+  const keys = operational(
+    rolePermissionKeysFromUi('it_consulta', allOf('RECEPCIÓN', ['Calendario', 'Habitaciones'])),
+  );
+  assert.ok(
+    keys.every((key) => key.endsWith('.read')),
+    keys.join(','),
+  );
+});
+
+test('P5: guardar un rol predefinido no le retira permisos que el editor no gestiona', () => {
+  const keys = rolePermissionKeysFromUi('reception', allOf('RECEPCIÓN', ['Resumen']), [
+    ...RECEPTION_BUILT_IN,
+    'navigation.recepcion.caja',
+  ]);
+  for (const key of RECEPTION_BUILT_IN) assert.ok(keys.includes(key), key);
+  assert.ok(!keys.includes('navigation.recepcion.caja'), 'la sección desmarcada se oculta');
+  assert.ok(keys.includes('navigation.recepcion.resumen'));
+});
+
+// --- P6: auditoría legible y sin secretos --------------------------------------------
+
+test('P6: la descripción de auditoría resume motivo, montos, rol y estado', () => {
+  const cash = auditDescription(
+    'cash_session',
+    'id-1',
+    JSON.stringify({
+      result: 'success',
+      actorEmail: 'a@x.test',
+      reason: 'Turno abandonado',
+      differenceCents: -500,
+    }),
+  );
+  assert.match(cash, /^Diferencia: .*5\.00 · Motivo: Turno abandonado$/);
+  assert.ok(!cash.includes('a@x.test'), 'el actor ya aparece en la columna Usuario');
+  assert.equal(
+    auditDescription(
+      'user',
+      'id-2',
+      JSON.stringify({
+        userEmail: 'ana@aurora.test',
+        previousRole: 'reception',
+        role: 'admin',
+        previousStatus: 'active',
+        status: 'active',
+      }),
+    ),
+    'Usuario: ana@aurora.test · Rol: reception → admin',
+  );
+  assert.equal(
+    auditDescription(
+      'user',
+      'id-3',
+      JSON.stringify({
+        userEmail: 'ana@aurora.test',
+        previousStatus: 'active',
+        status: 'inactive',
+      }),
+    ),
+    'Usuario: ana@aurora.test · Estado: activo → inactivo',
+  );
+  assert.equal(auditDescription('booking', 'id-4', 'no es json'), 'booking id-4');
+  assert.equal(
+    auditDescription('booking', 'id-5', JSON.stringify({ password: 'x', token: 'y' })),
+    'booking id-5',
+  );
 });

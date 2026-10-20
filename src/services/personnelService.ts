@@ -4,7 +4,14 @@ import { toDomain as toRole, type Role } from '@/shared/types/entities/role';
 import { toDomain as toPermission, type Permission } from '@/shared/types/entities/permission';
 import type { ID } from '@/shared/types/common';
 import { simulateLatency } from './mockUtils';
-import { httpClient } from './http-client';
+import { getControlledBackendMessage, httpClient, HttpError } from './http-client';
+
+/** Reglas de administración de usuarios que el backend aplica (409). */
+const USER_RULE_MESSAGES: Record<string, string> = {
+  'You cannot deactivate your own account': 'No puedes desactivar tu propia cuenta.',
+  'The last active administrator cannot be deactivated or lose the administrator role':
+    'Debe quedar al menos un administrador activo: no puedes desactivar ni quitar el rol de Administración al último.',
+};
 
 type ApiUser = {
   id: string;
@@ -197,8 +204,16 @@ export const personnelService = {
       status: data.status ?? current.status,
       password: data.password,
     });
-    const user = await httpClient.put<ApiUser>(`/admin/users/${id}`, request);
-    return toUser(toUserDto(user));
+    try {
+      const user = await httpClient.put<ApiUser>(`/admin/users/${id}`, request);
+      return toUser(toUserDto(user));
+    } catch (error) {
+      const message =
+        error instanceof HttpError ? getControlledBackendMessage(error.data) : undefined;
+      const translated = message ? USER_RULE_MESSAGES[message] : undefined;
+      if (translated) throw new Error(translated);
+      throw error;
+    }
   },
   async getRoles(): Promise<Role[]> {
     await simulateLatency();

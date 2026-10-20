@@ -552,7 +552,7 @@ export function ReservationFormModal({
               <p className="eyebrow">RESUMEN DE RESERVA</p>
               <h2>{walkin ? 'Registro walk-in' : 'Nueva reserva'}</h2>
             </div>
-            <button className="icon-btn" onClick={onClose}>
+            <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
               <X size={18} />
             </button>
           </div>
@@ -627,7 +627,7 @@ export function ReservationFormModal({
             <p className="eyebrow">{walkin ? 'WALK-IN' : 'NUEVA RESERVA'}</p>
             <h2>{walkin ? 'Registro walk-in' : 'Crear reserva manual'}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1379,7 +1379,7 @@ export function CheckoutModal({
             <p className="eyebrow">CHECK-OUT</p>
             <h2>{reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1479,7 +1479,7 @@ export function ReasonModal({
             <p className="eyebrow">{title}</p>
             <h2>{label}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1609,7 +1609,7 @@ export function ChargeModal({
             <p className="eyebrow">AGREGAR CARGO</p>
             <h2>Nuevo cargo</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1827,7 +1827,7 @@ export function RoomChangeModal({
             </p>
             <h2>{reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1936,7 +1936,7 @@ export function BlockModal({
             <p className="eyebrow">BLOQUEAR HABITACIÓN</p>
             <h2>Bloqueo temporal</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -2075,7 +2075,7 @@ export function InvoiceModal({
             <button className="button small secondary" onClick={() => window.print()}>
               <Printer size={14} /> Imprimir
             </button>
-            <button className="icon-btn" onClick={onClose}>
+            <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
               <X size={18} />
             </button>
           </div>

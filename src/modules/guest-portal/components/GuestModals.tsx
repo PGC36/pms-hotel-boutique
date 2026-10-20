@@ -212,7 +212,7 @@ export function ReservationDetailModal({
             <p className="eyebrow">DETALLE DE RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -341,7 +341,7 @@ export function ModifyReservationModal({
             <p className="eyebrow">MODIFICAR RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -424,7 +424,7 @@ export function CancelReservationModal({
             <p className="eyebrow">CANCELAR RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -508,7 +508,7 @@ export function ReceiptModal({
             <p className="eyebrow">RECIBO DE RESERVA</p>
             <h2>Reserva {reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -631,7 +631,7 @@ export function LinkReservationModal({
             <p className="eyebrow">VINCULAR RESERVA</p>
             <h2>Ingresa tu código</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -689,7 +689,7 @@ export function EditProfileModal({
             <p className="eyebrow">EDITAR PERFIL</p>
             <h2>Mis datos personales</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -801,7 +801,7 @@ export function CancelOrderModal({
             <p className="eyebrow">CANCELAR PEDIDO</p>
             <h2>Pedido #{orderId}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -1025,7 +1025,13 @@ export function RequestServiceModal({
                   : 'Elige el servicio y cuéntanos los detalles para que conserjería pueda ayudarte.'}
             </p>
           </div>
-          <button className="icon-btn" onClick={onClose} disabled={submitting} aria-label="Cerrar">
+          <button
+            className="icon-btn"
+
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="Cerrar"
+          >
             <X size={18} />
           </button>
         </div>
@@ -1363,7 +1369,7 @@ export function CreateBookingModal({
             <p className="eyebrow">PORTAL DEL HUÉSPED</p>
             <h2>Nueva reserva</h2>
           </div>
-          <button className="icon-btn" onClick={onClose} disabled={submitting}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose} disabled={submitting}>
             <X size={18} />
           </button>
         </div>

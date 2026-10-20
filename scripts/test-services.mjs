@@ -1812,6 +1812,47 @@ test('B3: personnelService conserva el código real de un rol personalizado', as
   }
 });
 
+test('P1: personnelService traduce las reglas de administración del backend', async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const now = '2026-10-05T10:00:00Z';
+  const user = {
+    id: 'u-1',
+    firstName: 'Ana',
+    lastName: 'Admin',
+    email: 'ana@aurora.test',
+    roleId: 'r-admin',
+    roleCode: 'admin',
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  };
+  for (const [backend, expected] of [
+    ['You cannot deactivate your own account', 'No puedes desactivar tu propia cuenta.'],
+    [
+      'The last active administrator cannot be deactivated or lose the administrator role',
+      'Debe quedar al menos un administrador activo: no puedes desactivar ni quitar el rol de Administración al último.',
+    ],
+  ]) {
+    globalThis.fetch = async (_input, init = {}) =>
+      (init.method ?? 'GET') === 'PUT'
+        ? new Response(JSON.stringify({ status: 409, message: backend }), {
+            status: 409,
+            headers: { 'content-type': 'application/json' },
+          })
+        : new Response(JSON.stringify(user), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+    await assert.rejects(
+      () => personnelService.updateUser(user.id, { roleId: user.roleId, status: 'inactive' }),
+      (error) => error.message === expected,
+    );
+  }
+});
+
 test('inventoryService.getItems: async, con latencia simulada, devuelve Models', async () => {
   const items = await assertServiceCall('inventoryService.getItems', () =>
     inventoryService.getItems(),

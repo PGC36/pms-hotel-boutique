@@ -131,7 +131,7 @@ export function ReservationDetail({
             <p className="eyebrow">DETALLE DE RESERVA</p>
             <h2>{reservation.code}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>

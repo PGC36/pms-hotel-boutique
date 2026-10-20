@@ -894,6 +894,25 @@ test('limpieza: un 403 en solicitudes secundarias no bloquea el panel', async ()
   assert.ok(hkBackend.requests.includes('GET /housekeeping/rooms'));
 });
 
+test('P8/P10 · limpieza: menú con nombre accesible, checklist expone su estado y sin tipo inventado', async () => {
+  await mountHousekeeping();
+  const hamburger = view.root.find((node) => node.type === 'button' && hasClass(node, 'hamburger'));
+  assert.equal(hamburger.props['aria-label'], 'Abrir menú');
+  const close = view.root.find((node) => node.type === 'button' && hasClass(node, 'sidebar-close'));
+  assert.equal(close.props['aria-label'], 'Cerrar menú');
+  await act(async () => navItem('Habitaciones').props.onClick());
+  const detail = view.root.findAll(
+    (node) => node.type === 'button' && text(node) === 'Ver detalle',
+  )[0];
+  await act(async () => detail.props.onClick());
+  const items = view.root.findAll(
+    (node) => node.type === 'button' && hasClass(node, 'hk-check-item'),
+  );
+  assert.ok(items.length > 0);
+  assert.ok(items.every((item) => typeof item.props['aria-pressed'] === 'boolean'));
+  assert.ok(!text(view.root).includes('· Estándar'), 'sin catálogo no muestra un tipo inventado');
+});
+
 test('limpieza: "Reportar desperfecto" solo aparece en Inicio', async () => {
   await mountHousekeeping();
   assert.equal(headerHasDefectButton(), true, 'Inicio');
@@ -2178,6 +2197,7 @@ function installReceptionBackend({
   rooms = [hkRoom('room-101', '101', 'clean')],
   payments = [],
   paymentsForbidden = false,
+  catalogForbidden = false,
 } = {}) {
   const now = '2026-10-05T10:00:00Z';
   const state = {
@@ -2256,9 +2276,21 @@ function installReceptionBackend({
     state.requests.push({ call: `${method} ${path}`, body });
     if (
       method === 'GET' &&
-      (path.startsWith('/room-service/') || path === '/room-types' || path === '/room-features')
+      (path.startsWith('/room-service/') ||
+        (catalogForbidden && (path === '/room-types' || path === '/room-features')))
     ) {
       return json({ message: 'Forbidden' }, 403);
+    }
+    if (method === 'GET' && path === '/room-features') {
+      return json([
+        {
+          id: 'feature-balcony',
+          name: 'Balcón',
+          description: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
     }
     if (method === 'GET' && path === '/bookings') return json([state.booking]);
     if (method === 'GET' && path === `/bookings/${REC_BOOKING_ID}`) return json(state.booking);
@@ -2407,6 +2439,17 @@ function installReceptionBackend({
           createdAt: now,
           updatedAt: now,
         },
+        {
+          id: 'type-deluxe',
+          name: 'Deluxe',
+          description: 'Habitación deluxe',
+          capacity: 4,
+          basePriceCents: 90000,
+          currency: 'GTQ',
+          roomFeatureIds: ['feature-balcony'],
+          createdAt: now,
+          updatedAt: now,
+        },
       ]);
     }
     if (method === 'POST' && path === `/bookings/${REC_BOOKING_ID}/cancel`) {
@@ -2552,6 +2595,29 @@ test('recepción: consulta finanzas con sus permisos y no consulta solicitudes i
       `recepción no consulta ${path}`,
     );
   }
+});
+
+test('recepción: muestra tipo, capacidad y características reales del catálogo', async () => {
+  await mountReception({
+    rooms: [hkRoom('room-101', '101', 'clean', { roomTypeId: 'type-deluxe' })],
+  });
+  for (const path of ['/room-types', '/room-features']) {
+    assert.ok(
+      recBackend.requests.some(({ call }) => call === `GET ${path}`),
+      `recepción consulta ${path} (room-types.read / room-features.read)`,
+    );
+  }
+  const room = view.root
+    .find((node) => Array.isArray(node.props?.rooms) && node.props.rooms[0]?.backendRoomId)
+    .props.rooms.find((item) => item.number === '101');
+  assert.equal(room.type, 'Deluxe');
+  assert.equal(room.capacity, 4);
+  assert.deepEqual(room.features, ['Balcón']);
+});
+
+test('recepción: sin permiso de catálogo el panel carga igual', async () => {
+  await mountReception({ catalogForbidden: true });
+  assert.ok(view.root.findAll((node) => hasClass(node, 'side-nav')).length);
 });
 
 test('recepción: los endpoints sin permiso no bloquean el inicio del panel', async () => {
@@ -2943,6 +3009,156 @@ test('recepción · resumen: "Bloquear habitación" no simula un bloqueo guardad
     0,
     'no envía cambios al backend',
   );
+});
+
+// --- P1: desactivar usuarios pide confirmación y no ofrece la propia cuenta -----------
+
+async function mountAdminUsers() {
+  const now = '2026-10-05T10:00:00Z';
+  const adminRole = {
+    id: 'role-admin',
+    code: 'admin',
+    name: 'Administración',
+    active: true,
+    permissions: [],
+  };
+  const state = {
+    calls: [],
+    users: [
+      {
+        id: 'user-self',
+        firstName: 'Admin',
+        lastName: 'Sesión',
+        email: 'admin@aurora.test',
+        roleId: 'role-admin',
+        roleCode: 'admin',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'user-other',
+        firstName: 'Ana',
+        lastName: 'Prueba',
+        email: 'ana@aurora.test',
+        roleId: 'role-admin',
+        roleCode: 'admin',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const path = new URL(String(input)).pathname.replace(/^\/api\/v1/, '');
+    const method = init.method ?? 'GET';
+    const body = init.body ? JSON.parse(String(init.body)) : undefined;
+    state.calls.push({ call: `${method} ${path}`, body });
+    const reply = (data, status = 200) =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    if (path === '/cash-sessions/current') return reply({ message: 'No open cash session' }, 404);
+    if (method === 'GET' && path === '/admin/users') return reply(state.users);
+    if (method === 'GET' && path === '/admin/roles') return reply([adminRole]);
+    const userPath = /^\/admin\/users\/([\w-]+)$/.exec(path);
+    if (userPath) {
+      const user = state.users.find((item) => item.id === userPath[1]);
+      if (method === 'GET') return reply(user);
+      if (method === 'PUT') {
+        Object.assign(user, { status: body.status ?? user.status });
+        return reply(user);
+      }
+    }
+    return reply([]);
+  };
+  await act(async () => {
+    view = create(
+      <MemoryRouter>
+        <PrivateWorkspace
+          role="admin"
+          sessionName="Admin Sesión"
+          sessionEmail="admin@aurora.test"
+        />
+      </MemoryRouter>,
+    );
+  });
+  const usersNav = () =>
+    view.root.findAll(
+      (node) => node.type === 'button' && text(node).trim() === 'Gestión de usuarios',
+    )[0];
+  for (let i = 0; i < 20 && !usersNav(); i++) await settle(300);
+  assert.ok(
+    usersNav(),
+    `navegación: ${view.root
+      .findAll((node) => node.type === 'button' && /nav-/.test(node.props?.className ?? ''))
+      .map((node) => `${node.props.className}=${text(node)}`)
+      .join(' | ')}`,
+  );
+  await act(async () => usersNav().props.onClick());
+  for (let i = 0; i < 20 && !userSwitch('ana@aurora.test'); i++) await settle(300);
+  assert.ok(userSwitch('ana@aurora.test'), 'tabla de usuarios cargada');
+  return state;
+}
+const userSwitch = (email) => {
+  const row = view.root.findAll((node) => node.type === 'tr' && text(node).includes(email))[0];
+  return row?.findAll((node) => node.type === 'button' && hasClass(node, 'adm-status-switch'))[0];
+};
+
+test('P1 · usuarios: desactivar pide confirmación antes de llamar al backend', async (t) => {
+  // Modal (ConfirmDialog) toca document al abrir; el arnés no tiene DOM.
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    activeElement: null,
+    body: { style: {} },
+    contains: () => false,
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  t.after(() => {
+    globalThis.document = previousDocument;
+  });
+  const state = await mountAdminUsers();
+  const puts = () => state.calls.filter(({ call }) => call.startsWith('PUT /admin/users/'));
+  await act(async () => userSwitch('ana@aurora.test').props.onClick());
+  assert.ok(
+    text(view.root).includes('¿Seguro que quieres desactivar a Ana Prueba'),
+    'muestra ConfirmDialog',
+  );
+  assert.equal(puts().length, 0, 'no desactiva antes de confirmar');
+
+  const cancel = view.root
+    .findAll((node) => node.type === 'button' && text(node) === 'Cancelar')
+    .at(-1);
+  await act(async () => cancel.props.onClick());
+  assert.equal(puts().length, 0, 'cancelar no envía nada');
+
+  await act(async () => userSwitch('ana@aurora.test').props.onClick());
+  const confirm = view.root.findAll(
+    (node) => node.type === 'button' && text(node) === 'Desactivar',
+  )[0];
+  await act(async () => confirm.props.onClick());
+  for (let i = 0; i < 10 && puts().length === 0; i++) await settle(200);
+  assert.equal(puts().length, 1);
+  assert.deepEqual(
+    { roleId: puts()[0].body.roleId, status: puts()[0].body.status },
+    { roleId: 'role-admin', status: 'inactive' },
+    'envía el rol real por código y el nuevo estado',
+  );
+  assert.ok(
+    toasts().some((toast) => toast.includes('Usuario desactivado')),
+    `avisos: ${toasts().join(' | ')}`,
+  );
+});
+
+test('P1 · usuarios: la propia cuenta no se puede desactivar desde la tabla', async () => {
+  await mountAdminUsers();
+  const own = userSwitch('admin@aurora.test');
+  assert.equal(own.props.disabled, true);
+  assert.equal(own.props.title, 'No puedes desactivar tu propia cuenta');
+  assert.equal(userSwitch('ana@aurora.test').props.disabled, false);
 });
 
 // --- Auditoría administrativa: solo la pide quien tiene ROLE_ADMIN ----------------

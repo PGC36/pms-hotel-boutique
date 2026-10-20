@@ -846,7 +846,11 @@ const toConciergeRequest = (
  */
 const ROOM_SERVICE_READ_ROLES: readonly RoleId[] = ['admin', 'room-service'];
 const ROOM_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
-const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin'];
+/**
+ * `room-types.read` y `room-features.read`: Recepción los tiene (migración 008) y los
+ * necesita para mostrar tipo, capacidad y características reales de cada habitación.
+ */
+const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 const BOOKING_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 const GUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 /**
@@ -1107,7 +1111,10 @@ async function loadWorkspaceData(
 
   const { cleaningRooms, guestRequests, history } = housekeepingData
     ? buildHousekeepingState(housekeepingData, (room) =>
-        getRoomTypeLabel(room.roomTypeId, roomTypes),
+        // Sin catálogo (Limpieza no tiene room-types.read) no se inventa "Estándar".
+        roomTypes.some((roomType) => roomType.id === room.roomTypeId)
+          ? getRoomTypeLabel(room.roomTypeId, roomTypes)
+          : '',
       )
     : { cleaningRooms: [], guestRequests: [], history: [] };
 
@@ -3431,7 +3438,11 @@ function PrivateWorkspaceReady({
           <span>
             AURORA <small>HOTEL PMS</small>
           </span>
-          <button className="sidebar-close" onClick={() => setSidebarOpen(false)}>
+          <button
+            className="sidebar-close"
+            aria-label="Cerrar menú"
+            onClick={() => setSidebarOpen(false)}
+          >
             <X size={20} />
           </button>
         </div>
@@ -3539,7 +3550,12 @@ function PrivateWorkspaceReady({
         }}
       >
         <header className={`topbar ${headerScrolled ? 'is-scrolled' : ''}`}>
-          <button className="hamburger" onClick={() => setSidebarOpen(true)}>
+          <button
+            className="hamburger"
+            aria-label="Abrir menú"
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen(true)}
+          >
             <Menu size={22} />
           </button>
           <div className="crumbs">
@@ -3879,6 +3895,7 @@ function PrivateWorkspaceReady({
             <AdminContent
               nav={contentNav}
               onAction={notify}
+              currentUserEmail={sessionEmail}
               onNavigate={(nextNav) =>
                 setActiveNav(activeRole === 'admin' ? scopedNav('admin', nextNav) : nextNav)
               }
@@ -3934,7 +3951,11 @@ function PrivateWorkspaceReady({
                       <h3>Actividad reciente</h3>
                       <p>Últimos movimientos del hotel</p>
                     </div>
-                    <button className="icon-btn" onClick={() => notify('Actividad actualizada')}>
+                    <button
+                      className="icon-btn"
+                      aria-label="Actualizar actividad"
+                      onClick={() => notify('Actividad actualizada')}
+                    >
                       <Activity size={17} />
                     </button>
                   </div>
@@ -4533,7 +4554,11 @@ function ConciergeContent({
                 <p className="eyebrow">RECHAZAR SOLICITUD</p>
                 <h2>Indica el motivo</h2>
               </div>
-              <button className="icon-btn" onClick={() => setRejectionRequestId(null)}>
+              <button
+                className="icon-btn"
+                aria-label="Cerrar"
+                onClick={() => setRejectionRequestId(null)}
+              >
                 <X size={18} />
               </button>
             </div>
@@ -4580,7 +4605,11 @@ function ConciergeContent({
                 <p className="eyebrow">CANCELAR SOLICITUD</p>
                 <h2>Indica el motivo</h2>
               </div>
-              <button className="icon-btn" onClick={() => setCancelRequestId(null)}>
+              <button
+                className="icon-btn"
+                aria-label="Cerrar"
+                onClick={() => setCancelRequestId(null)}
+              >
                 <X size={18} />
               </button>
             </div>
@@ -4639,7 +4668,7 @@ function ConciergeRequestModal({
             <p className="eyebrow">DETALLE DE SOLICITUD</p>
             <h2>Solicitud #{request.id}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -5131,7 +5160,8 @@ function HousekeepingContent({
                   <div>
                     <strong>Habitación {room.number}</strong>
                     <span>
-                      {room.floor} · {room.type}
+                      {room.floor}
+                      {room.type ? ` · ${room.type}` : ''}
                     </span>
                   </div>
                   <span
@@ -5277,7 +5307,8 @@ function HousekeepingContent({
                   <div className="task-info">
                     <strong>{room.cleaningType}</strong>
                     <span>
-                      Habitación {room.number} · {room.floor} · {room.type}
+                      Habitación {room.number} · {room.floor}
+                      {room.type ? ` · ${room.type}` : ''}
                     </span>
                   </div>
                   <span className="task-time">{room.startTime ?? '—'}</span>
@@ -5457,7 +5488,7 @@ function RoomDetailModal({
             <p className="eyebrow">DETALLE DE HABITACIÓN</p>
             <h2>Habitación {room.number}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -5468,7 +5499,7 @@ function RoomDetailModal({
           </div>
           <div>
             <small>Tipo</small>
-            <span>{room.type}</span>
+            <span>{room.type || '—'}</span>
           </div>
           <div>
             <small>Limpieza</small>
@@ -5511,6 +5542,7 @@ function RoomDetailModal({
             {room.checklist.map((item, i) => (
               <button
                 className={`hk-check-item ${item.done ? 'done' : ''}`}
+                aria-pressed={item.done}
                 key={i}
                 onClick={() => onToggleChecklist(room.id, i)}
               >
@@ -5608,7 +5640,7 @@ function StatusModal({
             <p className="eyebrow">CAMBIAR ESTADO</p>
             <h2>Habitación {room.number}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -5681,7 +5713,7 @@ function DefectModal({
             <p className="eyebrow">REPORTAR DESPERFECTO</p>
             <h2>Reportar problema</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -6638,7 +6670,7 @@ function VisitorScreen({
                       : 'Reserva confirmada'}
                 </h2>
               </div>
-              <button className="icon-btn" onClick={closeReservation}>
+              <button className="icon-btn" aria-label="Cerrar" onClick={closeReservation}>
                 <X size={18} />
               </button>
             </div>
@@ -6972,7 +7004,7 @@ function AuthModal({
             <p className="eyebrow">{view === 'guest' ? 'NUEVO HUÉSPED' : 'ACCESO DE PERSONAL'}</p>
             <h2>{view === 'guest' ? 'Crea tu cuenta' : 'Iniciar sesión'}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" aria-label="Cerrar" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -7097,7 +7129,11 @@ function TaskTable({
           <span>Todos</span>
           <ChevronDown size={15} />
         </button>
-        <button className="icon-btn" onClick={() => onAction('Más filtros abiertos')}>
+        <button
+          className="icon-btn"
+          aria-label="Más filtros"
+          onClick={() => onAction('Más filtros abiertos')}
+        >
           <Menu size={18} />
         </button>
       </div>
