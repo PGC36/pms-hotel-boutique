@@ -9,6 +9,7 @@ import {
   Clock,
   DoorOpen,
   FileText,
+  LoaderCircle,
   Package,
   Plus,
   Search,
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 import type { OrderStatus, RoomServiceOrder } from '@/private/workspace/PrivateWorkspace';
 import { catalogService } from '@/services/catalogService';
-import { HttpError } from '@/services/http-client';
+import { getUserFacingErrorMessage, HttpError } from '@/services/http-client';
 import { inventoryService } from '@/services/inventoryService';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -108,7 +109,7 @@ type InventoryState =
   | { status: 'ready'; inventory: InventoryItem[] };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'No fue posible cargar el catálogo de cocina.';
+  return getUserFacingErrorMessage(cause, 'No fue posible cargar el catálogo de cocina.');
 }
 
 export function RoomServiceContent({
@@ -160,6 +161,7 @@ export function RoomServiceContent({
   const [inventoryNotes, setInventoryNotes] = useState('');
   const [inventorySaving, setInventorySaving] = useState(false);
   const [refreshingOrders, setRefreshingOrders] = useState(false);
+  const [refreshingMenu, setRefreshingMenu] = useState(false);
 
   const loadMenu = async () => {
     setMenuState({ status: 'loading' });
@@ -218,8 +220,14 @@ export function RoomServiceContent({
   const selectedInventoryItem = inventoryItems.find((item) => item.id === inventoryItemId);
 
   const refreshMenu = async (message: string) => {
-    await loadMenu();
-    onAction(message);
+    if (refreshingMenu) return;
+    setRefreshingMenu(true);
+    try {
+      await loadMenu();
+      onAction(message);
+    } finally {
+      setRefreshingMenu(false);
+    }
   };
 
   const refreshOrders = async () => {
@@ -666,8 +674,10 @@ export function RoomServiceContent({
           <button
             className="button small secondary"
             onClick={() => void refreshMenu('Menú actualizado')}
+            disabled={refreshingMenu}
           >
-            <FileText size={14} /> Actualizar
+            <LoaderCircle size={14} className={refreshingMenu ? 'rc-refresh-spinner' : undefined} />{' '}
+            {refreshingMenu ? 'Actualizando...' : 'Actualizar'}
           </button>
         </div>
         <div className="rs-menu-categories">
@@ -729,7 +739,11 @@ export function RoomServiceContent({
             onClick={() => void refreshOrders()}
             disabled={refreshingOrders}
           >
-            <FileText size={14} /> {refreshingOrders ? 'Actualizando...' : 'Actualizar'}
+            <LoaderCircle
+              size={14}
+              className={refreshingOrders ? 'rc-refresh-spinner' : undefined}
+            />{' '}
+            {refreshingOrders ? 'Actualizando...' : 'Actualizar'}
           </button>
         </div>
         <div className="rs-history-list">

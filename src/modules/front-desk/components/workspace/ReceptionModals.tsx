@@ -1360,7 +1360,7 @@ export function CheckoutModal({
 }: {
   reservation: Reservation;
   onClose: () => void;
-  onCheckout: (id: number) => void;
+  onCheckout: (id: number) => void | Promise<void>;
   folioTotals: (f: FolioEntry[]) => Totals;
 }) {
   const t = folioTotals(reservation.folio);
@@ -1414,11 +1414,25 @@ export function CheckoutModal({
             </div>
           </div>
         )}
+        {t.balance < 0 && (
+          <div className="rc-alert warning" role="status">
+            <TriangleAlert size={15} />
+            <div>
+              <strong>Saldo a favor</strong>
+              <p>Aplica o devuelve el saldo de {money(Math.abs(t.balance))} antes del check-out.</p>
+            </div>
+          </div>
+        )}
         <div className="modal-foot">
           <button className="button secondary" onClick={onClose}>
             Cancelar
           </button>
-          <button className="button primary" onClick={() => onCheckout(reservation.id)}>
+          <button
+            className="button primary"
+            onClick={() => void onCheckout(reservation.id)}
+            disabled={t.balance !== 0}
+            title={t.balance !== 0 ? 'Liquida la cuenta antes del check-out' : undefined}
+          >
             <Check size={16} /> Finalizar check-out
           </button>
         </div>

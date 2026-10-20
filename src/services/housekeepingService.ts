@@ -6,7 +6,7 @@ import {
 } from '@/shared/types/entities/service-request';
 import type { ID } from '@/shared/types/common';
 import type { RoomHousekeepingStatus, ServiceRequestStatus } from '@/shared/constants/statuses';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { guestRequest } from './guestHttp';
 
 // INT-09: el turnover (`dirty -> cleaning -> clean -> inspected`) y las tareas
@@ -65,7 +65,7 @@ export type HousekeepingChecklistItem = {
 
 export type HousekeepingChecklist = {
   id: ID;
-  serviceRequestId: ID;
+  serviceRequestId?: ID;
   roomId?: ID;
   roomNumber?: string;
   status: HousekeepingChecklistStatus;
@@ -81,7 +81,7 @@ export type HousekeepingChecklist = {
 
 type HousekeepingChecklistResponse = {
   id: string;
-  serviceRequestId: string;
+  serviceRequestId?: string | null;
   roomId: string;
   roomNumber?: string | null;
   status: HousekeepingChecklistStatus;
@@ -174,9 +174,17 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 
 function getHttpErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
+  if (error.status >= 500) return error.message;
+  const backendMessage = getControlledBackendMessage(error.data);
   if (error.status === 400) {
-    return `${fallback} El backend rechazó la transición: el estado cambió, se recargó el estado real.`;
+    if (backendMessage && /cannot inspect room/i.test(backendMessage)) {
+      return `${fallback} El backend rechazó la transición: completa la limpieza antes de inspeccionar.`;
+    }
+    return backendMessage
+      ? `${fallback} El backend rechazó la transición: ${backendMessage}`
+      : `${fallback} El backend rechazó la transición: el estado cambió, se recargó el estado real.`;
   }
+  if (backendMessage) return backendMessage;
   if (error.status === 401) return 'Tu sesión expiró. Inicia sesión nuevamente.';
   if (error.status === 403) return 'No tienes permisos para operar Limpieza.';
   if (error.status === 404) return `${fallback} El registro ya no existe.`;
@@ -221,7 +229,7 @@ function toDate(value?: string | null): Date | undefined {
 function toChecklist(response: HousekeepingChecklistResponse): HousekeepingChecklist {
   return {
     id: response.id,
-    serviceRequestId: response.serviceRequestId,
+    serviceRequestId: response.serviceRequestId ?? undefined,
     roomId: response.roomId,
     roomNumber: response.roomNumber ?? undefined,
     status: response.status,
@@ -385,9 +393,18 @@ export const housekeepingService = {
     );
     return toServiceRequest(toServiceRequestDto(response));
   },
-  async getChecklists(): Promise<HousekeepingChecklist[]> {
+  async getChecklists(
+    filters: { roomId?: ID; status?: HousekeepingChecklistStatus } = {},
+  ): Promise<HousekeepingChecklist[]> {
+    const query = new URLSearchParams();
+    if (filters.roomId) query.set('roomId', String(filters.roomId));
+    if (filters.status) query.set('status', filters.status);
+    const search = query.toString();
     const response = await request(
-      () => httpClient.get<HousekeepingChecklistResponse[]>('/housekeeping/checklists'),
+      () =>
+        httpClient.get<HousekeepingChecklistResponse[]>(
+          `/housekeeping/checklists${search ? `?${search}` : ''}`,
+        ),
       'No fue posible cargar los checklists de limpieza.',
     );
     return response.map(toChecklist);

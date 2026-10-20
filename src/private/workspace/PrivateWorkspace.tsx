@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
   ArrowRight,
@@ -21,6 +22,7 @@ import {
   Headphones,
   Home,
   LogOut,
+  LoaderCircle,
   Menu,
   MessageSquare,
   MoreHorizontal,
@@ -580,15 +582,24 @@ const toCleaningRoom = (
   };
 };
 
+type ChecklistStatus = HousekeepingChecklist['status'];
+const ACTIVE_CHECKLIST_STATUSES: readonly ChecklistStatus[] = ['pending', 'in_progress'];
+const COMPLETED_CHECKLIST_STATUSES: readonly ChecklistStatus[] = ['completed'];
+
 /**
- * Checklist de limpieza de salida activo de cada habitación (creado con `roomId`,
- * sin solicitud de stayover). El backend permite uno pendiente o en curso por habitación.
+ * Checklist de limpieza de salida más reciente de cada habitación (creado con
+ * `roomId`, sin solicitud de stayover) entre los estados indicados. El backend
+ * permite uno pendiente o en curso por habitación; los completados se conservan
+ * como historial.
  */
-const activeTurnoverChecklistByRoom = (checklists: HousekeepingChecklist[]) => {
+const turnoverChecklistByRoom = (
+  checklists: HousekeepingChecklist[],
+  statuses: readonly ChecklistStatus[],
+) => {
   const byRoom = new Map<string, HousekeepingChecklist>();
   for (const checklist of checklists) {
     if (checklist.serviceRequestId || !checklist.roomId) continue;
-    if (checklist.status !== 'pending' && checklist.status !== 'in_progress') continue;
+    if (!statuses.includes(checklist.status)) continue;
     const current = byRoom.get(checklist.roomId);
     if (!current || checklist.createdAt > current.createdAt)
       byRoom.set(checklist.roomId, checklist);
@@ -659,9 +670,15 @@ function buildHousekeepingState(
     checklists.map((checklist) => [checklist.serviceRequestId, checklist]),
   );
 
-  const turnoverChecklists = activeTurnoverChecklistByRoom(checklists);
+  // Pendiente o en proceso: el checklist activo. Limpia o inspeccionada: el último
+  // completado (el backend lo exige para inspeccionar y para volver de `inspected`).
+  const activeChecklists = turnoverChecklistByRoom(checklists, ACTIVE_CHECKLIST_STATUSES);
+  const completedChecklists = turnoverChecklistByRoom(checklists, COMPLETED_CHECKLIST_STATUSES);
   const cleaningRooms = rooms.map((room, index) => {
-    const checklist = turnoverChecklists.get(room.id);
+    const checklist =
+      room.housekeepingStatus === 'clean' || room.housekeepingStatus === 'inspected'
+        ? completedChecklists.get(room.id)
+        : activeChecklists.get(room.id);
     return toCleaningRoom(room, index + 1, getRoomType(room), checklist?.items, checklist?.id);
   });
 
@@ -775,7 +792,7 @@ const toRoomServiceOrder = (
 // solo traduce estados; las transiciones las valida el backend.
 
 /** Roles con `concierge.read` en el backend. */
-const CONCIERGE_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'concierge'];
+const CONCIERGE_READ_ROLES: readonly RoleId[] = ['admin', 'concierge'];
 
 const CLOSED_CONCIERGE_STATUSES: readonly ConciergeStatus[] = [
   'Completada',
@@ -827,16 +844,16 @@ const toConciergeRequest = (
  * Roles con `room-service.read` en el backend. Pedir catálogo o pedidos con
  * otro rol (Limpieza, Conserjería) responde 403 y tumbaría la carga del panel.
  */
-const ROOM_SERVICE_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'room-service'];
+const ROOM_SERVICE_READ_ROLES: readonly RoleId[] = ['admin', 'room-service'];
 const ROOM_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
-const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
+const ROOM_CATALOG_READ_ROLES: readonly RoleId[] = ['admin'];
 const BOOKING_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 const GUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 /**
  * `service-requests.read`: Conserjería también lo tiene, pero el backend solo le
  * devuelve solicitudes de conserjería, que ya carga desde `/concierge/requests`.
  */
-const SERVICE_REQUEST_READ_ROLES: readonly RoleId[] = ['admin', 'reception', 'housekeeping'];
+const SERVICE_REQUEST_READ_ROLES: readonly RoleId[] = ['admin', 'housekeeping'];
 /** `folios.read`, `charges.read`, `payments.read` y `deposits.read`. */
 const FINANCE_READ_ROLES: readonly RoleId[] = ['admin', 'reception'];
 /**
@@ -888,7 +905,15 @@ async function permissionAwareListOrNull<T>(load: () => Promise<T[]>): Promise<T
   }
 }
 
-async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
+/**
+ * `role` es la sección que se muestra (sus datos); `sessionRole` es el rol real
+ * de la sesión. La auditoría depende del rol real: un administrador que ve
+ * Recepción la sigue consultando, y Recepción nunca la pide (403 en backend).
+ */
+async function loadWorkspaceData(
+  role: RoleId,
+  sessionRole: RoleId = role,
+): Promise<WorkspaceState> {
   const canReadRooms = ROOM_READ_ROLES.includes(role);
   const canReadRoomCatalog = ROOM_CATALOG_READ_ROLES.includes(role);
   const canReadBookings = BOOKING_READ_ROLES.includes(role);
@@ -931,7 +956,7 @@ async function loadWorkspaceData(role: RoleId): Promise<WorkspaceState> {
         ? safeList(() => serviceRequestService.getRequests())
         : permissionAwareList(() => serviceRequestService.getRequests())
       : [],
-    AUDIT_READ_ROLES.includes(role) ? safeList(() => auditService.getLogs()) : [],
+    AUDIT_READ_ROLES.includes(sessionRole) ? safeList(() => auditService.getLogs()) : [],
     canReadFinance ? permissionAwareList(() => guestAccountService.getCharges()) : [],
     canReadFinance ? permissionAwareListOrNull(() => guestAccountService.getPayments()) : null,
     canReadFinance ? permissionAwareList(() => guestAccountService.getDeposits()) : [],
@@ -1467,7 +1492,7 @@ function resolveWorkspaceNav(role: RoleId, activeNav: string, navItems = navByRo
 }
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'No fue posible cargar el panel privado.';
+  return getUserFacingErrorMessage(cause, 'No fue posible cargar el panel privado.');
 }
 
 type LoaderState =
@@ -1809,8 +1834,7 @@ function PrivateWorkspaceReady({
   const contentRole = activeWorkspace.role;
   const contentNav = activeWorkspace.nav;
   const contentLabel = activeWorkspace.label;
-  const workspaceDataRole =
-    activeRole === 'admin' && contentRole !== 'housekeeping' ? activeRole : contentRole;
+  const workspaceDataRole = contentRole;
   const role = roles.find((item) => item.id === activeRole) ?? roles[0];
   const contentRoleInfo = roles.find((item) => item.id === contentRole) ?? role;
   const accountName = sessionName ?? role.person;
@@ -2121,7 +2145,7 @@ function PrivateWorkspaceReady({
 
     async function loadAdminScopedWorkspace() {
       try {
-        const data = await loadWorkspaceData(workspaceDataRole);
+        const data = await loadWorkspaceData(workspaceDataRole, activeRole);
         if (!active) return;
 
         if (contentRole === 'reception') {
@@ -2184,7 +2208,7 @@ function PrivateWorkspaceReady({
 
   const refreshConciergeRequests = async () => {
     try {
-      const data = await loadWorkspaceData(workspaceDataRole);
+      const data = await loadWorkspaceData(workspaceDataRole, activeRole);
       setCgRequests(data.conciergeRequests);
       setCgSelectedRequestId((currentId) =>
         currentId !== null && data.conciergeRequests.some((request) => request.id === currentId)
@@ -2199,7 +2223,7 @@ function PrivateWorkspaceReady({
 
   const refreshReception = async () => {
     try {
-      const data = await loadWorkspaceData(workspaceDataRole);
+      const data = await loadWorkspaceData(workspaceDataRole, activeRole);
       setRecReservationList(data.recReservations);
       setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
@@ -2400,14 +2424,29 @@ function PrivateWorkspaceReady({
     setHkRooms((current) => current.map((item) => (item.id === next.id ? next : item)));
   };
 
+  /** Checklist de salida de una habitación en esos estados (consulta filtrada por habitación). */
+  const fetchTurnoverChecklist = async (roomId: string, statuses: readonly ChecklistStatus[]) =>
+    turnoverChecklistByRoom(await housekeepingService.getChecklists({ roomId }), statuses).get(
+      roomId,
+    );
+
   const startCleaning = async (roomId: number) => {
     const room = hkRooms.find((item) => item.id === roomId);
     if (!room) return;
 
     try {
       const updated = await housekeepingService.startCleaning(room.roomId);
-      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type));
-      notify('Limpieza iniciada correctamente');
+      // El backend crea (o reutiliza) el checklist activo al iniciar: se lee para
+      // que las marcas posteriores lo actualicen en vez de crear otro.
+      const checklist = await fetchTurnoverChecklist(room.roomId, ACTIVE_CHECKLIST_STATUSES);
+      replaceCleaningRoom(
+        toCleaningRoom(updated, room.id, room.type, checklist?.items, checklist?.id),
+      );
+      notify(
+        checklist
+          ? 'Limpieza iniciada correctamente'
+          : 'Limpieza iniciada, pero no encontramos su checklist. Actualiza la vista.',
+      );
     } catch (cause) {
       await failHousekeeping(cause);
     }
@@ -2415,25 +2454,20 @@ function PrivateWorkspaceReady({
 
   const finishCleaning = async (roomId: number) => {
     const room = hkRooms.find((item) => item.id === roomId);
-    if (!room) return;
-
-    if (room.checklistId && room.checklist.some((item) => !item.done)) {
-      notify('Marca todos los puntos del checklist antes de finalizar la limpieza.');
-      return;
+    if (!room) return false;
+    if (room.checklist.some((item) => !item.done)) {
+      notify('Marca todas las tareas del checklist antes de finalizar la limpieza.');
+      return false;
     }
 
     try {
+      // El backend cierra el checklist activo al completar (exige todos los puntos
+      // marcados, que ya se guardaron al marcarlos). Desde `inspected` reutiliza el
+      // checklist ya completado. No se vuelve a guardar: sería un segundo PUT sobre
+      // un checklist terminal.
       const updated = await housekeepingService.completeCleaning(room.roomId);
-      // Con la habitación ya limpia se cierra el checklist guardado (si existe).
-      const checklist = room.checklistId
-        ? (
-            await housekeepingService.saveChecklist(room.checklistId, {
-              status: 'completed',
-              items: room.checklist,
-            })
-          ).items
-        : room.checklist.map((item) => ({ ...item, done: true }));
-      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist));
+      const checklist = room.checklist.map((item) => ({ ...item, done: true }));
+      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, checklist, room.checklistId));
       if (updated.cleaningCompletedAt) {
         const entry = toCleaningHistoryEntry(
           Date.now(),
@@ -2445,8 +2479,10 @@ function PrivateWorkspaceReady({
         setHkHistory((prev) => [entry, ...prev]);
       }
       notify('Habitación marcada como limpia');
+      return true;
     } catch (cause) {
       await failHousekeeping(cause);
+      return false;
     }
   };
 
@@ -2455,8 +2491,11 @@ function PrivateWorkspaceReady({
     if (!room) return;
 
     try {
+      // Inspeccionar no cambia el checklist completado: se conserva el que ya se muestra.
       const updated = await housekeepingService.inspectRoom(room.roomId);
-      replaceCleaningRoom(toCleaningRoom(updated, room.id, room.type, room.checklist));
+      replaceCleaningRoom(
+        toCleaningRoom(updated, room.id, room.type, room.checklist, room.checklistId),
+      );
       notify('Habitación inspeccionada correctamente');
     } catch (cause) {
       await failHousekeeping(cause);
@@ -2596,19 +2635,39 @@ function PrivateWorkspaceReady({
   const toggleChecklistItem = async (roomId: number, index: number) => {
     const room = hkRooms.find((item) => item.id === roomId);
     if (!room) return;
+    // Limpia o inspeccionada: el checklist ya está completado (historial, el backend no lo edita).
+    if (isCleaningDone(room.status)) return;
 
-    const checklist = room.checklist.map((item, itemIndex) =>
+    const checklistItems = room.checklist.map((item, itemIndex) =>
       itemIndex === index ? { ...item, done: !item.done } : item,
     );
 
     try {
       // El backend sí guarda el checklist de salida (por roomId): antes solo se
       // marcaba en pantalla y se perdía al recargar.
+      if (!room.checklistId) {
+        // Puede existir uno activo que esta vista aún no conoce (lo crea el backend al
+        // iniciar la limpieza): se carga en vez de crear un duplicado (el backend
+        // responde 409). Sus puntos pueden diferir de los mostrados, así que no se
+        // marca a ciegas.
+        const existing = await fetchTurnoverChecklist(room.roomId, ACTIVE_CHECKLIST_STATUSES);
+        if (existing) {
+          setHkRooms((current) =>
+            current.map((item) =>
+              item.id === roomId
+                ? { ...item, checklistId: existing.id, checklist: existing.items }
+                : item,
+            ),
+          );
+          notify('Cargamos el checklist guardado de esta habitación. Vuelve a marcar el punto.');
+          return;
+        }
+      }
       const saved = room.checklistId
-        ? await housekeepingService.saveChecklist(room.checklistId, { items: checklist })
+        ? await housekeepingService.saveChecklist(room.checklistId, { items: checklistItems })
         : await housekeepingService.createChecklist({
             roomId: room.roomId,
-            items: checklist.map((item, position) => ({ ...item, position })),
+            items: checklistItems.map((item, position) => ({ ...item, position })),
           });
       setHkRooms((current) =>
         current.map((item) =>
@@ -2981,7 +3040,7 @@ function PrivateWorkspaceReady({
   /** Recarga reservas, pagos y habitaciones desde el backend (fuente oficial del folio). */
   const recReloadReception = async () => {
     try {
-      const data = await loadWorkspaceData(workspaceDataRole);
+      const data = await loadWorkspaceData(workspaceDataRole, activeRole);
       setRecReservationList(data.recReservations);
       setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
@@ -3093,6 +3152,12 @@ function PrivateWorkspaceReady({
       notify('La reserva no está vinculada al backend.');
       return;
     }
+    // Aviso temprano con el folio cargado (mismo texto que la regla del backend,
+    // que sigue siendo quien la valida).
+    if (recFolioTotals(res.folio).balance !== 0) {
+      notify(describeFrontDeskError('Guest account balance must be zero before checkout'));
+      return;
+    }
     try {
       // El backend cierra el folio (saldo exactamente Q0.00) y deja la habitación sucia.
       await bookingService.checkOut(res.bookingId);
@@ -3123,7 +3188,7 @@ function PrivateWorkspaceReady({
     setRecShowCancel(null);
     notify('Reserva cancelada correctamente');
     try {
-      const data = await loadWorkspaceData(workspaceDataRole);
+      const data = await loadWorkspaceData(workspaceDataRole, activeRole);
       setRecReservationList(data.recReservations);
       setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
@@ -3150,7 +3215,7 @@ function PrivateWorkspaceReady({
 
     try {
       await bookingService.assignRoom(res.bookingId, targetRoom.backendRoomId);
-      const data = await loadWorkspaceData(workspaceDataRole);
+      const data = await loadWorkspaceData(workspaceDataRole, activeRole);
       setRecReservationList(data.recReservations);
       setRecPayments(data.recPayments);
       setRecRoomList(data.recRooms);
@@ -4041,6 +4106,17 @@ function ConciergeContent({
   const [rejectionReason, setRejectionReason] = useState('');
   const [cancelRequestId, setCancelRequestId] = useState<number | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshHistory = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const activeRequests = requests.filter((req) => !isClosedConcierge(req.status));
   const completedRequests = requests.filter((req) => isClosedConcierge(req.status));
@@ -4166,8 +4242,13 @@ function ConciergeContent({
               <h3>Historial de solicitudes</h3>
               <p>Consulta las solicitudes atendidas, completadas o rechazadas.</p>
             </div>
-            <button className="button small secondary" onClick={() => void onRefresh()}>
-              <Activity size={14} /> Actualizar
+            <button
+              className="button small secondary"
+              onClick={() => void refreshHistory()}
+              disabled={refreshing}
+            >
+              <LoaderCircle size={14} className={refreshing ? 'rc-refresh-spinner' : undefined} />{' '}
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
           <div className="cg-history-list">
@@ -4728,7 +4809,7 @@ function HousekeepingContent({
   search: string;
   setSearch: (value: string) => void;
   onStartCleaning: (id: number) => void;
-  onFinishCleaning: (id: number) => void;
+  onFinishCleaning: (id: number) => Promise<boolean>;
   onInspect: (id: number) => void;
   onChangeStatus: (id: number, status: RoomStatus) => void;
   onAttendRequest: (id: number) => void;
@@ -5361,7 +5442,7 @@ function RoomDetailModal({
   room: CleaningRoom;
   onClose: () => void;
   onStartCleaning: (id: number) => void;
-  onFinishCleaning: (id: number) => void;
+  onFinishCleaning: (id: number) => Promise<boolean>;
   onInspect: (id: number) => void;
   onToggleChecklist: (roomId: number, index: number) => void;
   onOpenDefectModal: () => void;
@@ -5454,9 +5535,8 @@ function RoomDetailModal({
           {room.status === 'En proceso' && (
             <button
               className="button primary"
-              onClick={() => {
-                onFinishCleaning(room.id);
-                onClose();
+              onClick={async () => {
+                if (await onFinishCleaning(room.id)) onClose();
               }}
             >
               Finalizar limpieza
@@ -5509,6 +5589,17 @@ function StatusModal({
   onClose: () => void;
   onChangeStatus: (id: number, status: RoomStatus) => void;
 }) {
+  const nextStatusOptions: Record<
+    RoomHousekeepingStatus,
+    { status: RoomStatus; tone: 'info' | 'success'; note?: string }[]
+  > = {
+    dirty: [{ status: 'En proceso', tone: 'info' }],
+    cleaning: [{ status: 'Completada', tone: 'success' }],
+    clean: [{ status: 'Inspeccionada', tone: 'success' }],
+    inspected: [{ status: 'Completada', tone: 'success', note: 'Revertir inspección' }],
+  };
+  const nextStatuses = nextStatusOptions[room.housekeepingStatus];
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" style={{ width: 360 }} onMouseDown={(e) => e.stopPropagation()}>
@@ -5522,27 +5613,22 @@ function StatusModal({
           </button>
         </div>
         <p className="login-helper">
-          Selecciona el nuevo estado. El sistema valida que el cambio siga el flujo de limpieza.
+          {room.housekeepingStatus === 'inspected'
+            ? 'Puedes regresar la habitación a Completada si necesitas corregir la inspección.'
+            : 'Selecciona el siguiente estado permitido en el flujo de limpieza.'}
         </p>
         <div className="hk-status-options">
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'En proceso')}
-          >
-            <span className="hk-summary-dot info" /> En proceso
-          </button>
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'Completada')}
-          >
-            <span className="hk-summary-dot success" /> Completada
-          </button>
-          <button
-            className="hk-status-option"
-            onClick={() => onChangeStatus(room.id, 'Inspeccionada')}
-          >
-            <span className="hk-summary-dot success" /> Inspeccionada
-          </button>
+          {nextStatuses.map(({ status, tone, note }) => (
+            <button
+              className="hk-status-option"
+              key={status}
+              onClick={() => onChangeStatus(room.id, status)}
+            >
+              <span className={`hk-summary-dot ${tone}`} />
+              <span>{status}</span>
+              {note && <small>{note}</small>}
+            </button>
+          ))}
         </div>
       </div>
     </div>

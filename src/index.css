@@ -330,6 +330,17 @@ button {
   background: var(--color-legacy-f2ebe4);
   color: var(--color-text-primary);
 }
+.icon-btn.danger {
+  color: var(--color-error, #b5473c);
+}
+.icon-btn.danger:hover {
+  background: #fae9e6;
+  color: #a93226;
+}
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .notification {
   position: relative;
 }
@@ -3050,7 +3061,9 @@ button {
   }
 
   .gs-receipt-modal,
-  .gs-receipt-modal * {
+  .gs-receipt-modal *,
+  .rc-invoice-modal,
+  .rc-invoice-modal * {
     visibility: visible;
   }
 
@@ -3060,6 +3073,26 @@ button {
     width: 100% !important;
     max-width: none !important;
     box-shadow: none !important;
+  }
+
+  .rc-invoice-modal {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  .rc-invoice-modal .modal-head,
+  .rc-invoice-modal .rc-invoice-actions {
+    display: none !important;
+  }
+
+  .rc-invoice-modal .rc-invoice {
+    margin: 0;
+    border: 0;
   }
 
   .gs-receipt-modal .modal-head button,
@@ -4190,6 +4223,15 @@ button {
 .hk-status-option:hover {
   border-color: var(--color-brand-gold);
   background: var(--color-legacy-faf5ee);
+}
+.hk-status-option > span:nth-of-type(2) {
+  flex: 1;
+  text-align: left;
+}
+.hk-status-option small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
 }
 
 .hk-form-label {
@@ -5959,6 +6001,101 @@ button {
 @keyframes rc-refresh-rotate {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Back-office layouts: keep dense operational screens usable on touch widths. */
+@media (max-width: 900px) {
+  .dashboard-grid,
+  .bottom-grid,
+  .adm-report-grid,
+  .adm-dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-grid > *,
+  .bottom-grid > *,
+  .adm-report-grid > *,
+  .adm-dashboard-grid > * {
+    min-width: 0;
+  }
+
+  .adm-role-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 8px;
+    overflow-y: auto;
+  }
+
+  .modal,
+  .adm-modal {
+    width: 100% !important;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    margin: 0;
+    padding: 18px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .modal-head {
+    gap: 12px;
+  }
+
+  .modal-head h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .modal-foot {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .modal-foot .button {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+
+  .rc-form-grid,
+  .adm-cash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-room-feature-picker > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-report-stats {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel-heading,
+  .adm-panel-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .panel-heading > *,
+  .adm-panel-heading > * {
+    min-width: 0;
+  }
+
+  .cg-request-foot,
+  .cg-request-actions,
+  .rs-history-row,
+  .cg-history-row {
+    flex-wrap: wrap;
+  }
+
+  .cg-request-actions .button,
+  .modal-foot .button {
+    min-height: 44px;
   }
 }
 .rc-cal-toolbar {

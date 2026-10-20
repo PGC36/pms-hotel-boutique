@@ -1,5 +1,6 @@
 import { guestRequest } from './guestHttp';
 import { httpClient } from './http-client';
+import { catalogNameError } from '@/shared/utils/catalogName';
 
 export type HousekeepingServiceOption = {
   id: string;
@@ -38,9 +39,14 @@ export const housekeepingCatalogService = {
     data: { name: string; description: string; active?: boolean },
     id?: string,
   ): Promise<HousekeepingServiceOption> {
+    const nameError = catalogNameError(data.name);
+    if (nameError) throw new Error(nameError);
     const dto = id
       ? await httpClient.put<HousekeepingServiceDto>(`/housekeeping/services/${id}`, data)
       : await httpClient.post<HousekeepingServiceDto>('/housekeeping/services', data);
     return map(dto);
+  },
+  async deleteService(id: string): Promise<void> {
+    await httpClient.delete(`/housekeeping/services/${id}`);
   },
 };

@@ -27,6 +27,7 @@ import { GuestAccountScreen } from '@/modules/front-desk/screens/GuestAccountScr
 import { CheckOutScreen } from '@/modules/front-desk/screens/CheckOutScreen';
 import { PrivateSessionWorkspace } from '@/private/workspace/PrivateSessionWorkspace';
 import { RouteErrorBoundary } from '@/app/observability/RouteErrorBoundary';
+import { PmsSubrouteBoundary } from '@/private/guards/PmsSubrouteBoundary';
 
 /**
  * Cada pantalla real de un módulo de privateNavigation vive aquí, con su
@@ -189,31 +190,69 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorBoundary />,
     children: [
       { path: routePaths.pms.dashboard, element: <PrivateSessionWorkspace /> },
-      { path: routePaths.pms.reception, element: <PrivateSessionWorkspace role="reception" /> },
       {
         path: routePaths.pms.housekeeping,
-        element: <PrivateSessionWorkspace role="housekeeping" />,
+        element: (
+          <RequirePermission permission="housekeeping:view">
+            <PrivateSessionWorkspace role="housekeeping" />
+          </RequirePermission>
+        ),
       },
       {
         path: routePaths.pms.roomService,
-        element: <PrivateSessionWorkspace role="room-service" />,
+        element: (
+          <RequirePermission permission="room-service:view">
+            <PrivateSessionWorkspace role="room-service" />
+          </RequirePermission>
+        ),
       },
-      { path: routePaths.pms.concierge, element: <PrivateSessionWorkspace role="concierge" /> },
+      {
+        path: routePaths.pms.reception,
+        element: (
+          <RequirePermission permission="reception:view">
+            <PrivateSessionWorkspace role="reception" />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: routePaths.pms.concierge,
+        element: (
+          <RequirePermission permission="concierge:view">
+            <PrivateSessionWorkspace role="concierge" />
+          </RequirePermission>
+        ),
+      },
       {
         path: routePaths.pms.cash,
-        element: <PrivateSessionWorkspace role="admin" initialNav="Caja" />,
+        element: (
+          <RequirePermission permission="cash:view">
+            <PrivateSessionWorkspace role="admin" initialNav="Caja" />
+          </RequirePermission>
+        ),
       },
       {
         path: routePaths.pms.users,
-        element: <PrivateSessionWorkspace role="admin" initialNav="Usuarios y roles" />,
+        element: (
+          <RequirePermission permission="users:view">
+            <PrivateSessionWorkspace role="admin" initialNav="Usuarios y roles" />
+          </RequirePermission>
+        ),
       },
       {
         path: routePaths.pms.rooms,
-        element: <PrivateSessionWorkspace role="admin" initialNav="Habitaciones" />,
+        element: (
+          <RequirePermission permission="rooms:manage">
+            <PrivateSessionWorkspace role="admin" initialNav="Habitaciones" />
+          </RequirePermission>
+        ),
       },
       {
         path: routePaths.pms.roomTypes,
-        element: <PrivateSessionWorkspace role="admin" initialNav="Habitaciones" />,
+        element: (
+          <RequirePermission permission="rooms:manage">
+            <PrivateSessionWorkspace role="admin" initialNav="Habitaciones" />
+          </RequirePermission>
+        ),
       },
       {
         path: routePaths.pms.root,
@@ -223,6 +262,7 @@ export const router = createBrowserRouter([
           { path: routePaths.pms.dashboard, element: <OperationsHomePage /> },
           ...placeholderPmsRoutes,
           ...dedicatedPmsRoutes,
+          { path: '/pms/:workspace/:area/*', element: <PmsSubrouteBoundary /> },
           { path: routePaths.pms.notFound, element: <PrivateNotFoundPage /> },
         ],
       },

@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/shared/components/Button';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { Input } from '@/shared/components/Input';
@@ -59,7 +60,7 @@ const initialForm: FormState = {
 };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos completar la reserva. Intenta nuevamente.');
 }
 
 function validateForm(form: FormState, roomTypes: RoomType[]): FormErrors {

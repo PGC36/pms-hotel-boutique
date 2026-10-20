@@ -662,13 +662,31 @@ test('wrong credentials show an error, retry succeeds, and intended URL is resto
 
 test('each staff role only sees its menu and direct unauthorized URLs are blocked', async () => {
   const roles = [
-    ['recepcion', '/pms/reception', 'Reservas', '/pms/users', 7],
-    ['limpieza', '/pms/housekeeping', 'Habitaciones', '/pms/cash', 4],
-    ['conserjeria', '/pms/concierge', 'Solicitudes', '/pms/cash', 3],
+    [
+      'recepcion',
+      '/pms/reception',
+      'Reservas',
+      ['/pms/users', '/pms/reception/admin', '/pms/reception/roomservice'],
+      7,
+    ],
+    [
+      'limpieza',
+      '/pms/housekeeping',
+      'Habitaciones',
+      ['/pms/cash', '/pms/housekeeping/roomservice'],
+      4,
+    ],
+    ['conserjeria', '/pms/concierge', 'Solicitudes', ['/pms/cash', '/pms/concierge/admin'], 3],
     // Sin inventory.read no se ofrece Inventario (el backend respondería 403).
-    ['roomservice', '/pms/room-service', 'Pedidos activos', '/pms/users', 3],
+    [
+      'roomservice',
+      '/pms/room-service',
+      'Pedidos activos',
+      ['/pms/users', '/pms/room-service/admin'],
+      3,
+    ],
     // Incluye los catálogos administrables de Conserjería y Limpieza.
-    ['admin', '/pms/dashboard', 'Administración', null, 49],
+    ['admin', '/pms/dashboard', 'Administración', [], 49],
   ];
   for (const [account, expectedPath, section, forbidden, count] of roles) {
     await open('/login');
@@ -681,11 +699,20 @@ test('each staff role only sees its menu and direct unauthorized URLs are blocke
     assert.ok(labels.includes(section), `${account}: ${labels.join(', ')}`);
     if (account === 'admin') assert.ok(labels.includes('Catálogo de Limpieza'));
     assert.equal(labels.length, count, account);
-    if (forbidden) {
+    if (forbidden.length) {
+      for (const path of forbidden) {
+        await act(async () => {
+          await router.navigate(path);
+        });
+        assert.ok(
+          text().includes('No tienes permiso para ver esta sección'),
+          `${account}: ${path}`,
+        );
+      }
       await act(async () => {
-        await router.navigate(`${forbidden}/no-existe`);
+        await router.navigate(expectedPath);
+        await wait();
       });
-      assert.ok(text().includes('No tienes permiso para ver esta sección'), account);
     }
     await logoutFromWorkspace();
     assert.equal(router.state.location.pathname, '/');
@@ -963,7 +990,7 @@ test('shared service sets Bearer, refreshes once, retries, and clears on refresh
 
   failNextRefresh = true;
   requests = [];
-  await assert.rejects(httpClient.get('/protected-once'), /HTTP 401/);
+  await assert.rejects(httpClient.get('/protected-once'), /Token vencido\./);
   assert.equal(values.size, 0);
 });
 

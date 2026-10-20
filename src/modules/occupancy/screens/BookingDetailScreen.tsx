@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { bookingService } from '@/services/bookingService';
 import { guestService } from '@/services/guestService';
 import { roomService } from '@/services/roomService';
@@ -72,7 +73,7 @@ const BOOKING_STATUS_TONES: Record<Booking['status'], BadgeTone> = {
 };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos cargar la reserva. Intenta nuevamente.');
 }
 
 function toDateInputValue(date: Date): string {

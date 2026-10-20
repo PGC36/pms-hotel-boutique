@@ -40,6 +40,7 @@ import {
   PromoModal,
   RoleModal,
   RoomModal,
+  RoomTypeModal,
   SeasonRateModal,
   UserModal,
 } from '@/modules/administration/components/AdminContent';
@@ -789,7 +790,10 @@ function installHousekeepingBackend() {
     const room = path.match(/^\/housekeeping\/rooms\/([^/]+)\/(start|complete|inspect)$/);
     if (method === 'POST' && room) {
       const index = state.rooms.findIndex((item) => item.id === room[1]);
-      const [from, to, field] = turnover[room[2]];
+      let [from, to, field] = turnover[room[2]];
+      if (room[2] === 'complete' && state.rooms[index].housekeepingStatus === 'inspected') {
+        from = 'inspected';
+      }
       if (state.rooms[index].housekeepingStatus !== from) return json({ status: 400 }, 400);
       state.rooms[index] = {
         ...state.rooms[index],
@@ -1036,6 +1040,300 @@ test('limpieza: una habitación limpia se inspecciona contra el backend', async 
   assert.equal(cardFor('202').status, 'Inspeccionada');
   assert.equal(hkBackend.rooms[3].housekeepingStatus, 'inspected');
   assert.equal(hkBackend.rooms[3].status, 'occupied', 'el turnover no toca Room.status');
+});
+
+test('limpieza: una inspección se puede revertir a completada y oculta saltos inválidos', async () => {
+  await mountHousekeeping();
+  await goTo('Habitaciones');
+  const room = cardFor('202');
+  await act(async () => buttons('Inspeccionar', room.card)[0].props.onClick());
+  await settle();
+
+  await act(async () => buttons('Ver detalle', cardFor('202').card)[0].props.onClick());
+  await settle();
+  await act(async () => buttons('Cambiar estado', view.root)[0].props.onClick());
+
+  assert.deepEqual(
+    view.root
+      .findAll((node) => node.type === 'button' && hasClass(node, 'hk-status-option'))
+      .map(text),
+    ['CompletadaRevertir inspección'],
+  );
+  const completeOption = view.root.find(
+    (node) => node.type === 'button' && hasClass(node, 'hk-status-option'),
+  );
+  await act(async () => completeOption.props.onClick());
+  await settle();
+
+  assert.equal(hkBackend.rooms[3].housekeepingStatus, 'clean');
+  assert.equal(cardFor('202').status, 'Completada');
+  assert.ok(hkBackend.requests.includes('POST /housekeeping/rooms/room-202/complete'));
+});
+
+// --- Limpieza: checklist de salida persistente con las reglas del backend (#110) ---
+
+const TURNOVER_ITEMS = ['Cama preparada', 'Baño limpio', 'Toallas completas'];
+
+/**
+ * Aplica sobre el backend simulado de Limpieza las reglas reales del checklist de
+ * salida (HousekeepingServiceImpl): iniciar crea o reutiliza el activo, completar lo
+ * cierra y exige todos los puntos, un checklist terminal no se edita, solo hay uno
+ * activo por habitación, inspeccionar o revertir exige uno completado, y
+ * `GET /housekeeping/checklists` filtra por `roomId`.
+ */
+function installTurnoverRules(state) {
+  const inner = globalThis.fetch;
+  const json = (body, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  let seq = 0;
+  state.calls = [];
+  const turnovers = (roomId) =>
+    state.checklists.filter((item) => !item.serviceRequestId && item.roomId === roomId);
+  const active = (roomId) =>
+    turnovers(roomId).find((item) => ['pending', 'in_progress'].includes(item.status));
+  const addChecklist = (roomId, items) => {
+    seq += 1;
+    const stamp = `2026-10-03T11:0${seq}:00Z`;
+    const checklist = {
+      id: `turn-${seq}`,
+      serviceRequestId: null,
+      roomId,
+      roomNumber: null,
+      status: 'pending',
+      observations: null,
+      responsibleUserEmail: 'limpieza@hotelboutique.test',
+      completedByUserEmail: null,
+      startedAt: null,
+      completedAt: null,
+      createdAt: stamp,
+      updatedAt: stamp,
+      items: items.map((item, index) => ({
+        id: `turn-${seq}-item-${index + 1}`,
+        label: item.label,
+        checked: Boolean(item.checked),
+        position: index,
+        notes: null,
+        checkedByUserEmail: null,
+        checkedAt: null,
+        createdAt: stamp,
+        updatedAt: stamp,
+      })),
+    };
+    state.checklists.push(checklist);
+    return checklist;
+  };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const path = url.pathname.replace(/^\/api\/v1/, '');
+    const method = init.method ?? 'GET';
+    const body = init.body ? JSON.parse(String(init.body)) : {};
+    state.calls.push({ method, path, search: url.search, body });
+    if (method === 'GET' && path === '/housekeeping/checklists') {
+      const roomId = url.searchParams.get('roomId');
+      return json(
+        roomId ? state.checklists.filter((item) => item.roomId === roomId) : state.checklists,
+      );
+    }
+    if (method === 'POST' && path === '/housekeeping/checklists' && body.roomId) {
+      if (active(body.roomId)) {
+        return json(
+          { message: `Active turnover checklist already exists for room: ${body.roomId}` },
+          409,
+        );
+      }
+      return json(addChecklist(body.roomId, body.items), 201);
+    }
+    const put = path.match(/^\/housekeeping\/checklists\/([^/]+)$/);
+    if (method === 'PUT' && put) {
+      const current = state.checklists.find((item) => item.id === put[1]);
+      if (current && ['completed', 'cancelled'].includes(current.status)) {
+        return json(
+          { message: `Cannot update checklist in terminal status: ${current.status}` },
+          409,
+        );
+      }
+    }
+    const room = path.match(/^\/housekeeping\/rooms\/([^/]+)\/(start|complete|inspect)$/);
+    if (method === 'POST' && room) {
+      const [, roomId, action] = room;
+      const status = state.rooms.find((item) => item.id === roomId)?.housekeepingStatus;
+      if (action === 'start' && status === 'dirty') {
+        const checklist =
+          active(roomId) ??
+          addChecklist(
+            roomId,
+            TURNOVER_ITEMS.map((label) => ({ label })),
+          );
+        checklist.status = 'in_progress';
+      }
+      if (action === 'complete' && status === 'cleaning') {
+        const checklist = active(roomId);
+        if (!checklist) {
+          return json({ message: 'Cannot complete room without active turnover checklist' }, 409);
+        }
+        if (checklist.items.some((item) => !item.checked)) {
+          return json({ message: 'Cannot complete checklist with unchecked items' }, 409);
+        }
+        checklist.status = 'completed';
+      }
+      const needsCompleted =
+        (action === 'inspect' && status === 'clean') ||
+        (action === 'complete' && status === 'inspected');
+      if (needsCompleted && !turnovers(roomId).some((item) => item.status === 'completed')) {
+        return json({ message: 'Cannot inspect room without completed turnover checklist' }, 409);
+      }
+    }
+    return inner(input, init);
+  };
+  return { addChecklist, turnovers };
+}
+
+const hkContent = () =>
+  view.root.find(
+    (node) =>
+      typeof node.props?.onToggleChecklist === 'function' && Array.isArray(node.props.rooms),
+  );
+const hkRoomById = (roomId) => hkContent().props.rooms.find((room) => room.roomId === roomId);
+const hkCalls = (method, pattern) =>
+  hkBackend.calls.filter((call) => call.method === method && pattern.test(call.path));
+
+test('limpieza: el checklist de salida se guarda en el backend, no se duplica y sobrevive a recargar', async () => {
+  await mountHousekeeping();
+  const rules = installTurnoverRules(hkBackend);
+  await goTo('Habitaciones');
+
+  await act(async () => hkContent().props.onStartCleaning(hkRoomById('room-101').id));
+  await settle();
+  assert.equal(
+    hkRoomById('room-101').checklistId,
+    'turn-1',
+    'usa el checklist que creó el backend',
+  );
+  assert.deepEqual(
+    hkRoomById('room-101').checklist.map((item) => item.label),
+    TURNOVER_ITEMS,
+  );
+  assert.ok(
+    hkBackend.calls.some((call) => call.search === '?roomId=room-101'),
+    'la consulta del checklist se filtra por habitación',
+  );
+
+  let finished;
+  await act(async () => {
+    finished = await hkContent().props.onFinishCleaning(hkRoomById('room-101').id);
+  });
+  assert.equal(finished, false, 'no se completa con puntos sin marcar');
+  assert.equal(hkCalls('POST', /\/rooms\/room-101\/complete$/).length, 0);
+
+  // Marcar y desmarcar se guarda en el backend sobre el mismo checklist.
+  await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-101').id, 0));
+  await settle();
+  await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-101').id, 0));
+  await settle();
+  assert.equal(
+    rules.turnovers('room-101')[0].items[0].checked,
+    false,
+    'desmarcar también se guarda',
+  );
+  for (let index = 0; index < TURNOVER_ITEMS.length; index++) {
+    await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-101').id, index));
+    await settle();
+  }
+  assert.ok(rules.turnovers('room-101')[0].items.every((item) => item.checked));
+  assert.equal(hkCalls('POST', /^\/housekeeping\/checklists$/).length, 0, 'no crea otro checklist');
+  const putsBeforeFinish = hkCalls('PUT', /^\/housekeeping\/checklists\//).length;
+  assert.equal(putsBeforeFinish, TURNOVER_ITEMS.length + 2);
+
+  await act(async () => {
+    finished = await hkContent().props.onFinishCleaning(hkRoomById('room-101').id);
+  });
+  await settle();
+  assert.equal(finished, true);
+  assert.equal(hkBackend.rooms[0].housekeepingStatus, 'clean');
+  assert.equal(rules.turnovers('room-101')[0].status, 'completed', 'el backend cerró el checklist');
+  assert.equal(
+    hkCalls('PUT', /^\/housekeeping\/checklists\//).length,
+    putsBeforeFinish,
+    'no se vuelve a guardar un checklist terminal',
+  );
+  assert.ok(!toasts().some((toast) => /terminal/i.test(toast)), toasts().join());
+  assert.equal(hkRoomById('room-101').status, 'Completada');
+
+  // Inspeccionar y revertir la inspección reutilizan el checklist completado.
+  await act(async () => hkContent().props.onInspect(hkRoomById('room-101').id));
+  await settle();
+  assert.equal(hkRoomById('room-101').status, 'Inspeccionada');
+  await act(async () => {
+    finished = await hkContent().props.onFinishCleaning(hkRoomById('room-101').id);
+  });
+  await settle();
+  assert.equal(finished, true, 'desde inspected se vuelve a completada');
+  assert.equal(hkBackend.rooms[0].housekeepingStatus, 'clean');
+  assert.equal(rules.turnovers('room-101').length, 1, 'el historial no se duplica');
+
+  // Recargar: el checklist completado se lee del backend con sus respuestas.
+  await act(async () => view.unmount());
+  await act(async () => {
+    view = create(
+      <MemoryRouter>
+        <PrivateWorkspace role="housekeeping" sessionName="Limpieza Test" />
+      </MemoryRouter>,
+    );
+  });
+  for (let i = 0; i < 20 && !view.root.findAll((node) => hasClass(node, 'side-nav')).length; i++) {
+    await settle(300);
+  }
+  await goTo('Habitaciones');
+  assert.equal(hkRoomById('room-101').checklistId, 'turn-1');
+  assert.ok(hkRoomById('room-101').checklist.every((item) => item.done));
+  await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-101').id, 0));
+  await settle();
+  assert.ok(
+    rules.turnovers('room-101')[0].items[0].checked,
+    'un checklist completado (historial) no se modifica',
+  );
+});
+
+test('limpieza: marcar antes de iniciar crea un solo checklist y al iniciar se reutiliza', async () => {
+  await mountHousekeeping();
+  const rules = installTurnoverRules(hkBackend);
+  await goTo('Habitaciones');
+
+  await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-102').id, 0));
+  await settle();
+  const created = rules.turnovers('room-102');
+  assert.equal(created.length, 1);
+  assert.equal(hkRoomById('room-102').checklistId, created[0].id);
+  assert.equal(created[0].items[0].checked, true);
+
+  await act(async () => hkContent().props.onStartCleaning(hkRoomById('room-102').id));
+  await settle();
+  assert.equal(rules.turnovers('room-102').length, 1, 'iniciar reutiliza el checklist existente');
+  assert.equal(hkRoomById('room-102').checklistId, created[0].id);
+  assert.equal(hkRoomById('room-102').checklist[0].done, true, 'se conserva lo ya marcado');
+});
+
+test('limpieza: si el backend ya tiene un checklist activo se carga en vez de crear otro', async () => {
+  await mountHousekeeping();
+  const rules = installTurnoverRules(hkBackend);
+  await goTo('Habitaciones');
+  // Otro dispositivo creó el checklist después de cargar esta vista.
+  const existing = rules.addChecklist('room-102', [{ label: 'Ventanas limpias' }]);
+
+  await act(async () => hkContent().props.onToggleChecklist(hkRoomById('room-102').id, 0));
+  await settle();
+  assert.equal(hkCalls('POST', /^\/housekeeping\/checklists$/).length, 0, 'no intenta duplicarlo');
+  assert.equal(rules.turnovers('room-102').length, 1);
+  assert.equal(hkRoomById('room-102').checklistId, existing.id);
+  assert.deepEqual(
+    hkRoomById('room-102').checklist.map((item) => item.label),
+    ['Ventanas limpias'],
+  );
+  assert.equal(existing.items[0].checked, false, 'no marca a ciegas un punto distinto');
+  assert.ok(toasts().some((toast) => toast.includes('Cargamos el checklist guardado')));
 });
 
 test('limpieza: si el backend rechaza la transición se muestra el estado real', async () => {
@@ -2233,12 +2531,25 @@ test('recepción: con sus permisos reales conserva todas sus secciones', async (
   ]);
 });
 
-test('recepción: carga solicitudes y finanzas globales desde el backend', async () => {
+test('recepción: consulta finanzas con sus permisos y no consulta solicitudes internas', async () => {
   await mountReception();
-  for (const path of ['/service-requests', '/charges', '/payments', '/deposits']) {
+  // Recepción tiene folios/charges/payments/deposits.read en el backend.
+  for (const path of ['/charges', '/payments', '/deposits']) {
     assert.ok(
       recBackend.requests.some(({ call }) => call === `GET ${path}`),
       `recepción consulta ${path}`,
+    );
+  }
+  for (const path of [
+    '/service-requests',
+    '/room-service/products',
+    '/room-service/orders',
+    '/concierge/requests',
+    '/admin/audit-logs',
+  ]) {
+    assert.ok(
+      !recBackend.requests.some(({ call }) => call.startsWith(`GET ${path}`)),
+      `recepción no consulta ${path}`,
     );
   }
 });
@@ -4071,6 +4382,90 @@ test('usuarios (administración): un nombre guardado que no cumple las reglas no
   assert.equal(saved.length, 1);
 });
 
+test('usuarios (administración): al editar la contraseña es opcional y solo se envía si se escribe', async () => {
+  const saved = [];
+  const user = {
+    id: 3,
+    dbId: 'u3',
+    name: 'Ana Pérez',
+    firstName: 'Ana',
+    lastName: 'Pérez',
+    email: 'ana@aurora.test',
+    role: 'Recepción',
+    status: 'Activo',
+    lastAccess: '',
+  };
+  act(() => {
+    view = create(
+      <UserModal
+        user={user}
+        roles={adminRoles}
+        onClose={() => {}}
+        onSave={async (next) => {
+          saved.push(next);
+        }}
+      />,
+    );
+  });
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].password, undefined, 'vacía conserva la contraseña actual');
+
+  typeIn(formControl('Nueva contraseña'), '1234');
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Mínimo 8 caracteres.']);
+  assert.equal(saved.length, 1);
+
+  typeIn(formControl('Nueva contraseña'), 'Segura2026');
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].password, 'Segura2026');
+});
+
+test('tipos de habitación (administración): guarda las características elegidas del catálogo', async () => {
+  const saved = [];
+  const roomType = {
+    id: 1,
+    dbId: 'rt-1',
+    name: 'Deluxe',
+    capacity: 2,
+    description: '',
+    roomFeatureIds: ['f-wifi'],
+    features: ['Wi-Fi'],
+    basePrice: 900,
+    status: 'Activo',
+    images: [],
+  };
+  const roomFeatures = [
+    { id: 'f-wifi', name: 'Wi-Fi' },
+    { id: 'f-view', name: 'Vista al mar' },
+  ];
+  act(() => {
+    view = create(
+      <RoomTypeModal
+        roomType={roomType}
+        roomFeatures={roomFeatures}
+        onClose={() => {}}
+        onSave={async (next) => {
+          saved.push(next);
+        }}
+      />,
+    );
+  });
+  const checkbox = (name) =>
+    view.root
+      .findAll((node) => node.type === 'label' && text(node) === name)[0]
+      .find((node) => node.type === 'input');
+  act(() => checkbox('Vista al mar').props.onChange({ target: { checked: true } }));
+  act(() => checkbox('Wi-Fi').props.onChange({ target: { checked: false } }));
+  await act(async () => buttons('Guardar cambios')[0].props.onClick());
+  await settle();
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].roomFeatureIds, ['f-view']);
+  assert.deepEqual(saved[0].features, ['Vista al mar']);
+  assert.ok(!('bedConfiguration' in saved[0]), 'las características no tocan las camas');
+});
+
 test('roles (administración): nombre obligatorio y código de un rol nuevo dentro del límite', async () => {
   const saved = [];
   act(() => {
@@ -4124,6 +4519,46 @@ test('habitaciones (administración): número, piso con número, capacidad enter
     { number, floor, capacity, rate, roomTypeId },
     { number: '204', floor: 'Piso 2', capacity: 3, rate: 1250.5, roomTypeId: 'rt1' },
   );
+});
+
+test('habitaciones y promociones (administración): conservan las reglas de formato del equipo', async () => {
+  const savedRooms = [];
+  act(() => {
+    view = create(
+      <RoomModal
+        room={null}
+        roomTypes={adminRoomTypes}
+        onClose={() => {}}
+        onSave={async (room) => savedRooms.push(room)}
+      />,
+    );
+  });
+  typeIn(formControl('Número'), '20 4');
+  typeIn(formControl('Capacidad'), '21');
+  await act(async () => buttons('Crear habitación')[0].props.onClick());
+  assert.deepEqual(shownErrors(), ['Usa solo letras, números y guiones.', 'Máximo 20 huéspedes.']);
+  typeIn(formControl('Número'), '204-A');
+  typeIn(formControl('Capacidad'), '20');
+  await act(async () => buttons('Crear habitación')[0].props.onClick());
+  assert.equal(savedRooms.length, 1);
+
+  const savedPromos = [];
+  act(() => {
+    view = create(
+      <PromoModal
+        promo={null}
+        onClose={() => {}}
+        onSave={async (promo) => savedPromos.push(promo)}
+      />,
+    );
+  });
+  typeIn(formControl('Nombre'), '-Oferta');
+  typeIn(formControl('Código'), 'A');
+  await act(async () => buttons('Crear promoción')[0].props.onClick());
+  const [nameError, codeError] = shownErrors();
+  assert.match(nameError, /letras, números/);
+  assert.equal(codeError, 'Mínimo 2 caracteres.');
+  assert.equal(savedPromos.length, 0);
 });
 
 test('habitaciones (administración): sin tipos de habitación no se puede guardar', async () => {

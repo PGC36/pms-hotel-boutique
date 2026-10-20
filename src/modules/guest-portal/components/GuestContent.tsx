@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
   ArrowRight,
@@ -275,7 +276,7 @@ function toGuestMenuItem(product: Product, id: number): GuestMenuItem {
 }
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'No fue posible cargar tu portal de huésped.';
+  return getUserFacingErrorMessage(cause, 'No pudimos cargar tu portal de huésped.');
 }
 
 function GuestMetric({

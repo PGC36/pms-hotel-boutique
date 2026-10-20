@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { bookingCompanionService } from '@/services/bookingCompanionService';
 import { bookingService } from '@/services/bookingService';
 import { guestAccountService } from '@/services/guestAccountService';
@@ -59,7 +60,7 @@ const BOOKING_STATUS_TONES: Record<Booking['status'], BadgeTone> = {
 };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Error inesperado.';
+  return getUserFacingErrorMessage(cause, 'No pudimos completar el check-in. Intenta nuevamente.');
 }
 
 function companionToForm(companion: BookingCompanion): CompanionForm {

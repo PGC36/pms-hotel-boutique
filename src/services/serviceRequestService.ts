@@ -9,7 +9,7 @@ import type {
   ServiceRequestTypeDto,
 } from '@/shared/types/entities/service-request';
 import { mockUtils, simulateLatency } from './mockUtils';
-import { HttpError, httpClient } from './http-client';
+import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { guestRequest } from './guestHttp';
 
 type ServiceRequestResponse = {
@@ -73,13 +73,9 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 
 function getHttpErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof HttpError)) return error instanceof Error ? error.message : fallback;
-  const data = error.data;
-  if (data && typeof data === 'object') {
-    const value = data as { message?: unknown; error?: unknown; detail?: unknown };
-    if (typeof value.message === 'string' && value.message.trim()) return value.message;
-    if (typeof value.error === 'string' && value.error.trim()) return value.error;
-    if (typeof value.detail === 'string' && value.detail.trim()) return value.detail;
-  }
+  if (error.status >= 500) return error.message;
+  const backendMessage = getControlledBackendMessage(error.data);
+  if (backendMessage) return backendMessage;
   if (error.status === 400) {
     return `${fallback} El backend rechazó la operación: la solicitud cambió de estado o ya no admite ese cambio.`;
   }

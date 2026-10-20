@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import {
   Activity,
   ArrowRight,
@@ -19,6 +29,7 @@ import {
   Search,
   Sparkles,
   Star,
+  Trash2,
   TriangleAlert,
   TrendingUp,
   Users as UsersIcon,
@@ -40,8 +51,9 @@ import { promotionService } from '@/services/promotionService';
 import { reportingService, type OperationalReport } from '@/services/reportingService';
 import { rolePermissionKeysFromUi } from '@/modules/administration/utils/rolePermissions';
 import { roomService } from '@/services/roomService';
-import { HttpError } from '@/services/http-client';
+import { getUserFacingErrorMessage } from '@/services/http-client';
 import { CatalogImage } from '@/shared/components/CatalogImage';
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { ConciergeCatalogPanel } from './ConciergeCatalogPanel';
 import { HousekeepingCatalogPanel } from './HousekeepingCatalogPanel';
 import { HousekeepingChecklistTemplatePanel } from './HousekeepingChecklistTemplatePanel';
@@ -49,6 +61,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { ImageGalleryField } from '@/shared/components/ImageGalleryField';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { toDtoCalendarDate } from '@/shared/types/common';
+import { catalogNameError } from '@/shared/utils/catalogName';
 import { formatAmenitySchedule, parseAmenityScheduleInput } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
@@ -96,7 +109,8 @@ import {
   type MediaImage,
   type MediaImageAssignmentDto,
 } from '@/shared/types/entities/media-image';
-import type { Product } from '@/shared/types/entities/product';
+import type { Product, ProductDto } from '@/shared/types/entities/product';
+import type { RoomFeature } from '@/shared/types/entities/room-feature';
 import type { Role } from '@/shared/types/entities/role';
 import type { Room, RoomStatusDto } from '@/shared/types/entities/room';
 import type { RoomType } from '@/shared/types/entities/room-type';
@@ -193,8 +207,9 @@ type RoomServiceItem = {
   dbId: string;
   name: string;
   description: string;
-  /** Etiqueta de la categoría real del producto (solo lectura en este modal). */
+  /** Etiqueta y valor persistido de la categoría real del producto. */
   category: string;
+  categoryCode: Product['category'];
   price: number;
   available: boolean;
   status: 'Activo' | 'Inactivo';
@@ -638,6 +653,17 @@ const CASH_CONCEPT_MAX_LENGTH = 255;
 /** Descuento de una promoción (`UpsertPromotionRequest`, @Min(1) @Max(100)). */
 const PROMO_PERCENT_MIN = 1;
 const PROMO_PERCENT_MAX = 100;
+/**
+ * Reglas de formato de los formularios de habitaciones y promociones (antes como
+ * `pattern`/`max` nativos del formulario; aquí con el error junto al campo).
+ */
+const ROOM_NUMBER_PATTERN = /^[A-Za-z0-9-]+$/;
+const ROOM_CAPACITY_MAX = 20;
+const ROOM_TYPE_NAME_PATTERN = /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9'’ -]{1,79}$/;
+const PROMO_NAME_PATTERN = /^[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ -]{1,99}$/;
+const PROMO_CODE_MIN_LENGTH = 2;
+const patternError = (value: string, pattern: RegExp, message: string) =>
+  pattern.test(value.trim()) ? null : message;
 
 const adminUserFromDomain = (user: User, roles: Role[], index: number): AdminUser => {
   // Por el código real: un rol personalizado ya no aparece como Recepción (B3).
@@ -712,12 +738,20 @@ const PRODUCT_CATEGORY_LABELS: Record<Product['category'], string> = {
   other: 'Otros',
 };
 
+const PRODUCT_CATEGORY_DTO: Record<Product['category'], ProductDto['category']> = {
+  foodAndBeverage: 'food_and_beverage',
+  minibar: 'minibar',
+  shop: 'shop',
+  other: 'other',
+};
+
 const adminProductFromDomain = (product: Product, index: number): RoomServiceItem => ({
   id: parseDbId(product.id, index + 1),
   dbId: product.id,
   name: product.name,
   description: product.description ?? '',
   category: PRODUCT_CATEGORY_LABELS[product.category] ?? product.category,
+  categoryCode: product.category,
   price: centsToAmount(product.priceCents),
   available: product.active,
   status: product.active ? 'Activo' : 'Inactivo',
@@ -735,13 +769,7 @@ const productSkuFromName = (name: string) => {
 };
 
 const serviceErrorMessage = (error: unknown) => {
-  if (error instanceof HttpError && error.data && typeof error.data === 'object') {
-    const data = error.data as { message?: unknown; error?: unknown; detail?: unknown };
-    if (typeof data.message === 'string' && data.message.trim()) return data.message;
-    if (typeof data.detail === 'string' && data.detail.trim()) return data.detail;
-    if (typeof data.error === 'string' && data.error.trim()) return data.error;
-  }
-  return error instanceof Error ? error.message : 'No fue posible completar la operacion.';
+  return getUserFacingErrorMessage(error, 'No fue posible completar la operación.');
 };
 
 /**
@@ -1031,9 +1059,15 @@ function AdminModal({
   error?: string | null;
 }) {
   const close = submitting ? () => undefined : onClose;
+  const modalRef = useRef<HTMLDivElement>(null);
   return (
     <div className="modal-backdrop" onMouseDown={close}>
-      <div className="modal adm-modal" style={{ width }} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="modal adm-modal"
+        style={{ width }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <div>
             <p className="eyebrow">{eyebrow}</p>
@@ -1051,12 +1085,31 @@ function AdminModal({
         ) : null}
         {onSubmit && (
           <div className="modal-foot">
-            <button className="button secondary" onClick={close} disabled={submitting}>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={close}
+              disabled={submitting}
+            >
               Cancelar
             </button>
             <button
+              type="button"
               className="button primary"
-              onClick={onSubmit}
+              onClick={() => {
+                // Validación nativa de los campos del modal (required, min/max…) antes
+                // de la validación propia de cada formulario.
+                const fields = modalRef.current?.querySelectorAll<
+                  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+                >('input, select, textarea');
+                for (const field of fields ?? []) {
+                  if (!field.checkValidity()) {
+                    field.reportValidity();
+                    return;
+                  }
+                }
+                onSubmit?.();
+              }}
               disabled={submitting}
               aria-busy={submitting || undefined}
             >
@@ -1126,6 +1179,17 @@ function AdminToolbar({
 }
 
 function AdminTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
+  const labeledRows = Children.map(children, (row) => {
+    if (!isValidElement<{ children?: ReactNode }>(row) || row.type !== 'tr') return row;
+
+    const cells = Children.map(row.props.children, (cell, index) => {
+      if (!isValidElement(cell) || cell.type !== 'td') return cell;
+      return cloneElement(cell, { 'data-label': headers[index] } as typeof cell.props);
+    });
+
+    return cloneElement(row as ReactElement<{ children?: ReactNode }>, { children: cells });
+  });
+
   return (
     <div className="adm-table-wrap">
       <table className="adm-table">
@@ -1136,7 +1200,7 @@ function AdminTable({ headers, children }: { headers: string[]; children: React.
             ))}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody>{labeledRows}</tbody>
       </table>
     </div>
   );
@@ -1259,6 +1323,7 @@ type AdminData = {
   roles: AdminRole[];
   rooms: AdminRoom[];
   roomTypes: AdminRoomType[];
+  roomFeatures: RoomFeature[];
   seasonRates: SeasonRate[];
   promos: Promo[];
   amenities: Amenity[];
@@ -1281,9 +1346,7 @@ type OperationalReportState =
   | { status: 'ready'; data: OperationalReport };
 
 function getErrorMessage(cause: unknown): string {
-  return cause instanceof Error
-    ? cause.message
-    : 'No fue posible cargar el panel de administración.';
+  return getUserFacingErrorMessage(cause, 'No fue posible cargar el panel de administración.');
 }
 
 function buildAuditEntries(logs: AuditLog[], users: User[]): AuditEntry[] {
@@ -1423,9 +1486,7 @@ export function AdminContent({
 
         const amenities: Amenity[] = amenitiesData.map(adminAmenityFromDomain);
 
-        const roomServiceItems: RoomServiceItem[] = products
-          .filter((product: Product) => product.category === 'foodAndBeverage')
-          .map(adminProductFromDomain);
+        const roomServiceItems: RoomServiceItem[] = products.map(adminProductFromDomain);
 
         const inventory: InventoryProduct[] = inventoryItems.map((item, index) => {
           const product = products.find((productItem) => productItem.id === item.productId);
@@ -1483,6 +1544,7 @@ export function AdminContent({
             roles: adminRoles,
             rooms: adminRooms,
             roomTypes: adminRoomTypes,
+            roomFeatures,
             seasonRates,
             promos,
             amenities,
@@ -1546,6 +1608,7 @@ export function AdminContent({
       initialAdminRoles={screen.roles}
       initialAdminRooms={screen.rooms}
       initialAdminRoomTypes={screen.roomTypes}
+      initialRoomFeatures={screen.roomFeatures}
       initialSeasonRates={screen.seasonRates}
       initialPromos={screen.promos}
       initialAmenities={screen.amenities}
@@ -1571,6 +1634,7 @@ function AdminContentReady({
   initialAdminRoles,
   initialAdminRooms,
   initialAdminRoomTypes,
+  initialRoomFeatures,
   initialSeasonRates,
   initialPromos,
   initialAmenities,
@@ -1592,6 +1656,7 @@ function AdminContentReady({
   initialAdminRoles: AdminRole[];
   initialAdminRooms: AdminRoom[];
   initialAdminRoomTypes: AdminRoomType[];
+  initialRoomFeatures: RoomFeature[];
   initialSeasonRates: SeasonRate[];
   initialPromos: Promo[];
   initialAmenities: Amenity[];
@@ -1608,10 +1673,13 @@ function AdminContentReady({
   const [roles, setRoles] = useState(initialAdminRoles);
   const [rooms, setRooms] = useState(initialAdminRooms);
   const [roomTypes, setRoomTypes] = useState(initialAdminRoomTypes);
+  const [roomFeatures, setRoomFeatures] = useState(initialRoomFeatures);
   const [seasonRates, setSeasonRates] = useState(initialSeasonRates);
   const [promos, setPromos] = useState(initialPromos);
   const [amenities, setAmenities] = useState(initialAmenities);
   const [rsItems, setRsItems] = useState(initialRoomServiceItems);
+  const [deletingRsId, setDeletingRsId] = useState<string | null>(null);
+  const [pendingDeleteRsItem, setPendingDeleteRsItem] = useState<RoomServiceItem | null>(null);
   const [inventory, setInventory] = useState(initialInventory);
   const [movements, setMovements] = useState(initialMovements);
   const [cashMovements, setCashMovements] = useState(initialCashMovements);
@@ -1629,6 +1697,7 @@ function AdminContentReady({
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [editRoom, setEditRoom] = useState<AdminRoom | null>(null);
   const [showRoomTypeModal, setShowRoomTypeModal] = useState(false);
+  const [showRoomFeatureCatalog, setShowRoomFeatureCatalog] = useState(false);
   const [editRoomType, setEditRoomType] = useState<AdminRoomType | null>(null);
   const [showSeasonRateModal, setShowSeasonRateModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
@@ -1707,6 +1776,11 @@ function AdminContentReady({
     setSearch('');
     setFilter('Todos');
   };
+
+  useEffect(() => {
+    setSearch('');
+    setFilter('Todos');
+  }, [nav]);
 
   const notifyError = (cause: unknown) => {
     onAction(getErrorMessage(cause));
@@ -1955,7 +2029,7 @@ function AdminContentReady({
               <button
                 className="text-button"
                 onClick={() => {
-                  if (onNavigate) onNavigate('Reportes');
+                  if (onNavigate) onNavigate('Resumen operativo');
                   else onAction('Reportes seleccionado');
                 }}
               >
@@ -2072,7 +2146,7 @@ function AdminContentReady({
               <button
                 className="button small secondary"
                 onClick={() => {
-                  if (onNavigate) onNavigate('Habitaciones');
+                  if (onNavigate) onNavigate('Gestión de habitaciones');
                   else onAction('Habitaciones seleccionado');
                 }}
               >
@@ -2332,6 +2406,7 @@ function AdminContentReady({
                   email: u.email,
                   roleId: roleIdFromDisplay(roles, u.role),
                   status: u.status === 'Activo' ? 'active' : 'inactive',
+                  ...(u.password?.trim() ? { password: u.password } : {}),
                 } as const;
                 let saved = editUser
                   ? await personnelService.updateUser(editUser.dbId, payload)
@@ -2428,7 +2503,16 @@ function AdminContentReady({
       const ms = `${r.number} ${r.floor} ${r.type} ${r.status}`
         .toLowerCase()
         .includes(search.toLowerCase());
-      const mf = filter === 'Todos' || r.status === filter || r.type === filter;
+      const normalize = (value: string) =>
+        value
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLocaleLowerCase('es');
+      const selectedFilter = normalize(filter);
+      const mf =
+        filter === 'Todos' ||
+        normalize(r.status) === selectedFilter ||
+        normalize(r.type).includes(selectedFilter);
       return ms && mf;
     });
     return (
@@ -2539,15 +2623,23 @@ function AdminContentReady({
                 <h3>Tipos de habitación</h3>
                 <p>Configura los tipos y sus características</p>
               </div>
-              <button
-                className="button primary"
-                onClick={() => {
-                  setEditRoomType(null);
-                  setShowRoomTypeModal(true);
-                }}
-              >
-                <Plus size={17} /> Nuevo tipo
-              </button>
+              <div className="adm-heading-actions">
+                <button
+                  className="button secondary"
+                  onClick={() => setShowRoomFeatureCatalog(true)}
+                >
+                  <Sparkles size={17} /> Características
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => {
+                    setEditRoomType(null);
+                    setShowRoomTypeModal(true);
+                  }}
+                >
+                  <Plus size={17} /> Nuevo tipo
+                </button>
+              </div>
             </div>
             {roomTypes.length === 0 ? (
               <div className="hk-empty">
@@ -2692,6 +2784,7 @@ function AdminContentReady({
         {showRoomTypeModal && (
           <RoomTypeModal
             roomType={editRoomType}
+            roomFeatures={roomFeatures}
             onClose={() => setShowRoomTypeModal(false)}
             onSave={async (rt, images) => {
               if (editRoomType) {
@@ -2760,6 +2853,45 @@ function AdminContentReady({
                 onAction('Tipo de habitación creado correctamente');
               }
               setShowRoomTypeModal(false);
+            }}
+          />
+        )}
+        {showRoomFeatureCatalog && (
+          <RoomFeatureCatalogModal
+            features={roomFeatures}
+            onClose={() => setShowRoomFeatureCatalog(false)}
+            onCreate={async (data) => {
+              const created = await roomService.createRoomFeature(data);
+              setRoomFeatures((current) =>
+                [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
+              );
+              onAction('Característica creada correctamente');
+            }}
+            onUpdate={async (featureId, data) => {
+              const updated = await roomService.updateRoomFeature(featureId, data);
+              setRoomFeatures((current) =>
+                current
+                  .map((feature) => (feature.id === featureId ? updated : feature))
+                  .sort((a, b) => a.name.localeCompare(b.name)),
+              );
+              setRoomTypes((current) =>
+                current.map((type) => ({
+                  ...type,
+                  features: type.roomFeatureIds
+                    .map((id) =>
+                      id === featureId
+                        ? updated.name
+                        : roomFeatures.find((item) => item.id === id)?.name,
+                    )
+                    .filter((name): name is string => Boolean(name)),
+                })),
+              );
+              onAction('Característica actualizada correctamente');
+            }}
+            onDelete={async (featureId) => {
+              await roomService.deleteRoomFeature(featureId);
+              setRoomFeatures((current) => current.filter((feature) => feature.id !== featureId));
+              onAction('Característica eliminada correctamente');
             }}
           />
         )}
@@ -3228,6 +3360,16 @@ function AdminContentReady({
                           })();
                         }}
                       />
+                      <button
+                        className="icon-btn danger"
+                        type="button"
+                        aria-label={`Eliminar ${item.name} del catálogo`}
+                        title="Eliminar del catálogo"
+                        disabled={deletingRsId === item.dbId}
+                        onClick={() => setPendingDeleteRsItem(item)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -3278,6 +3420,29 @@ function AdminContentReady({
             }}
           />
         )}
+        <ConfirmDialog
+          open={pendingDeleteRsItem !== null}
+          title="Eliminar producto de Room Service"
+          description={`¿Seguro que quieres eliminar “${pendingDeleteRsItem?.name ?? ''}” del catálogo? Se conservará en el historial de pedidos.`}
+          pending={pendingDeleteRsItem !== null && deletingRsId === pendingDeleteRsItem.dbId}
+          onClose={() => setPendingDeleteRsItem(null)}
+          onConfirm={async () => {
+            if (!pendingDeleteRsItem) return;
+            setDeletingRsId(pendingDeleteRsItem.dbId);
+            try {
+              await catalogService.deleteAdminProduct(pendingDeleteRsItem.dbId);
+              setRsItems((current) =>
+                current.filter((entry) => entry.dbId !== pendingDeleteRsItem.dbId),
+              );
+              setPendingDeleteRsItem(null);
+              onAction('Producto eliminado del catálogo; se conserva en el historial.');
+            } catch (error) {
+              onAction(serviceErrorMessage(error));
+            } finally {
+              setDeletingRsId(null);
+            }
+          }}
+        />
         {showRsItemModal && (
           <RsItemModal
             item={editRsItem}
@@ -3288,8 +3453,8 @@ function AdminContentReady({
                 sku: editRsItem?.dbId ? undefined : productSkuFromName(item.name),
                 name: item.name,
                 description: item.description,
-                // Al editar se conserva la categoría guardada; uno nuevo del menú es de alimentos y bebidas.
-                category: editRsItem ? undefined : ('food_and_beverage' as const),
+                // La categoría seleccionada se mantiene tanto al crear como al editar.
+                category: PRODUCT_CATEGORY_DTO[item.categoryCode],
                 priceCents: amountToCents(item.price),
                 currency: 'GTQ' as const,
                 active: item.status === 'Activo',
@@ -3300,7 +3465,7 @@ function AdminContentReady({
                 : await catalogService.createAdminProduct({
                     ...payload,
                     sku: payload.sku ?? productSkuFromName(item.name),
-                    category: 'food_and_beverage',
+                    category: PRODUCT_CATEGORY_DTO[item.categoryCode],
                   });
               setRsItems((current) =>
                 editRsItem
@@ -3441,7 +3606,7 @@ function AdminContentReady({
                         {officialReport ? officialReport.occupancyNights : `${occupancyPercent}%`}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API' : 'Datos actuales'}
+                        {officialReport ? 'Datos del periodo' : 'Datos actuales'}
                       </span>
                     </div>
                   </div>
@@ -3459,7 +3624,7 @@ function AdminContentReady({
                             : 'Sin ocupacion'}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API no expone tendencia' : reportFilter}
+                        {officialReport ? 'Tendencia no disponible' : reportFilter}
                       </span>
                     </div>
                   </div>
@@ -3488,7 +3653,7 @@ function AdminContentReady({
                       <p>Ingresos del periodo</p>
                       <h2>{money(totalIncome)}</h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API' : 'Caja registrada'}
+                        {officialReport ? 'Datos del periodo' : 'Caja registrada'}
                       </span>
                     </div>
                   </div>
@@ -3506,7 +3671,7 @@ function AdminContentReady({
                             : money(0)}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Reporting API no expone cortes' : reportFilter}
+                        {officialReport ? 'Sin cortes disponibles' : reportFilter}
                       </span>
                     </div>
                   </div>
@@ -3546,7 +3711,7 @@ function AdminContentReady({
                     <div>
                       <p>Cancelaciones</p>
                       <h2>{cancelledReservations}</h2>
-                      <span>{officialReport ? 'Reporting API' : 'Datos actuales'}</span>
+                      <span>{officialReport ? 'Datos del periodo' : 'Datos actuales'}</span>
                     </div>
                   </div>
                   <div className="metric-card">
@@ -4256,13 +4421,14 @@ export function UserModal({
           ? validateEmail(normalizedEmail)
           : 'Ingresa el correo electrónico.'
         : null,
-      password: user
-        ? null
-        : !password
-          ? 'Ingresa una contraseña temporal.'
-          : password.length < USER_PASSWORD_MIN_LENGTH
-            ? `Mínimo ${USER_PASSWORD_MIN_LENGTH} caracteres.`
-            : null,
+      // Al editar, la contraseña es opcional: vacía conserva la actual.
+      password: !password
+        ? user
+          ? null
+          : 'Ingresa una contraseña temporal.'
+        : password.length < USER_PASSWORD_MIN_LENGTH
+          ? `Mínimo ${USER_PASSWORD_MIN_LENGTH} caracteres.`
+          : null,
       role: roles.some((r) => r.name === role) ? null : 'Selecciona un rol.',
     });
     setErrors(nextErrors);
@@ -4275,7 +4441,7 @@ export function UserModal({
         firstName: normalizedFirstName,
         lastName: normalizedLastName,
         email: normalizedEmail,
-        password: user ? undefined : password,
+        password: password ? password : undefined,
         role,
         status,
         lastAccess: user?.lastAccess ?? 'Sin acceso',
@@ -4366,25 +4532,27 @@ export function UserModal({
         </select>
         <FieldError id="user-role-error" error={errors.role} />
       </label>
-      {!user && (
-        <label className="hk-form-label">
-          Contraseña temporal *
-          <input
-            className={inputClass(errors.password)}
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              clearError('password');
-            }}
-            placeholder="Contraseña inicial"
-            aria-required="true"
-            {...fieldErrorProps('user-password-error', errors.password)}
-          />
-          <FieldError id="user-password-error" error={errors.password} />
-        </label>
-      )}
+      <label className="hk-form-label">
+        {user ? 'Nueva contraseña (opcional)' : 'Contraseña temporal *'}
+        <input
+          className={inputClass(errors.password)}
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            clearError('password');
+          }}
+          placeholder={
+            user
+              ? 'Dejar en blanco para conservarla'
+              : `Mínimo ${USER_PASSWORD_MIN_LENGTH} caracteres`
+          }
+          aria-required={user ? undefined : 'true'}
+          {...fieldErrorProps('user-password-error', errors.password)}
+        />
+        <FieldError id="user-password-error" error={errors.password} />
+      </label>
       <label className="hk-form-label">
         Estado
         <select
@@ -4574,14 +4742,18 @@ export function RoomModal({
     setErrors((current) => ({ ...current, [field]: undefined }));
   const submit = () => {
     const nextErrors = compactErrors({
-      number: validateRequiredText(number, 'Ingresa el número de habitación.'),
+      number:
+        validateRequiredText(number, 'Ingresa el número de habitación.') ??
+        patternError(number, ROOM_NUMBER_PATTERN, 'Usa solo letras, números y guiones.'),
       // El backend guarda el piso como número: "Piso 2" o "2" (antes, sin número pasaba a 1).
       floor: /\d/.test(floor) ? null : 'Ingresa el piso (ej. 2 o Piso 2).',
       type: selectedRoomType ? null : 'Selecciona un tipo de habitación.',
       capacity: validateWholeNumber(capacity, {
         min: 1,
+        max: ROOM_CAPACITY_MAX,
         requiredMessage: 'Ingresa la capacidad.',
         minMessage: 'Mínimo 1 huésped.',
+        maxMessage: `Máximo ${ROOM_CAPACITY_MAX} huéspedes.`,
       }),
       rate: validateMoneyAmount(rate, { allowZero: true, requiredMessage: 'Ingresa la tarifa.' }),
     });
@@ -4598,7 +4770,7 @@ export function RoomModal({
         capacity: Number(capacity),
         rate: (moneyInputToCents(rate) ?? 0) / 100,
         status,
-        features: room?.features ?? ['Cama king', 'Wi-Fi', 'Desayuno'],
+        features: selectedRoomType?.features ?? room?.features ?? [],
       }),
     );
   };
@@ -4617,6 +4789,7 @@ export function RoomModal({
           Número *
           <input
             className={inputClass(errors.number)}
+            maxLength={20}
             value={number}
             onChange={(e) => {
               setNumber(e.target.value);
@@ -4632,6 +4805,7 @@ export function RoomModal({
           Piso *
           <input
             className={inputClass(errors.floor)}
+            maxLength={30}
             value={floor}
             onChange={(e) => {
               setFloor(e.target.value);
@@ -4713,16 +4887,253 @@ export function RoomModal({
           </select>
         </label>
       </div>
+      <p className="adm-room-feature-note">
+        Las características se configuran en Tipos de habitación y se comparten entre las
+        habitaciones de ese tipo.
+      </p>
     </AdminModal>
   );
 }
 
-function RoomTypeModal({
+function RoomFeatureCatalogModal({
+  features,
+  onClose,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  features: RoomFeature[];
+  onClose: () => void;
+  onCreate: (data: { name: string; description?: string }) => Promise<void>;
+  onUpdate: (id: string, data: { name: string; description?: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<RoomFeature | null>(null);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<RoomFeature | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const resetForm = () => {
+    setEditing(null);
+    setName('');
+    setDescription('');
+    setError('');
+  };
+
+  const startEdit = (feature: RoomFeature) => {
+    setEditing(feature);
+    setName(feature.name);
+    setDescription(feature.description ?? '');
+    setError('');
+  };
+
+  const save = async () => {
+    const cleanName = name.trim().replace(/\s+/g, ' ');
+    if (!cleanName) {
+      setError('Escribe el nombre de la característica.');
+      return;
+    }
+    if (
+      features.some(
+        (feature) =>
+          feature.id !== editing?.id &&
+          feature.name.localeCompare(cleanName, undefined, { sensitivity: 'accent' }) === 0,
+      )
+    ) {
+      setError('Ya existe una característica con ese nombre.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const data = { name: cleanName, description: description.trim() || undefined };
+      if (editing) await onUpdate(editing.id, data);
+      else await onCreate(data);
+      resetForm();
+    } catch (cause) {
+      setError(getErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onDelete(pendingDelete.id);
+      setPendingDelete(null);
+      if (editing?.id === pendingDelete.id) resetForm();
+    } catch (cause) {
+      const message = getErrorMessage(cause);
+      setError(
+        /assigned|room types/i.test(message)
+          ? 'No se puede eliminar porque está asignada a uno o más tipos de habitación.'
+          : message,
+      );
+      setPendingDelete(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <AdminModal
+        title="Características de habitación"
+        eyebrow="CATÁLOGO DE HABITACIONES"
+        width={600}
+        onClose={onClose}
+      >
+        <p className="muted">
+          Administra las características que puedes asignar a cada tipo de habitación.
+        </p>
+        <div className="room-feature-catalog-list">
+          {features.length === 0 ? (
+            <p className="muted">Todavía no hay características registradas.</p>
+          ) : (
+            features.map((feature) => (
+              <div className="room-feature-catalog-row" key={feature.id}>
+                <div>
+                  <strong>{feature.name}</strong>
+                  <span>{feature.description || 'Sin descripción'}</span>
+                </div>
+                <div className="adm-heading-actions">
+                  <EditIconButton
+                    label={`Editar ${feature.name}`}
+                    onClick={() => startEdit(feature)}
+                  />
+                  <button
+                    className="button small secondary adm-icon-action"
+                    type="button"
+                    aria-label={`Eliminar ${feature.name}`}
+                    title={`Eliminar ${feature.name}`}
+                    onClick={() => setPendingDelete(feature)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="room-feature-catalog-form">
+          <h3>{editing ? 'Editar característica' : 'Nueva característica'}</h3>
+          <label className="hk-form-label">
+            Nombre
+            <input
+              className="hk-form-select"
+              maxLength={80}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Ej. Balcón privado"
+            />
+          </label>
+          <label className="hk-form-label">
+            Descripción <span className="muted">(opcional)</span>
+            <textarea
+              className="hk-form-textarea"
+              maxLength={300}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Describe brevemente la característica"
+            />
+          </label>
+          {error && (
+            <p className="adm-modal-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="modal-foot">
+            {editing && (
+              <button
+                className="button secondary"
+                type="button"
+                onClick={resetForm}
+                disabled={busy}
+              >
+                Cancelar edición
+              </button>
+            )}
+            <button
+              className="button primary"
+              type="button"
+              onClick={() => void save()}
+              disabled={busy}
+            >
+              {busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Agregar característica'}
+            </button>
+          </div>
+        </div>
+      </AdminModal>
+      {pendingDelete && (
+        <div
+          className="modal-backdrop room-feature-confirm-backdrop"
+          onMouseDown={() => !busy && setPendingDelete(null)}
+        >
+          <div
+            className="modal adm-modal room-feature-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="room-feature-delete-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">CONFIRMAR ELIMINACIÓN</p>
+                <h2 id="room-feature-delete-title">¿Eliminar característica?</h2>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setPendingDelete(null)}
+                disabled={busy}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p>
+              Se eliminará “{pendingDelete.name}”. No se puede eliminar si está asignada a un tipo
+              de habitación.
+            </p>
+            <div className="modal-foot">
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={busy}
+              >
+                Cancelar
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                onClick={() => void confirmDelete()}
+                disabled={busy}
+              >
+                {busy ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export function RoomTypeModal({
   roomType,
+  roomFeatures,
   onClose,
   onSave,
 }: {
   roomType: AdminRoomType | null;
+  roomFeatures: RoomFeature[];
   onClose: () => void;
   onSave: (rt: AdminRoomType, images: MediaImageAssignmentDto[]) => Promise<void>;
 }) {
@@ -4731,6 +5142,7 @@ function RoomTypeModal({
   const [description, setDescription] = useState(roomType?.description ?? '');
   const [basePrice, setBasePrice] = useState(amountToMoneyInput(roomType?.basePrice ?? 1850));
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(roomType?.status ?? 'Activo');
+  const [roomFeatureIds, setRoomFeatureIds] = useState(roomType?.roomFeatureIds ?? []);
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
     galleryFromImages(roomType?.images ?? []),
   );
@@ -4740,12 +5152,20 @@ function RoomTypeModal({
     setErrors((current) => ({ ...current, [field]: undefined }));
   const submit = () => {
     const nextErrors = compactErrors({
-      name: validateRequiredText(name, 'Ingresa el nombre del tipo.'),
+      name:
+        validateRequiredText(name, 'Ingresa el nombre del tipo.') ??
+        patternError(
+          name,
+          ROOM_TYPE_NAME_PATTERN,
+          'Empieza con una letra; usa letras, números, espacios, apóstrofos o guiones (2 a 80).',
+        ),
       // Backend: capacidad > 0 (`CreateRoomTypeRequest`, @Positive).
       capacity: validateWholeNumber(capacity, {
         min: 1,
+        max: ROOM_CAPACITY_MAX,
         requiredMessage: 'Ingresa la capacidad.',
         minMessage: 'Mínimo 1 huésped.',
+        maxMessage: `Máximo ${ROOM_CAPACITY_MAX} huéspedes.`,
       }),
       // Backend: precio de la tarifa ≥ 0 (`CreateRateRequest`, @PositiveOrZero).
       basePrice: validateMoneyAmount(basePrice, {
@@ -4763,8 +5183,11 @@ function RoomTypeModal({
           name: name.trim(),
           capacity: Number(capacity),
           description: description.trim(),
-          roomFeatureIds: roomType?.roomFeatureIds ?? [],
-          features: roomType?.features ?? ['Cama king', 'Wi-Fi'],
+          // Características del catálogo elegidas en el selector (no las camas).
+          roomFeatureIds,
+          features: roomFeatures
+            .filter((feature) => roomFeatureIds.includes(feature.id))
+            .map((feature) => feature.name),
           basePrice: (moneyInputToCents(basePrice) ?? 0) / 100,
           status,
           images: roomType?.images ?? [],
@@ -4789,6 +5212,7 @@ function RoomTypeModal({
           Nombre *
           <input
             className={inputClass(errors.name)}
+            maxLength={80}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -4828,6 +5252,31 @@ function RoomTypeModal({
           placeholder="Descripción del tipo de habitación"
         />
       </label>
+      <fieldset className="adm-room-feature-picker">
+        <legend>Características</legend>
+        {roomFeatures.length === 0 ? (
+          <p className="muted">Agrega características desde el catálogo.</p>
+        ) : (
+          <div>
+            {roomFeatures.map((feature) => (
+              <label key={feature.id}>
+                <input
+                  type="checkbox"
+                  checked={roomFeatureIds.includes(feature.id)}
+                  onChange={(event) =>
+                    setRoomFeatureIds((current) =>
+                      event.target.checked
+                        ? [...current, feature.id]
+                        : current.filter((id) => id !== feature.id),
+                    )
+                  }
+                />
+                <span>{feature.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </fieldset>
       <div className="rc-form-grid">
         <label className="hk-form-label">
           Precio base *
@@ -5196,8 +5645,18 @@ export function PromoModal({
     // Backend: inicio obligatorio; fin opcional y no anterior al inicio (`UpsertPromotionRequest`).
     const range = endDate ? validateDateRange(startDate, endDate) : {};
     const nextErrors = compactErrors({
-      name: validateRequiredText(name, 'Ingresa el nombre de la promoción.'),
-      code: validateRequiredText(code, 'Ingresa el código.'),
+      name:
+        validateRequiredText(name, 'Ingresa el nombre de la promoción.') ??
+        patternError(
+          name,
+          PROMO_NAME_PATTERN,
+          'Usa letras, números, espacios, apóstrofos o guiones (2 a 100).',
+        ),
+      code:
+        validateRequiredText(code, 'Ingresa el código.') ??
+        (code.trim().length < PROMO_CODE_MIN_LENGTH
+          ? `Mínimo ${PROMO_CODE_MIN_LENGTH} caracteres.`
+          : null),
       percentage: validateWholeNumber(percentage, {
         min: PROMO_PERCENT_MIN,
         max: PROMO_PERCENT_MAX,
@@ -5239,6 +5698,7 @@ export function PromoModal({
           Nombre *
           <input
             className={inputClass(errors.name)}
+            maxLength={100}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -5254,6 +5714,7 @@ export function PromoModal({
           Código *
           <input
             className={inputClass(errors.code)}
+            maxLength={50}
             value={code}
             onChange={(e) => {
               setCode(e.target.value);
@@ -5300,6 +5761,8 @@ export function PromoModal({
           <input
             className={inputClass(errors.startDate)}
             type="date"
+            required
+            max={endDate || undefined}
             value={startDate}
             onChange={(e) => {
               setStartDate(e.target.value);
@@ -5351,7 +5814,8 @@ function AmenityModal({
   const [name, setName] = useState(amenity?.name ?? '');
   const [description, setDescription] = useState(amenity?.description ?? '');
   const [category, setCategory] = useState<AmenityCategory>(amenity?.category ?? 'hotel');
-  const [schedule, setSchedule] = useState(amenity?.schedule ?? '');
+  const [opensAt, setOpensAt] = useState(() => amenity?.schedule.split(' - ')[0] ?? '');
+  const [closesAt, setClosesAt] = useState(() => amenity?.schedule.split(' - ')[1] ?? '');
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(amenity?.status ?? 'Activo');
   const [icon, setIcon] = useState(amenity?.icon ?? 'Sparkles');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
@@ -5360,9 +5824,12 @@ function AmenityModal({
   const [errors, setErrors] = useState<FieldErrors<'name' | 'schedule'>>({});
   const save = useModalSave(gallery, onClose);
   const submit = () => {
+    // Dos selectores de hora (abre/cierra); se valida el mismo texto que se guarda.
+    const schedule = opensAt || closesAt ? `${opensAt} - ${closesAt}` : '';
     const parsedSchedule = parseAmenityScheduleInput(schedule);
     const nextErrors = compactErrors({
-      name: validateRequiredText(name, 'Ingresa el nombre de la amenidad.'),
+      name:
+        validateRequiredText(name, 'Ingresa el nombre de la amenidad.') ?? catalogNameError(name),
       // Mismo análisis que al guardar, pero el error queda junto al campo.
       schedule: parsedSchedule.ok ? null : parsedSchedule.error,
     });
@@ -5376,7 +5843,7 @@ function AmenityModal({
           name: name.trim(),
           description: description.trim(),
           category,
-          schedule: schedule.trim(),
+          schedule,
           // La disponibilidad sale del estado: el backend solo guarda `active`.
           available: status === 'Activo',
           status,
@@ -5386,6 +5853,12 @@ function AmenityModal({
         toImageAssignments(gallery),
       ),
     );
+  };
+  const scheduleAria = {
+    'aria-invalid': errors.schedule ? true : undefined,
+    'aria-describedby': errors.schedule
+      ? 'amenity-schedule-error amenity-schedule-help'
+      : 'amenity-schedule-help',
   };
   return (
     <AdminModal
@@ -5402,6 +5875,7 @@ function AmenityModal({
           Nombre *
           <input
             className={inputClass(errors.name)}
+            maxLength={120}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -5426,27 +5900,41 @@ function AmenityModal({
           </select>
         </label>
         <label className="hk-form-label">
-          Horario
+          Abre
           <input
             className={inputClass(errors.schedule)}
-            value={schedule}
+            type="time"
+            step={60}
+            value={opensAt}
+            required={Boolean(closesAt)}
+            max={closesAt || undefined}
             onChange={(e) => {
-              setSchedule(e.target.value);
+              setOpensAt(e.target.value);
               setErrors((current) => ({ ...current, schedule: undefined }));
             }}
-            placeholder="Ej. 07:00 - 21:00"
-            aria-invalid={errors.schedule ? true : undefined}
-            aria-describedby={
-              errors.schedule
-                ? 'amenity-schedule-error amenity-schedule-help'
-                : 'amenity-schedule-help'
-            }
+            {...scheduleAria}
           />
-          <FieldError id="amenity-schedule-error" error={errors.schedule} />
-          <small id="amenity-schedule-help" className="adm-field-help">
-            Formato HH:mm - HH:mm. Déjalo vacío si está disponible todo el día.
-          </small>
         </label>
+        <label className="hk-form-label">
+          Cierra
+          <input
+            className={inputClass(errors.schedule)}
+            type="time"
+            step={60}
+            value={closesAt}
+            required={Boolean(opensAt)}
+            min={opensAt || undefined}
+            onChange={(e) => {
+              setClosesAt(e.target.value);
+              setErrors((current) => ({ ...current, schedule: undefined }));
+            }}
+            {...scheduleAria}
+          />
+        </label>
+        <FieldError id="amenity-schedule-error" error={errors.schedule} />
+        <small id="amenity-schedule-help" className="adm-field-help">
+          Elige ambas horas o déjalas vacías si está disponible todo el día.
+        </small>
         <label className="hk-form-label">
           Ícono
           <select className="hk-form-select" value={icon} onChange={(e) => setIcon(e.target.value)}>
@@ -5505,6 +5993,9 @@ export function RsItemModal({
 }) {
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
+  const [categoryCode, setCategoryCode] = useState<Product['category']>(
+    item?.categoryCode ?? 'foodAndBeverage',
+  );
   const [price, setPrice] = useState(item ? amountToMoneyInput(item.price) : '');
   const [status, setStatus] = useState<'Activo' | 'Inactivo'>(item?.status ?? 'Activo');
   const [gallery, setGallery] = useState<GalleryItem[]>(() =>
@@ -5514,7 +6005,7 @@ export function RsItemModal({
   const save = useModalSave(gallery, onClose);
   const submit = () => {
     const nextErrors = compactErrors({
-      name: validateRequiredText(name, 'Ingresa el nombre del producto.'),
+      name: validateRequiredText(name, 'Ingresa el nombre del producto.') ?? catalogNameError(name),
       // Backend: precio de un producto ≥ 1 centavo (`UpsertProductRequest`, @Min(1)).
       price: validateMoneyAmount(price, { requiredMessage: 'Ingresa el precio.' }),
     });
@@ -5527,7 +6018,8 @@ export function RsItemModal({
           dbId: item?.dbId ?? '',
           name: name.trim(),
           description: description.trim(),
-          category: item?.category ?? 'Alimentos y bebidas',
+          category: PRODUCT_CATEGORY_LABELS[categoryCode],
+          categoryCode,
           price: (moneyInputToCents(price) ?? 0) / 100,
           // La disponibilidad sale del estado: el backend solo guarda `active`.
           available: status === 'Activo',
@@ -5553,6 +6045,7 @@ export function RsItemModal({
           Nombre *
           <input
             className={inputClass(errors.name)}
+            maxLength={120}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -5592,6 +6085,20 @@ export function RsItemModal({
           >
             <option value="Activo">Activo</option>
             <option value="Inactivo">Inactivo</option>
+          </select>
+        </label>
+        <label className="hk-form-label">
+          Categoría
+          <select
+            className="hk-form-select"
+            value={categoryCode}
+            onChange={(event) => setCategoryCode(event.target.value as Product['category'])}
+          >
+            {Object.entries(PRODUCT_CATEGORY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
       </div>
