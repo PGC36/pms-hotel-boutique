@@ -28,6 +28,11 @@ La zona publica del motor de reservas esta asociada a las issues:
 Antes de continuar con cambios visuales en esa zona, validar ownership en
 GitHub para no pisar trabajo asignado.
 
+Actualizacion 2026-10-20 (`feature/fixss`): en el paso de pago de
+`BookingFormScreen`, las opciones de metodo se alinean al inicio de su columna.
+Asi conservan su altura al mostrar el formulario de tarjeta, sin alterar los
+estilos Bolt de las opciones ni el flujo de reserva.
+
 Actualizacion 2026-09-16: los tabs publicos del header (`Habitaciones`,
 `Amenidades`, `Promociones`, `Politicas`) funcionan como vistas conmutadas en
 la home publica mediante hash (`/#amenidades`, etc.). No deben volver a quedar

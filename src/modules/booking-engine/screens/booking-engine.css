@@ -790,6 +790,7 @@
 
 .booking-payment-methods {
   display: grid;
+  align-content: start;
   gap: var(--space-3);
 }
 
