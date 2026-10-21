@@ -2585,6 +2585,17 @@ test('recepción: consulta finanzas con sus permisos y no consulta solicitudes i
     );
   }
   for (const path of [
+    '/room-service/products',
+    '/room-service/orders',
+    '/concierge/requests',
+    '/admin/audit-logs',
+  ]) {
+    assert.ok(
+      !recBackend.requests.some(({ call }) => call.startsWith(`GET ${path}`)),
+      `recepción no consulta ${path}`,
+    );
+  }
+  for (const path of [
     '/service-requests',
     '/room-service/products',
     '/room-service/orders',
