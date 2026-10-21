@@ -16,6 +16,16 @@ import type { Guest } from '@/shared/types/entities/guest';
 import type { Room } from '@/shared/types/entities/room';
 import type { RoomType } from '@/shared/types/entities/room-type';
 import { validateBookingCapacity } from '@/shared/utils/bookingCapacity';
+import {
+  NOTES_MAX_LENGTH,
+  editCheckOutMin,
+  hotelToday,
+  isDigitsOnly,
+  normalizeChildren,
+  validateEditedStay,
+  validateGuestCounts,
+  validateNotes,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import './occupancy.css';
 
 type ScreenState =
@@ -53,32 +63,22 @@ function getErrorMessage(cause: unknown): string {
   return getUserFacingErrorMessage(cause, 'No pudimos completar la reserva. Intenta nuevamente.');
 }
 
-function toCalendarTime(value: string): number {
-  const [year, month, day] = value.split('-').map(Number);
-  return Date.UTC(year, month - 1, day);
-}
-
 function validateForm(form: FormState, roomTypes: RoomType[]): FormErrors {
   const errors: FormErrors = {};
   const selectedRoomType = roomTypes.find((roomType) => roomType.id === form.roomTypeId);
   if (!form.guestId) errors.guestId = 'Selecciona un huésped.';
   if (!form.roomTypeId) errors.roomTypeId = 'Selecciona un tipo de habitación.';
   if (!form.roomId) errors.roomId = 'Selecciona una habitación disponible.';
-  if (!form.checkIn) errors.checkIn = 'Ingresa la fecha de entrada.';
-  if (!form.checkOut) errors.checkOut = 'Ingresa la fecha de salida.';
-  if (
-    form.checkIn &&
-    form.checkOut &&
-    toCalendarTime(form.checkOut) <= toCalendarTime(form.checkIn)
-  ) {
-    errors.checkOut = 'La salida debe ser posterior a la entrada.';
-  }
-  if (!Number.isInteger(Number(form.adults)) || Number(form.adults) < 1) {
-    errors.adults = 'Ingresa al menos un adulto.';
-  }
-  if (!Number.isInteger(Number(form.children)) || Number(form.children) < 0) {
-    errors.children = 'Ingresa cero o más menores.';
-  }
+  // Mismas reglas que Nueva reserva de Recepción: entrada desde hoy en Guatemala,
+  // salida posterior, máximo 90 noches y cantidades enteras (adultos ≥ 1, menores ≥ 0).
+  const stay = validateEditedStay(form.checkIn, form.checkOut, { checkIn: '', checkOut: '' });
+  if (stay.checkIn) errors.checkIn = stay.checkIn;
+  if (stay.checkOut) errors.checkOut = stay.checkOut;
+  const counts = validateGuestCounts(form.adults, form.children);
+  if (counts.adults) errors.adults = counts.adults;
+  if (counts.children) errors.children = counts.children;
+  const notesError = validateNotes(form.notes.trim());
+  if (notesError) errors.notes = notesError;
   const capacityError = selectedRoomType
     ? validateBookingCapacity({
         adults: Number(form.adults),
@@ -182,7 +182,7 @@ export function ManualBookingScreen() {
         check_out: form.checkOut,
         adults: Number(form.adults),
         children: Number(form.children),
-        notes: form.notes || undefined,
+        notes: form.notes.trim() || undefined,
       });
       navigate('/pms/occupancy');
     } catch (cause) {
@@ -282,6 +282,7 @@ export function ManualBookingScreen() {
             label="Entrada"
             type="date"
             required
+            min={hotelToday()}
             value={form.checkIn}
             error={errors.checkIn}
             onChange={(event) => updateField('checkIn', event.target.value)}
@@ -291,34 +292,48 @@ export function ManualBookingScreen() {
             label="Salida"
             type="date"
             required
+            min={editCheckOutMin(form.checkIn)}
             value={form.checkOut}
             error={errors.checkOut}
             onChange={(event) => updateField('checkOut', event.target.value)}
           />
 
+          {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
           <Input
             label="Adultos"
-            type="number"
-            min="1"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
             required
             value={form.adults}
             error={errors.adults}
-            onChange={(event) => updateField('adults', event.target.value)}
+            onChange={(event) => {
+              if (isDigitsOnly(event.target.value)) updateField('adults', event.target.value);
+            }}
           />
 
           <Input
             label="Menores"
-            type="number"
-            min="0"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
             required
             value={form.children}
             error={errors.children ?? liveCapacityError}
-            onChange={(event) => updateField('children', event.target.value)}
+            onChange={(event) => {
+              if (isDigitsOnly(event.target.value)) updateField('children', event.target.value);
+            }}
+            onBlur={() => updateField('children', normalizeChildren(form.children))}
           />
 
           <Input
             label="Notas"
             value={form.notes}
+            maxLength={NOTES_MAX_LENGTH}
+            error={errors.notes}
+            helpText={`${form.notes.length}/${NOTES_MAX_LENGTH}`}
             placeholder="Solicitud especial o referencia de recepción"
             onChange={(event) => updateField('notes', event.target.value)}
           />

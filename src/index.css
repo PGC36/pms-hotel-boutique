@@ -466,6 +466,13 @@ button {
   border-radius: var(--radius-round);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
+  overflow: hidden;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 .terracotta {
   background: var(--color-legacy-f2d6cd);
@@ -604,6 +611,9 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   margin-top: var(--space-4);
+}
+.account-info-grid > span {
+  grid-column: 1 / -1;
 }
 .account-info-grid span,
 .account-preference-note {
@@ -826,6 +836,18 @@ button {
   border-radius: var(--radius-legacy-13);
   padding: var(--size-legacy-21);
   box-shadow: 0 var(--size-legacy-3) var(--size-legacy-9) var(--color-legacy-3b2a1a05);
+}
+:root[data-density='compact'] .app-shell .panel {
+  padding: var(--space-4);
+}
+:root[data-density='compact'] .app-shell .adm-table td {
+  padding-block: var(--space-2);
+}
+:root[data-density='spacious'] .app-shell .panel {
+  padding: var(--space-8);
+}
+:root[data-density='spacious'] .app-shell .adm-table td {
+  padding-block: var(--space-5);
 }
 .panel-heading {
   display: flex;
@@ -1389,7 +1411,7 @@ button {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 1000;
   display: grid;
   place-items: center;
   background: var(--color-legacy-2e211a65);
@@ -4704,6 +4726,9 @@ button {
   outline: 2px solid var(--color-border);
   outline-offset: 1px;
 }
+.rs-inventory-modal .rs-inventory-field input.error {
+  border-color: var(--color-terracotta);
+}
 .rs-inventory-stock {
   display: flex;
   justify-content: space-between;
@@ -5203,6 +5228,7 @@ button {
   gap: var(--space-3);
 }
 .cg-room-group-item {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: var(--size-legacy-11);
@@ -5210,12 +5236,18 @@ button {
   background: var(--color-surface);
   border: var(--size-legacy-1) solid var(--color-border);
   border-radius: var(--radius-md);
+  color: inherit;
+  text-align: left;
   cursor: pointer;
   transition: 0.2s;
 }
 .cg-room-group-item:hover {
   border-color: var(--color-legacy-d7c4ae);
   background: var(--color-legacy-faf5ee);
+}
+.cg-room-group-item:focus-visible {
+  outline: 2px solid var(--color-brand-gold-dark);
+  outline-offset: 2px;
 }
 .cg-room-group-item-icon {
   width: var(--size-legacy-32);
@@ -5711,7 +5743,8 @@ button {
 .rc-avail-form {
   display: flex;
   gap: var(--space-5);
-  align-items: flex-end;
+  /* Arriba, no abajo: un mensaje de error bajo un campo no desalinea los demás. */
+  align-items: flex-start;
   flex-wrap: wrap;
   padding: var(--space-7);
   background: var(--color-surface-secondary);
@@ -5719,8 +5752,12 @@ button {
   border-radius: var(--radius-lg);
   margin-bottom: var(--space-8);
 }
-.rc-avail-form > button {
+.rc-avail-action > button {
   height: var(--size-legacy-36);
+}
+/* El mensaje se ajusta en varias líneas en lugar de ensanchar el campo. */
+.rc-avail-form .rc-field-error {
+  max-width: var(--size-legacy-160);
 }
 .rc-avail-results {
   margin-top: var(--space-1);

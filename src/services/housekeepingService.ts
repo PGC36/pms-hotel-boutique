@@ -393,9 +393,18 @@ export const housekeepingService = {
     );
     return toServiceRequest(toServiceRequestDto(response));
   },
-  async getChecklists(): Promise<HousekeepingChecklist[]> {
+  async getChecklists(
+    filters: { roomId?: ID; status?: HousekeepingChecklistStatus } = {},
+  ): Promise<HousekeepingChecklist[]> {
+    const query = new URLSearchParams();
+    if (filters.roomId) query.set('roomId', String(filters.roomId));
+    if (filters.status) query.set('status', filters.status);
+    const search = query.toString();
     const response = await request(
-      () => httpClient.get<HousekeepingChecklistResponse[]>('/housekeeping/checklists'),
+      () =>
+        httpClient.get<HousekeepingChecklistResponse[]>(
+          `/housekeeping/checklists${search ? `?${search}` : ''}`,
+        ),
       'No fue posible cargar los checklists de limpieza.',
     );
     return response.map(toChecklist);
@@ -408,11 +417,19 @@ export const housekeepingService = {
     );
     return response.items;
   },
-  async createChecklist(data: SaveChecklistPayload & { serviceRequestId: ID }) {
+  /**
+   * Crea un checklist de stayover (`serviceRequestId`) o de limpieza de salida
+   * (`roomId`); el backend exige exactamente uno de los dos.
+   */
+  async createChecklist(
+    data: SaveChecklistPayload &
+      ({ serviceRequestId: ID; roomId?: never } | { roomId: ID; serviceRequestId?: never }),
+  ) {
     const response = await request(
       () =>
         httpClient.post<HousekeepingChecklistResponse>('/housekeeping/checklists', {
           serviceRequestId: data.serviceRequestId,
+          roomId: data.roomId,
           ...toChecklistRequest(data),
         }),
       'No fue posible crear el checklist de limpieza.',

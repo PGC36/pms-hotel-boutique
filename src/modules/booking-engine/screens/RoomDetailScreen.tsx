@@ -12,6 +12,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { orderGalleryImages } from '@/shared/types/entities/media-image';
 import type { Rate } from '@/shared/types/entities/rate';
+import { findBaseRate } from '@/shared/utils/rateSelection';
 import type { RoomFeature } from '@/shared/types/entities/room-feature';
 import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatCurrency } from '@/shared/utils/currency';
@@ -71,13 +72,6 @@ function parseCount(value: string | null, minimum: number): number | null {
   if (value === null) return null;
   const count = Number(value);
   return Number.isInteger(count) && count >= minimum ? count : null;
-}
-
-/** Tarifa vigente más baja, solo como referencia "por noche" sin fechas. */
-function findFallbackRate(rates: Rate[], roomTypeId: string): Rate | undefined {
-  return rates
-    .filter((rate) => rate.active && rate.roomTypeId === roomTypeId)
-    .sort((left, right) => left.priceCents - right.priceCents)[0];
 }
 
 export function RoomDetailScreen() {
@@ -209,7 +203,7 @@ export function RoomDetailScreen() {
     ? quote.status === 'available'
       ? quote.result.rate
       : undefined
-    : findFallbackRate(detail.rates, detail.roomType.id);
+    : findBaseRate(detail.rates, detail.roomType.id);
   const nights = hasValidDates ? calculateNights(checkIn, checkOut!) : 0;
   const totalAmount = quote.status === 'available' ? quote.result.totalAmountCents : undefined;
   const bookingParams = new URLSearchParams({ roomTypeId: detail.roomType.id });

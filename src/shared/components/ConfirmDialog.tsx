@@ -8,6 +8,9 @@ type ConfirmDialogProps = {
   title: string;
   description: string;
   pending?: boolean;
+  /** Texto del botón de confirmación; por defecto "Eliminar". */
+  confirmLabel?: string;
+  pendingLabel?: string;
   onClose: () => void;
   onConfirm: () => void | Promise<void>;
 };
@@ -17,6 +20,8 @@ export function ConfirmDialog({
   title,
   description,
   pending = false,
+  confirmLabel = 'Eliminar',
+  pendingLabel = 'Eliminando...',
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -42,8 +47,8 @@ export function ConfirmDialog({
           onClick={() => void onConfirm()}
           disabled={pending}
         >
-          <Trash2 size={16} aria-hidden="true" />
-          {pending ? 'Eliminando...' : 'Eliminar'}
+          {confirmLabel === 'Eliminar' && <Trash2 size={16} aria-hidden="true" />}
+          {pending ? pendingLabel : confirmLabel}
         </button>
       </div>
     </Modal>

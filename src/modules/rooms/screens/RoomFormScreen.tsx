@@ -12,6 +12,7 @@ import { roomService } from '@/services/roomService';
 import { ROOM_HOUSEKEEPING_STATUSES, ROOM_STATUSES } from '@/shared/constants/statuses';
 import type { Room, RoomStatusDto } from '@/shared/types/entities/room';
 import type { RoomType } from '@/shared/types/entities/room-type';
+import { isWholeNumberInput } from '@/shared/utils/formValidation';
 import './rooms.css';
 
 type ScreenState =
@@ -136,7 +137,9 @@ export function RoomFormScreen() {
         room_type_id: form.roomTypeId,
         floor: Number(form.floor),
         status: toDtoStatus(form.status),
-        housekeeping_status: form.housekeepingStatus,
+        // Al editar no se envía: el backend responde 409 porque la limpieza solo
+        // cambia por Housekeeping (antes, guardar sin cambios fallaba).
+        housekeeping_status: roomId ? undefined : form.housekeepingStatus,
         notes: form.notes.trim() || undefined,
       };
       if (roomId) {
@@ -228,12 +231,16 @@ export function RoomFormScreen() {
 
           <Input
             label="Piso"
-            type="number"
-            min="0"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             required
             value={form.floor}
             error={errors.floor}
-            onChange={(event) => updateField('floor', event.target.value)}
+            onChange={(event) => {
+              // Entero ≥ 0: type="number" admitía "-", "e" y decimales.
+              if (isWholeNumberInput(event.target.value)) updateField('floor', event.target.value);
+            }}
           />
 
           <Select
@@ -254,7 +261,12 @@ export function RoomFormScreen() {
             onChange={(event) =>
               updateField('housekeepingStatus', event.target.value as Room['housekeepingStatus'])
             }
-            helpText="La limpieza la actualiza normalmente la app móvil; este valor inicial queda disponible para el alta."
+            disabled={isEditing}
+            helpText={
+              isEditing
+                ? 'Solo lectura: la limpieza se actualiza desde Housekeeping.'
+                : 'La limpieza la actualiza normalmente la app móvil; este valor inicial queda disponible para el alta.'
+            }
           >
             {ROOM_HOUSEKEEPING_STATUSES.map((status) => (
               <option key={status} value={status}>

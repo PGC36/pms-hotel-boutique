@@ -7,6 +7,12 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { Input } from '@/shared/components/Input';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { Modal } from '@/shared/components/Modal';
+import { Select } from '@/shared/components/Select';
+import {
+  FRONT_DESK_PAYMENT_METHODS,
+  isFrontDeskPaymentMethod,
+  type FrontDeskPaymentMethod,
+} from '@/modules/front-desk/utils/paymentMethods';
 import { bookingService } from '@/services/bookingService';
 import { guestAccountService } from '@/services/guestAccountService';
 import { guestService } from '@/services/guestService';
@@ -20,6 +26,11 @@ import type {
 } from '@/shared/types/entities';
 import { formatCurrency } from '@/shared/utils/currency';
 import { formatDateGT, formatTimeGT } from '@/shared/utils/date';
+import {
+  isMoneyInput,
+  moneyInputToCents,
+  validateMoneyAmount,
+} from '@/shared/utils/formValidation';
 
 type FormErrors = { description?: string; amount?: string };
 
@@ -39,10 +50,9 @@ function formatDate(value: Date) {
   return `${formatDateGT(value)} ${formatTimeGT(value)}`;
 }
 
+/** Monto en centavos sin pasar por coma flotante; `null` si no es un monto válido. */
 function amountToCents(value: string) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return Math.round(amount * 100);
+  return moneyInputToCents(value);
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -68,6 +78,7 @@ export function GuestAccountScreen() {
   const [amount, setAmount] = useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentReference, setPaymentReference] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<FrontDeskPaymentMethod>('cash');
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -185,6 +196,7 @@ export function GuestAccountScreen() {
       account?.balanceCents && account.balanceCents > 0 ? String(account.balanceCents / 100) : '',
     );
     setPaymentReference('');
+    setPaymentMethod('cash');
     setFormErrors({});
     setSaveError(null);
     setFeedback(null);
@@ -207,7 +219,8 @@ export function GuestAccountScreen() {
     const trimmedDescription = description.trim();
     const amountCents = amountToCents(amount);
     if (!trimmedDescription) nextErrors.description = 'Ingresa el concepto del consumo.';
-    if (amountCents === null || amountCents < 1) nextErrors.amount = 'Ingresa un monto mayor a 0.';
+    const amountError = validateMoneyAmount(amount);
+    if (amountError) nextErrors.amount = amountError;
     setFormErrors(nextErrors);
     setSaveError(null);
     if (Object.keys(nextErrors).length > 0 || amountCents === null) return;
@@ -237,7 +250,8 @@ export function GuestAccountScreen() {
 
     const nextErrors: FormErrors = {};
     const amountCents = amountToCents(paymentAmount);
-    if (amountCents === null || amountCents < 1) nextErrors.amount = 'Ingresa un monto mayor a 0.';
+    const amountError = validateMoneyAmount(paymentAmount);
+    if (amountError) nextErrors.amount = amountError;
     setFormErrors(nextErrors);
     setSaveError(null);
     if (Object.keys(nextErrors).length > 0 || amountCents === null) return;
@@ -248,7 +262,8 @@ export function GuestAccountScreen() {
         booking_id: account.bookingId,
         amount_cents: amountCents,
         currency: account.currency,
-        method: 'cash',
+        // Antes se enviaba siempre `cash`: una tarjeta quedaba registrada como efectivo.
+        method: paymentMethod,
         transaction_reference: paymentReference.trim() || undefined,
       });
       await loadFinancials(account.bookingId);
@@ -401,13 +416,15 @@ export function GuestAccountScreen() {
           />
           <Input
             label="Monto (GTQ)"
-            type="number"
-            min="0.01"
-            step="0.01"
+            type="text"
             inputMode="decimal"
             placeholder="0.00"
             value={amount}
-            onChange={(event) => setAmount(event.target.value)}
+            onChange={(event) => {
+              // Solo dígitos y hasta 2 decimales (type="number" admitía "e" y "-").
+              const next = event.target.value.trim();
+              if (isMoneyInput(next)) setAmount(next);
+            }}
             error={formErrors.amount}
             required
             disabled={isSaving}
@@ -437,18 +454,38 @@ export function GuestAccountScreen() {
         <form onSubmit={handlePaymentSubmit} noValidate>
           <Input
             label="Monto (GTQ)"
-            type="number"
-            min="0.01"
-            step="0.01"
+            type="text"
             inputMode="decimal"
             placeholder="0.00"
             value={paymentAmount}
-            onChange={(event) => setPaymentAmount(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value.trim();
+              if (isMoneyInput(next)) setPaymentAmount(next);
+            }}
             error={formErrors.amount}
             required
             autoFocus
             disabled={isSaving}
           />
+          <Select
+            label="Método de pago"
+            value={paymentMethod}
+            onChange={(event) => {
+              if (isFrontDeskPaymentMethod(event.target.value))
+                setPaymentMethod(event.target.value);
+            }}
+            helpText={
+              paymentMethod === 'cash' ? 'El efectivo requiere tu caja abierta.' : undefined
+            }
+            required
+            disabled={isSaving}
+          >
+            {FRONT_DESK_PAYMENT_METHODS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
           <Input
             label="Referencia"
             placeholder="Ej. recibo, autorización o nota de caja"

@@ -11,6 +11,7 @@ export interface Room {
   status: RoomStatus;
   /** Limpieza: la controla la app móvil; la web solo la lee. Ver D-002. */
   housekeepingStatus: RoomHousekeepingStatus;
+  active: boolean;
   /**
    * Calculado por el mapper con `isRoomAssignable` — no existe en el DTO.
    * `true` solo si `status === 'available'` y `housekeepingStatus` es

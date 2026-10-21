@@ -11,6 +11,7 @@ export interface RoomDTO {
   floor: number;
   status: RoomStatusDto;
   housekeeping_status: RoomHousekeepingStatusDto;
+  active?: boolean;
   notes?: string;
   /**
    * Trazabilidad del turnover: solo la devuelve `GET /housekeeping/rooms`.
@@ -35,6 +36,7 @@ export interface CreateRoomDto {
   status?: RoomStatusDto;
   housekeeping_status?: RoomHousekeepingStatusDto;
   notes?: string;
+  active?: boolean;
 }
 
 export type UpdateRoomDto = Partial<CreateRoomDto>;

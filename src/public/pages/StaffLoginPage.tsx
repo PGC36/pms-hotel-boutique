@@ -28,7 +28,8 @@ function StaffLoginForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await loginWith(email, password);
+    // Espacios accidentales al inicio o al final del correo no impiden iniciar sesión.
+    await loginWith(email.trim(), password);
   }
 
   async function loginWith(loginEmail: string, loginPassword: string) {

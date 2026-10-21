@@ -18,6 +18,7 @@ import {
   toImageAssignments,
   type GalleryItem,
 } from '@/shared/utils/mediaGallery';
+import { isWholeNumberInput } from '@/shared/utils/formValidation';
 import './rooms.css';
 
 type ScreenState =
@@ -224,12 +225,18 @@ export function RoomTypeFormScreen() {
 
         <Input
           label="Capacidad"
-          type="number"
-          min="1"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           required
           value={form.capacity}
           error={errors.capacity}
-          onChange={(event) => updateField('capacity', event.target.value)}
+          onChange={(event) => {
+            // Entero ≥ 1: type="number" admitía "-", "e" y decimales.
+            if (isWholeNumberInput(event.target.value)) {
+              updateField('capacity', event.target.value);
+            }
+          }}
         />
 
         <Input

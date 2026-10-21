@@ -7,6 +7,7 @@ import {
   CreditCard,
   Smartphone,
   StickyNote,
+  Tag,
   UserRound,
   UsersRound,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import {
   PublicBookingError,
   publicBookingCatalogService,
   type PublicAvailableRoomType,
+  type PublicPromotionQuote,
 } from '@/services/publicBookingCatalogService';
 import { Button } from '@/shared/components/Button';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -26,6 +28,22 @@ import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights, formatDateGT } from '@/shared/utils/date';
 import { validateBookingCapacity } from '@/shared/utils/bookingCapacity';
+import { validateOptionalText, validateRequiredText } from '@/shared/utils/formValidation';
+import {
+  EMAIL_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  PHONE_MAX_DIGITS,
+  hotelToday,
+  isDigitsOnly,
+  keepPhoneDigits,
+  normalizeChildren,
+  normalizePersonName,
+  validateEmail,
+  validateGuestCounts,
+  validatePersonName,
+  validatePhone,
+  validateStayDates,
+} from '@/modules/front-desk/utils/reservationFormValidation';
 import './booking-engine.css';
 
 type FormStatus = 'loading' | 'success' | 'error';
@@ -59,10 +77,15 @@ type FormErrors = Partial<
     | 'dates'
     | 'adults'
     | 'children'
-    | 'capacity',
+    | 'capacity'
+    | 'notes',
     string
   >
 >;
+
+/** Límites del backend para la reserva pública (`PublicGuestRequest`, `PublicCreateBookingRequest`). */
+const DOCUMENT_NUMBER_MAX_LENGTH = 60;
+const PUBLIC_NOTES_MAX_LENGTH = 1000;
 
 function dateKey(date: Date): string {
   const year = String(date.getFullYear()).padStart(4, '0');
@@ -138,6 +161,10 @@ export function BookingFormScreen() {
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvc, setCardCvc] = useState('');
   const [quote, setQuote] = useState<QuoteState>({ status: 'idle' });
+  const [promotionCode, setPromotionCode] = useState('');
+  const [promotionQuote, setPromotionQuote] = useState<PublicPromotionQuote | null>(null);
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const [promotionLoading, setPromotionLoading] = useState(false);
   // Cada consulta lleva un número; solo la más reciente puede escribir el estado.
   const quoteRequestRef = useRef(0);
 
@@ -221,7 +248,9 @@ export function BookingFormScreen() {
   }, [loadQuote]);
 
   const quotedRate = quote.status === 'available' ? quote.result.rate : undefined;
-  const totalAmount = quote.status === 'available' ? quote.result.totalAmountCents : undefined;
+  const totalAmount =
+    promotionQuote?.totalAmountCents ??
+    (quote.status === 'available' ? quote.result.totalAmountCents : undefined);
   const quoteMessage =
     quote.status === 'loading'
       ? 'Consultando disponibilidad...'
@@ -248,32 +277,69 @@ export function BookingFormScreen() {
 
   function updateRange(nextRange: DateRangeValue) {
     setRange(nextRange);
+    setPromotionQuote(null);
+    setPromotionError(null);
     setErrors((current) => ({ ...current, dates: undefined }));
+  }
+
+  async function applyPromotion() {
+    setPromotionError(null);
+    setPromotionQuote(null);
+    if (!promotionCode.trim()) {
+      setPromotionError('Escribe el código de promoción.');
+      return;
+    }
+    if (!canQuote) {
+      setPromotionError('Completa primero la habitación, las fechas y los huéspedes.');
+      return;
+    }
+    setPromotionLoading(true);
+    try {
+      const result = await publicBookingCatalogService.quotePromotion({
+        roomTypeId,
+        checkIn: checkInKey,
+        checkOut: checkOutKey,
+        code: promotionCode,
+      });
+      setPromotionQuote(result);
+      setPromotionCode(result.code);
+    } catch (cause) {
+      setPromotionQuote(null);
+      setPromotionError(cause instanceof Error ? cause.message : 'No se pudo validar el código.');
+    } finally {
+      setPromotionLoading(false);
+    }
   }
 
   function validateForm(): boolean {
     const nextErrors: FormErrors = {};
-    const adultsNumber = Number(adults);
-    const childrenNumber = Number(children);
-
-    if (!guestFirstName.trim()) nextErrors.guestFirstName = 'Ingresa el nombre del huesped.';
-    if (!guestLastName.trim()) nextErrors.guestLastName = 'Ingresa el apellido del huesped.';
-    if (!guestEmail.trim()) nextErrors.guestEmail = 'Ingresa el correo del huesped.';
-    if (!guestPhone.trim()) nextErrors.guestPhone = 'Ingresa el telefono del huesped.';
-    if (!guestDocumentNumber.trim()) {
-      nextErrors.guestDocumentNumber = 'Ingresa el documento del huesped.';
-    }
+    // Mismas reglas aprobadas que Nueva reserva de Recepción para los datos del huésped.
+    const firstNameError = validatePersonName(guestFirstName, 'nombre');
+    const lastNameError = validatePersonName(guestLastName, 'apellido');
+    const emailError = validateEmail(guestEmail);
+    const phoneError = validatePhone(guestPhone);
+    if (firstNameError) nextErrors.guestFirstName = firstNameError;
+    if (lastNameError) nextErrors.guestLastName = lastNameError;
+    if (emailError) nextErrors.guestEmail = emailError;
+    if (phoneError) nextErrors.guestPhone = phoneError;
+    const documentError = validateRequiredText(
+      guestDocumentNumber,
+      'Ingresa el documento del huésped.',
+      DOCUMENT_NUMBER_MAX_LENGTH,
+    );
+    if (documentError) nextErrors.guestDocumentNumber = documentError;
     if (!selectedRoomType) nextErrors.roomTypeId = 'Selecciona un tipo de habitacion valido.';
-    if (!isValidStay(range)) nextErrors.dates = 'Selecciona una salida posterior a la entrada.';
-    if (!Number.isInteger(adultsNumber) || adultsNumber < 1) {
-      nextErrors.adults = 'Debe viajar al menos un adulto.';
-    }
-    if (!Number.isInteger(childrenNumber) || childrenNumber < 0) {
-      nextErrors.children = 'Ingresa cero o mas ninos.';
-    }
+    // Entrada desde hoy en Guatemala, salida posterior y como máximo 90 noches.
+    const datesError = validateStayDates(checkInKey, checkOutKey);
+    if (datesError) nextErrors.dates = datesError;
+    const counts = validateGuestCounts(adults, children);
+    if (counts.adults) nextErrors.adults = counts.adults;
+    if (counts.children) nextErrors.children = counts.children;
     if (!nextErrors.adults && !nextErrors.children && capacityError) {
       nextErrors.capacity = capacityError;
     }
+    const notesError = validateOptionalText(notes, PUBLIC_NOTES_MAX_LENGTH);
+    if (notesError) nextErrors.notes = notesError;
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -294,6 +360,11 @@ export function BookingFormScreen() {
     }
 
     if (step === 'confirmation') {
+      if (promotionLoading) return;
+      if (promotionCode.trim() && !promotionQuote) {
+        setPromotionError('Aplica el código o bórralo para continuar.');
+        return;
+      }
       setStep('payment');
       return;
     }
@@ -322,9 +393,10 @@ export function BookingFormScreen() {
         adults: Number(adults),
         children: Number(children),
         notes: notes.trim() || undefined,
+        promotionCode: promotionQuote?.code,
         guest: {
-          firstName: guestFirstName.trim(),
-          lastName: guestLastName.trim(),
+          firstName: normalizePersonName(guestFirstName),
+          lastName: normalizePersonName(guestLastName),
           email: guestEmail.trim(),
           phone: guestPhone.trim() || undefined,
           documentType: guestDocumentType as 'national_id' | 'passport' | 'driver_license',
@@ -412,6 +484,8 @@ export function BookingFormScreen() {
               <div className="booking-form-grid">
                 <Input
                   label="Nombre"
+                  autoComplete="given-name"
+                  maxLength={NAME_MAX_LENGTH}
                   value={guestFirstName}
                   onChange={(event) => {
                     setGuestFirstName(event.target.value);
@@ -423,6 +497,8 @@ export function BookingFormScreen() {
 
                 <Input
                   label="Apellido"
+                  autoComplete="family-name"
+                  maxLength={NAME_MAX_LENGTH}
                   value={guestLastName}
                   onChange={(event) => {
                     setGuestLastName(event.target.value);
@@ -435,6 +511,9 @@ export function BookingFormScreen() {
                 <Input
                   label="Correo"
                   type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  maxLength={EMAIL_MAX_LENGTH}
                   value={guestEmail}
                   onChange={(event) => {
                     setGuestEmail(event.target.value);
@@ -447,9 +526,14 @@ export function BookingFormScreen() {
                 <Input
                   label="Telefono"
                   type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  maxLength={PHONE_MAX_DIGITS}
+                  placeholder="55550000"
                   value={guestPhone}
                   onChange={(event) => {
-                    setGuestPhone(event.target.value);
+                    // Solo dígitos y como máximo 20, también al pegar ("+502 5555-0000" → "50255550000").
+                    setGuestPhone(keepPhoneDigits(event.target.value));
                     setErrors((current) => ({ ...current, guestPhone: undefined }));
                   }}
                   error={errors.guestPhone}
@@ -468,6 +552,7 @@ export function BookingFormScreen() {
 
                 <Input
                   label="Numero de documento"
+                  maxLength={DOCUMENT_NUMBER_MAX_LENGTH}
                   value={guestDocumentNumber}
                   onChange={(event) => {
                     setGuestDocumentNumber(event.target.value);
@@ -482,6 +567,8 @@ export function BookingFormScreen() {
                   value={roomTypeId}
                   onChange={(event) => {
                     setRoomTypeId(event.target.value);
+                    setPromotionQuote(null);
+                    setPromotionError(null);
                     setErrors((current) => ({
                       ...current,
                       roomTypeId: undefined,
@@ -498,12 +585,16 @@ export function BookingFormScreen() {
                   ))}
                 </Select>
 
+                {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
                 <Input
                   label="Adultos"
-                  type="number"
-                  min="1"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={3}
                   value={adults}
                   onChange={(event) => {
+                    if (!isDigitsOnly(event.target.value)) return;
                     setAdults(event.target.value);
                     setErrors((current) => ({
                       ...current,
@@ -517,10 +608,14 @@ export function BookingFormScreen() {
 
                 <Input
                   label="Ninos"
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={3}
                   value={children}
+                  onBlur={() => setChildren(normalizeChildren(children))}
                   onChange={(event) => {
+                    if (!isDigitsOnly(event.target.value)) return;
                     setChildren(event.target.value);
                     setErrors((current) => ({
                       ...current,
@@ -542,7 +637,8 @@ export function BookingFormScreen() {
                       label="Entrada"
                       type="date"
                       value={range.start ? dateKey(range.start) : ''}
-                      min={dateKey(new Date())}
+                      // Hoy en Guatemala, independiente de la zona horaria del navegador.
+                      min={hotelToday()}
                       onChange={(event) => {
                         updateRange({ ...range, start: parseDateKey(event.target.value) });
                       }}
@@ -562,7 +658,7 @@ export function BookingFormScreen() {
                                 range.start.getDate() + 1,
                               ),
                             )
-                          : dateKey(new Date())
+                          : hotelToday()
                       }
                       onChange={(event) => {
                         updateRange({ ...range, end: parseDateKey(event.target.value) });
@@ -580,9 +676,27 @@ export function BookingFormScreen() {
                   <textarea
                     id="booking-notes"
                     className="booking-form-textarea"
+                    maxLength={PUBLIC_NOTES_MAX_LENGTH}
                     value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
+                    onChange={(event) => {
+                      setNotes(event.target.value);
+                      setErrors((current) => ({ ...current, notes: undefined }));
+                    }}
+                    aria-invalid={errors.notes ? true : undefined}
+                    aria-describedby={
+                      errors.notes
+                        ? 'booking-notes-error booking-notes-count'
+                        : 'booking-notes-count'
+                    }
                   />
+                  <p className="field-help" id="booking-notes-count">
+                    {notes.length}/{PUBLIC_NOTES_MAX_LENGTH}
+                  </p>
+                  {errors.notes ? (
+                    <p className="field-error" id="booking-notes-error">
+                      {errors.notes}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </>
@@ -596,6 +710,40 @@ export function BookingFormScreen() {
               </div>
               <h2>Revisa tu reserva</h2>
               <p>Confirma que los datos de huesped, habitacion y fechas esten correctos.</p>
+              <div className="booking-promotion-entry">
+                <Input
+                  label="Código de promoción"
+                  value={promotionCode}
+                  maxLength={40}
+                  disabled={promotionLoading}
+                  autoCapitalize="characters"
+                  placeholder="Ej. AURORA20"
+                  onChange={(event) => {
+                    setPromotionCode(event.target.value.toUpperCase());
+                    setPromotionQuote(null);
+                    setPromotionError(null);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  loading={promotionLoading}
+                  onClick={applyPromotion}
+                >
+                  <Tag size={15} aria-hidden="true" /> Aplicar
+                </Button>
+                {promotionError ? (
+                  <p className="field-error" role="alert">
+                    {promotionError}
+                  </p>
+                ) : null}
+                {promotionQuote ? (
+                  <p className="booking-promotion-success" role="status">
+                    {promotionQuote.name}: {promotionQuote.discountPercent}% de descuento (
+                    {formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}).
+                  </p>
+                ) : null}
+              </div>
               <div className="booking-confirm-grid">
                 <span>Huesped</span>
                 <strong>{guestFullName}</strong>
@@ -607,6 +755,18 @@ export function BookingFormScreen() {
                     ? `${formatDateGT(range.start)} al ${formatDateGT(range.end)}`
                     : 'Por definir'}
                 </strong>
+                {promotionQuote ? (
+                  <>
+                    <span>Subtotal</span>
+                    <strong>
+                      {formatCurrency(promotionQuote.baseAmountCents, promotionQuote.currency)}
+                    </strong>
+                    <span>Descuento</span>
+                    <strong>
+                      -{formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}
+                    </strong>
+                  </>
+                ) : null}
                 <span>Total estimado</span>
                 <strong>
                   {totalAmount !== undefined
@@ -792,6 +952,9 @@ export function BookingFormScreen() {
                       ? formatCurrency(totalAmount, quotedRate?.currency)
                       : 'Por definir'}
                   </strong>
+                  {promotionQuote ? (
+                    <small>Descuento aplicado: {promotionQuote.discountPercent}%</small>
+                  ) : null}
                   <small>Tarifa sujeta a confirmacion final del hotel.</small>
                 </div>
               </div>
@@ -803,6 +966,7 @@ export function BookingFormScreen() {
               <Button
                 type="button"
                 variant="secondary"
+                disabled={promotionLoading}
                 onClick={() => setStep(step === 'payment' ? 'confirmation' : 'details')}
               >
                 Volver
@@ -870,6 +1034,22 @@ export function BookingFormScreen() {
                   : 'Por definir'}
               </strong>
             </div>
+            {promotionQuote ? (
+              <>
+                <div>
+                  <span>Subtotal</span>
+                  <strong>
+                    {formatCurrency(promotionQuote.baseAmountCents, promotionQuote.currency)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Descuento ({promotionQuote.discountPercent}%)</span>
+                  <strong>
+                    -{formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}
+                  </strong>
+                </div>
+              </>
+            ) : null}
             <div>
               <span>Total estimado</span>
               <strong>

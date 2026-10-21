@@ -44,6 +44,28 @@ export function formatDateGT(date: Date): string {
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = date.getFullYear();
+  const format =
+    typeof document === 'undefined' || !document.documentElement
+      ? 'dd-mm-yyyy'
+      : (document.documentElement.dataset.dateFormat ?? 'dd-mm-yyyy');
+  if (format === 'yyyy-mm-dd') return `${year}-${month}-${day}`;
+  if (format === 'dd/mmm/yyyy') {
+    const monthName = [
+      'ene',
+      'feb',
+      'mar',
+      'abr',
+      'may',
+      'jun',
+      'jul',
+      'ago',
+      'sep',
+      'oct',
+      'nov',
+      'dic',
+    ][date.getMonth()];
+    return `${day}/${monthName}/${year}`;
+  }
   return `${day}-${month}-${year}`;
 }
 

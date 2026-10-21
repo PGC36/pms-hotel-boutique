@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BookingConfirmationScreen } from '@/modules/booking-engine/screens/BookingConfirmationScreen';
 import { BookingFormScreen } from '@/modules/booking-engine/screens/BookingFormScreen';
 import { RoomDetailScreen } from '@/modules/booking-engine/screens/RoomDetailScreen';
+import { SearchScreen } from '@/modules/booking-engine/screens/SearchScreen';
 import { httpClient } from '@/services/http-client';
 import {
   PublicBookingError,
@@ -236,6 +237,7 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
     adults: 2,
     children: 0,
     notes: 'Llegada tarde',
+    promotionCode: ' AURORA20 ',
     rateId: RATE_ID,
     roomId: 'room-1',
     status: 'confirmed',
@@ -262,6 +264,7 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
     'children',
     'guest',
     'notes',
+    'promotionCode',
     'roomTypeId',
   ]);
   for (const forbidden of ['rateId', 'roomId', 'status', 'totalAmountCents', 'guestId']) {
@@ -270,6 +273,62 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
   assert.equal('id' in body.guest, false);
   assert.equal(confirmation.confirmationCode, 'BKG-TEST0001');
   assert.equal(confirmation.status, 'pending');
+});
+
+test('POST /public/promotions/quote valida el código con el backend y devuelve importes', async () => {
+  handler = (request) => {
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, `${API}/public/promotions/quote`);
+    assert.deepEqual(request.body, {
+      roomTypeId: ROOM_TYPE_ID,
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      code: 'AURORA20',
+    });
+    return json({
+      code: 'AURORA20',
+      name: 'Estancia extendida',
+      discountPercent: 20,
+      baseAmountCents: 150000,
+      discountAmountCents: 30000,
+      totalAmountCents: 120000,
+      currency: 'GTQ',
+    });
+  };
+
+  const quote = await publicBookingCatalogService.quotePromotion({
+    roomTypeId: ROOM_TYPE_ID,
+    checkIn: CHECK_IN,
+    checkOut: CHECK_OUT,
+    code: ' AURORA20 ',
+  });
+
+  assertPublicRequests();
+  assert.equal(quote.discountAmountCents, 30000);
+  assert.equal(quote.totalAmountCents, 120000);
+});
+
+test('código promocional inválido muestra un mensaje entendible', async () => {
+  handler = () =>
+    json({ message: 'El código no es válido o no está vigente para estas fechas.' }, 400);
+
+  await assert.rejects(
+    publicBookingCatalogService.quotePromotion({
+      roomTypeId: ROOM_TYPE_ID,
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      code: 'NOEXISTE',
+    }),
+    (error) => {
+      assert.ok(error instanceof PublicBookingError);
+      assert.equal(error.kind, 'invalid_promotion');
+      assert.equal(
+        error.message,
+        'El código de promoción no es válido o ya venció para esas fechas.',
+      );
+      return true;
+    },
+  );
 });
 
 const errorCases = [
@@ -608,12 +667,138 @@ test('BookingConfirmationScreen: muestra "Reserva registrada" y pendiente de con
   assert.ok(content.includes('Reserva registrada'));
   assert.ok(content.includes('Pendiente de confirmación por el hotel'));
   assert.ok(!content.includes('Reserva confirmada'));
-  const roomLink = view.root.find((node) => node.type === 'a' && text(node) === 'Ver habitación');
-  const roomUrl = new URL(roomLink.props.href, 'http://localhost');
-  assert.equal(roomUrl.pathname, `/rooms/${ROOM_TYPE_ID}`);
-  assert.equal(roomUrl.searchParams.get('checkIn'), CHECK_IN);
-  assert.equal(roomUrl.searchParams.get('checkOut'), CHECK_OUT);
-  assert.equal(roomUrl.searchParams.get('adults'), '2');
-  assert.equal(roomUrl.searchParams.get('children'), '0');
+  const reservationButton = view.root.find(
+    (node) => node.type === 'button' && text(node) === 'Ver mi reserva',
+  );
+  act(() => reservationButton.props.onClick());
+  const reservationDetails = view.root.find(
+    (node) => node.props.id === 'booking-reservation-details',
+  );
+  assert.ok(text(reservationDetails).includes('Detalle de tu reserva'));
+  assert.ok(text(reservationDetails).includes('BKG-TEST0001'));
+  assert.ok(text(reservationDetails).includes('Doble Deluxe'));
+  assert.ok(text(reservationDetails).includes('ana@aurora.test'));
+  assert.ok(text(reservationDetails).includes('Flexible'));
   assert.equal(requests.length, 0, 'la confirmación no consulta endpoints privados');
+});
+
+// --- Revisión integral de inputs: reserva pública y buscador -----------------
+
+const visibleFieldErrors = () =>
+  view.root
+    .findAll((node) => node.type === 'p' && node.props.className === 'field-error')
+    .map(text);
+const submitBookingForm = () =>
+  act(async () => {
+    view.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+const availableHandler = (request) =>
+  pathOf(request) === '/public/room-types'
+    ? json([apiRoomType])
+    : json(availabilityResponse([availabilityResult({ availableRooms: 3 })]));
+
+test('BookingFormScreen: datos del huésped con las reglas aprobadas; con errores no avanza', async () => {
+  handler = availableHandler;
+  renderAt(
+    `/booking/new?roomTypeId=${ROOM_TYPE_ID}&checkIn=${CHECK_IN}&checkOut=${CHECK_OUT}&adults=2&children=0`,
+    '/booking/new',
+    <BookingFormScreen />,
+  );
+  await settle(1600);
+
+  act(() => {
+    fieldInput('Nombre').props.onChange({ target: { value: 'J0hn' } });
+    fieldInput('Apellido').props.onChange({ target: { value: 'Li' } });
+    fieldInput('Correo').props.onChange({ target: { value: 'ana@' } });
+    fieldInput('Telefono').props.onChange({ target: { value: '+502 5555-00' } });
+    fieldInput('Adultos').props.onChange({ target: { value: '1e2' } });
+    fieldInput('Ninos').props.onChange({ target: { value: '-1' } });
+  });
+  assert.equal(fieldInput('Telefono').props.value, '502555500', 'solo dígitos, también al pegar');
+  assert.equal(fieldInput('Adultos').props.value, '2', 'rechaza notación científica');
+  assert.equal(fieldInput('Ninos').props.value, '0', 'rechaza signos');
+  assert.equal(fieldInput('Nombre').props.maxLength, 20);
+
+  await submitBookingForm();
+  const errors = visibleFieldErrors();
+  assert.ok(errors.includes('Solo se permiten letras.'), errors.join(' | '));
+  assert.ok(errors.includes('Mínimo 3 letras.'), errors.join(' | '));
+  assert.ok(
+    errors.some((error) => /formato válido/.test(error)),
+    errors.join(' | '),
+  );
+  assert.ok(errors.includes('Ingresa el documento del huésped.'), errors.join(' | '));
+  assert.equal(fieldInput('Nombre').props['aria-invalid'], true);
+  const labels = view.root.findAll((node) => node.type === 'button').map(text);
+  assert.ok(
+    labels.some((label) => label.includes('Continuar')),
+    'sigue en el paso de datos',
+  );
+  assert.ok(!requests.some((request) => request.method === 'POST'));
+});
+
+test('BookingFormScreen: entrada anterior a hoy o más de 90 noches no avanza', async () => {
+  handler = availableHandler;
+  const fillGuest = () =>
+    act(() => {
+      fieldInput('Nombre').props.onChange({ target: { value: 'Ana' } });
+      fieldInput('Apellido').props.onChange({ target: { value: 'López' } });
+      fieldInput('Correo').props.onChange({ target: { value: 'ana@aurora.test' } });
+      fieldInput('Telefono').props.onChange({ target: { value: '55550000' } });
+      fieldInput('Numero de documento').props.onChange({ target: { value: 'P-1' } });
+    });
+
+  renderAt(
+    `/booking/new?roomTypeId=${ROOM_TYPE_ID}&checkIn=${daysFromToday(-2)}&checkOut=${daysFromToday(1)}&adults=2&children=0`,
+    '/booking/new',
+    <BookingFormScreen />,
+  );
+  await settle(1600);
+  fillGuest();
+  await submitBookingForm();
+  assert.ok(
+    visibleFieldErrors().some((error) =>
+      error.startsWith('La fecha de entrada no puede ser anterior a hoy'),
+    ),
+    visibleFieldErrors().join(' | '),
+  );
+  act(() => view.unmount());
+
+  renderAt(
+    `/booking/new?roomTypeId=${ROOM_TYPE_ID}&checkIn=${CHECK_IN}&checkOut=${daysFromToday(30 + 91)}&adults=2&children=0`,
+    '/booking/new',
+    <BookingFormScreen />,
+  );
+  await settle(1600);
+  fillGuest();
+  await submitBookingForm();
+  assert.ok(
+    visibleFieldErrors().includes('La estancia no puede superar 90 noches (seleccionaste 91).'),
+    visibleFieldErrors().join(' | '),
+  );
+  assert.ok(!requests.some((request) => request.method === 'POST'));
+});
+
+test('SearchScreen: entrada anterior a hoy se informa con un error accesible y no consulta', async () => {
+  handler = (request) => {
+    const path = pathOf(request);
+    if (path === '/public/room-types') return json([apiRoomType]);
+    if (path === '/public/rates') return json([openEndedRate]);
+    return json(availabilityResponse([]));
+  };
+  renderAt(`/?checkIn=${daysFromToday(-3)}&checkOut=${daysFromToday(-1)}`, '/', <SearchScreen />);
+  await settle(1200);
+  const before = requests.filter((request) => pathOf(request) === '/public/availability').length;
+  await act(async () => {
+    view.root.findByProps({ id: 'buscar' }).props.onSubmit({ preventDefault() {} });
+  });
+  const error = view.root.findByProps({ id: 'search-range-error' });
+  assert.match(text(error), /La fecha de entrada no puede ser anterior a hoy/);
+  assert.equal(error.props.role, 'alert');
+  const [checkIn] = view.root.findAll(
+    (node) => node.type === 'input' && node.props.type === 'date',
+  );
+  assert.equal(checkIn.props['aria-describedby'], 'search-range-error');
+  const after = requests.filter((request) => pathOf(request) === '/public/availability').length;
+  assert.equal(after, before, 'no consulta disponibilidad con fechas inválidas');
 });

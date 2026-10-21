@@ -23,6 +23,7 @@ import type {
 import type { Guest, GuestDocumentTypeDto } from '@/shared/types/entities/guest';
 import type { Room } from '@/shared/types/entities/room';
 import { formatDateGT } from '@/shared/utils/date';
+import { normalizePersonNamePart, validatePersonNamePart } from '@/shared/utils/formValidation';
 import './front-desk.css';
 
 type ScreenState =
@@ -73,6 +74,22 @@ function companionToForm(companion: BookingCompanion): CompanionForm {
   };
 }
 
+/**
+ * Nombre o apellido de un acompañante: obligatorio (el backend lo exige) y, si
+ * es nuevo o cambió, con las reglas aprobadas de nombres de Recepción. Un
+ * acompañante ya guardado conserva su nombre aunque no cumpla esas reglas.
+ */
+function validateCompanionName(
+  value: string,
+  saved: string | undefined,
+  label: 'nombre' | 'apellido',
+): string | null {
+  const name = normalizePersonNamePart(value);
+  if (!name) return `Ingresa el ${label}.`;
+  if (saved !== undefined && name === normalizePersonNamePart(saved)) return null;
+  return validatePersonNamePart(name, label);
+}
+
 function emptyCompanion(guestType: BookingCompanionGuestType = 'adult'): CompanionForm {
   return {
     firstName: '',
@@ -115,6 +132,11 @@ export function CheckInScreen() {
   const [documentType, setDocumentType] = useState<Guest['documentType'] | ''>('');
   const [documentNumber, setDocumentNumber] = useState('');
   const [companions, setCompanions] = useState<CompanionForm[]>([]);
+  // Acompañantes tal como están guardados: sus nombres antiguos no bloquean el check-in.
+  const [savedCompanions, setSavedCompanions] = useState<CompanionForm[]>([]);
+  const [companionErrors, setCompanionErrors] = useState<
+    { firstName: string | null; lastName: string | null }[]
+  >([]);
   const [assigningRoom, setAssigningRoom] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -148,6 +170,8 @@ export function CheckInScreen() {
       setDocumentType(guest?.documentType ?? '');
       setDocumentNumber(guest?.documentNumber ?? '');
       setCompanions(bookingCompanions.map(companionToForm));
+      setSavedCompanions(bookingCompanions.map(companionToForm));
+      setCompanionErrors([]);
     } catch (cause) {
       setScreen({ status: 'error', message: getErrorMessage(cause) });
     }
@@ -184,6 +208,16 @@ export function CheckInScreen() {
         itemIndex === index ? { ...companion, ...next } : companion,
       ),
     );
+    setCompanionErrors((current) =>
+      current.map((errors, itemIndex) =>
+        itemIndex === index
+          ? {
+              firstName: 'firstName' in next ? null : errors.firstName,
+              lastName: 'lastName' in next ? null : errors.lastName,
+            }
+          : errors,
+      ),
+    );
     setActionError(null);
   }
 
@@ -197,6 +231,7 @@ export function CheckInScreen() {
 
   function removeCompanion(index: number) {
     setCompanions((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setCompanionErrors((current) => current.filter((_, itemIndex) => itemIndex !== index));
     setActionError(null);
   }
 
@@ -228,7 +263,19 @@ export function CheckInScreen() {
   }
 
   async function handleCheckIn() {
-    if (screen.status !== 'ready') return;
+    if (screen.status !== 'ready' || checkingIn) return;
+    const nextNameErrors = companions.map((companion) => {
+      const saved = savedCompanions.find((item) => item.id && item.id === companion.id);
+      return {
+        firstName: validateCompanionName(companion.firstName, saved?.firstName, 'nombre'),
+        lastName: validateCompanionName(companion.lastName, saved?.lastName, 'apellido'),
+      };
+    });
+    setCompanionErrors(nextNameErrors);
+    if (nextNameErrors.some((errors) => errors.firstName || errors.lastName)) {
+      setActionError('Revisa el nombre y apellido de los acompañantes.');
+      return;
+    }
     const companionValidation = getCompanionValidationMessage(screen.booking);
     if (companionValidation) {
       setActionError(companionValidation);
@@ -242,14 +289,22 @@ export function CheckInScreen() {
     try {
       const documentTypeDto = toGuestDocumentTypeDto(documentType);
       if (screen.guest && documentTypeDto) {
-        await guestService.updateGuest(screen.guest.id, {
+        // Conserva nombre, email, teléfono y notas: el PUT de huésped reemplaza todo.
+        await guestService.updateGuestIdentification(screen.guest.id, {
           document_type: documentTypeDto,
           document_number: documentNumber.trim() || undefined,
         });
       }
       await bookingCompanionService.saveCompanionsForBooking(
         screen.booking.id,
-        companions.map(toCompanionDto),
+        companions.map((companion) =>
+          toCompanionDto({
+            ...companion,
+            firstName: normalizePersonNamePart(companion.firstName),
+            lastName: normalizePersonNamePart(companion.lastName),
+            documentNumber: companion.documentNumber.trim(),
+          }),
+        ),
       );
       await bookingService.checkIn(screen.booking.id);
       const [refreshedBooking, refreshedRooms] = await Promise.all([
@@ -260,10 +315,12 @@ export function CheckInScreen() {
         throw new Error('El check-in se completo, pero la reserva ya no esta disponible.');
       }
       setScreen({ ...screen, booking: refreshedBooking, rooms: refreshedRooms });
-      const account = await guestAccountService.getAccountByBookingId(screen.booking.id);
-      if (!account) {
-        throw new Error('El check-in se completó, pero no se encontró la cuenta del huésped.');
-      }
+      // El check-in del backend no abre el folio: se abre aquí (idempotente).
+      const account = await guestAccountService.openFolio(screen.booking.id).catch((cause) => {
+        throw new Error(
+          `El check-in se completó, pero no se pudo abrir la cuenta del huésped: ${getErrorMessage(cause)}`,
+        );
+      });
       navigate(`/pms/accounts/${account.bookingId}`);
     } catch (cause) {
       setActionError(getErrorMessage(cause));
@@ -399,12 +456,18 @@ export function CheckInScreen() {
             >
               <Input
                 label="Nombre"
+                required
+                autoComplete="off"
                 value={companion.firstName}
+                error={companionErrors[index]?.firstName ?? undefined}
                 onChange={(event) => updateCompanion(index, { firstName: event.target.value })}
               />
               <Input
                 label="Apellido"
+                required
+                autoComplete="off"
                 value={companion.lastName}
+                error={companionErrors[index]?.lastName ?? undefined}
                 onChange={(event) => updateCompanion(index, { lastName: event.target.value })}
               />
               <Select

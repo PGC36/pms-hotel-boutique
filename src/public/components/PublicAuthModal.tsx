@@ -28,7 +28,8 @@ export function PublicAuthModal({ onClose }: PublicAuthModalProps) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await loginWith(email, password);
+    // Espacios accidentales al inicio o al final del correo no impiden iniciar sesión.
+    await loginWith(email.trim(), password);
   }
 
   async function loginWith(loginEmail: string, loginPassword: string) {
@@ -89,6 +90,8 @@ export function PublicAuthModal({ onClose }: PublicAuthModalProps) {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 disabled={isSubmitting}
+                aria-describedby={error ? 'modal-login-error' : undefined}
+                aria-invalid={error ? true : undefined}
               />
             </label>
             <label htmlFor="modal-auth-password">
@@ -102,6 +105,8 @@ export function PublicAuthModal({ onClose }: PublicAuthModalProps) {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={isSubmitting}
+                aria-describedby={error ? 'modal-login-error' : undefined}
+                aria-invalid={error ? true : undefined}
               />
             </label>
             {error && (
