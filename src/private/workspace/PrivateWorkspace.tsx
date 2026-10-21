@@ -4426,64 +4426,80 @@ function ConciergeContent({
     }, {});
     const sortedRooms = Object.keys(roomGroups).sort((a, b) => Number(a) - Number(b));
     return (
-      <div className="panel cg-view">
-        <div className="panel-heading">
-          <div>
-            <h3>Solicitudes por habitación</h3>
-            <p>Consulta las necesidades actuales de los huéspedes agrupadas por habitación.</p>
+      <>
+        <div className="panel cg-view">
+          <div className="panel-heading">
+            <div>
+              <h3>Solicitudes por habitación</h3>
+              <p>Consulta las necesidades actuales de los huéspedes agrupadas por habitación.</p>
+            </div>
+          </div>
+          <div className="cg-room-group-list">
+            {sortedRooms.length === 0 ? (
+              <div className="hk-empty">
+                <BedDouble size={22} />
+                <p>No hay solicitudes registradas</p>
+              </div>
+            ) : (
+              sortedRooms.map((room) => {
+                const roomRequests = roomGroups[room];
+                const pendingCount = roomRequests.filter(
+                  (r) => !isClosedConcierge(r.status),
+                ).length;
+                return (
+                  <div className="cg-room-group" key={room}>
+                    <div className="cg-room-group-head">
+                      <div className="cg-room-group-title">
+                        <BedDouble size={18} />
+                        <div>
+                          <strong>Habitación {room}</strong>
+                          <span>{roomRequests[0].guest}</span>
+                        </div>
+                      </div>
+                      <div className="cg-room-group-meta">
+                        <span className={`status-pill ${pendingCount > 0 ? 'warning' : 'success'}`}>
+                          {pendingCount > 0 ? `${pendingCount} activas` : 'Sin pendientes'}
+                        </span>
+                        <span className="cg-room-count">{roomRequests.length} en total</span>
+                      </div>
+                    </div>
+                    <div className="cg-room-group-items">
+                      {roomRequests.map((req) => (
+                        <button
+                          className="cg-room-group-item"
+                          key={req.id}
+                          type="button"
+                          onClick={() => onSelectRequest(req.id)}
+                          aria-label={`Ver solicitud de ${req.category}, habitación ${room}: ${req.description}`}
+                        >
+                          <span className="cg-room-group-item-icon">
+                            {categoryIcon(req.category)}
+                          </span>
+                          <span className="cg-room-group-item-info">
+                            <strong>{req.category}</strong>
+                            <span>{req.description}</span>
+                          </span>
+                          <span className={`status-pill ${statusClass(req.status)}`}>
+                            {req.status}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
-        <div className="cg-room-group-list">
-          {sortedRooms.length === 0 ? (
-            <div className="hk-empty">
-              <BedDouble size={22} />
-              <p>No hay solicitudes registradas</p>
-            </div>
-          ) : (
-            sortedRooms.map((room) => {
-              const roomRequests = roomGroups[room];
-              const pendingCount = roomRequests.filter((r) => !isClosedConcierge(r.status)).length;
-              return (
-                <div className="cg-room-group" key={room}>
-                  <div className="cg-room-group-head">
-                    <div className="cg-room-group-title">
-                      <BedDouble size={18} />
-                      <div>
-                        <strong>Habitación {room}</strong>
-                        <span>{roomRequests[0].guest}</span>
-                      </div>
-                    </div>
-                    <div className="cg-room-group-meta">
-                      <span className={`status-pill ${pendingCount > 0 ? 'warning' : 'success'}`}>
-                        {pendingCount > 0 ? `${pendingCount} activas` : 'Sin pendientes'}
-                      </span>
-                      <span className="cg-room-count">{roomRequests.length} en total</span>
-                    </div>
-                  </div>
-                  <div className="cg-room-group-items">
-                    {roomRequests.map((req) => (
-                      <div
-                        className="cg-room-group-item"
-                        key={req.id}
-                        onClick={() => onSelectRequest(req.id)}
-                      >
-                        <div className="cg-room-group-item-icon">{categoryIcon(req.category)}</div>
-                        <div className="cg-room-group-item-info">
-                          <strong>{req.category}</strong>
-                          <span>{req.description}</span>
-                        </div>
-                        <span className={`status-pill ${statusClass(req.status)}`}>
-                          {req.status}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+        {selectedRequest && (
+          <ConciergeRequestModal
+            request={selectedRequest}
+            onClose={onCloseRequest}
+            onUpdateStatus={onUpdateStatus}
+            onUpdateObservation={onUpdateObservation}
+          />
+        )}
+      </>
     );
   }
 
