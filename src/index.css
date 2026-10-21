@@ -5228,6 +5228,7 @@ button {
   gap: var(--space-3);
 }
 .cg-room-group-item {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: var(--size-legacy-11);
@@ -5235,12 +5236,18 @@ button {
   background: var(--color-surface);
   border: var(--size-legacy-1) solid var(--color-border);
   border-radius: var(--radius-md);
+  color: inherit;
+  text-align: left;
   cursor: pointer;
   transition: 0.2s;
 }
 .cg-room-group-item:hover {
   border-color: var(--color-legacy-d7c4ae);
   background: var(--color-legacy-faf5ee);
+}
+.cg-room-group-item:focus-visible {
+  outline: 2px solid var(--color-brand-gold-dark);
+  outline-offset: 2px;
 }
 .cg-room-group-item-icon {
   width: var(--size-legacy-32);
