@@ -61,9 +61,7 @@ export const accountService = {
   updatePreferences: (preferences: AccountPreferences) =>
     request(
       async () =>
-        normalize(
-          await httpClient.put<AccountResponse>('/auth/account/preferences', preferences),
-        ),
+        normalize(await httpClient.put<AccountResponse>('/auth/account/preferences', preferences)),
       'No pudimos guardar tus preferencias. Intenta nuevamente.',
     ),
 };

@@ -4852,7 +4852,10 @@ test('tarifas: conserva la base y separa la tarifa especial de menor vigencia', 
   const rates = [seasonal, base];
 
   assert.equal(findBaseRate(rates, 'room-type-1').id, 'base');
-  assert.deepEqual(getSeasonalRates(rates).map((item) => item.id), ['season']);
+  assert.deepEqual(
+    getSeasonalRates(rates).map((item) => item.id),
+    ['season'],
+  );
   assert.equal(findBaseRate(rates, 'missing'), undefined);
 });
 

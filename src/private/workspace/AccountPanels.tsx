@@ -1,11 +1,5 @@
 import { useState } from 'react';
-import {
-  Check,
-  ImagePlus,
-  Settings,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+import { Check, ImagePlus, Settings, ShieldCheck, X } from 'lucide-react';
 import {
   defaultAccountPreferences,
   type AccountPreferences,
@@ -141,20 +135,21 @@ export function AccountProfileModal({
           </label>
           <label className="hk-form-label">
             Correo de acceso
-            <input
-              className="hk-form-select"
-              value={email || 'No disponible'}
-              readOnly
-            />
+            <input className="hk-form-select" value={email || 'No disponible'} readOnly />
           </label>
         </div>
 
         <div className="account-info-grid">
           <span>
-            <ShieldCheck size={14} /> Correo y teléfono requieren verificación de credenciales para cambiarse.
+            <ShieldCheck size={14} /> Correo y teléfono requieren verificación de credenciales para
+            cambiarse.
           </span>
         </div>
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="modal-foot">
           <button className="button secondary" type="button" onClick={onClose}>
@@ -242,7 +237,10 @@ export function AccountPreferencesModal({
               className="hk-form-select"
               value={preferences.dateFormat}
               onChange={(event) =>
-                setPreferences((current) => ({ ...current, dateFormat: event.target.value as AccountPreferences['dateFormat'] }))
+                setPreferences((current) => ({
+                  ...current,
+                  dateFormat: event.target.value as AccountPreferences['dateFormat'],
+                }))
               }
             >
               <option value="dd-mm-yyyy">dd-mm-aaaa</option>
@@ -256,7 +254,10 @@ export function AccountPreferencesModal({
               className="hk-form-select"
               value={preferences.density}
               onChange={(event) =>
-                setPreferences((current) => ({ ...current, density: event.target.value as AccountPreferences['density'] }))
+                setPreferences((current) => ({
+                  ...current,
+                  density: event.target.value as AccountPreferences['density'],
+                }))
               }
             >
               <option value="comfortable">Cómoda</option>
@@ -269,10 +270,15 @@ export function AccountPreferencesModal({
         <div className="account-preference-note">
           <Settings size={16} />
           <p>
-            Se guardan en tu cuenta y se aplican en tus dispositivos. La vista inicial se aplicará al volver a entrar.
+            Se guardan en tu cuenta y se aplican en tus dispositivos. La vista inicial se aplicará
+            al volver a entrar.
           </p>
         </div>
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="modal-foot">
           <button className="button secondary" type="button" onClick={onClose}>
@@ -286,10 +292,15 @@ export function AccountPreferencesModal({
               setSaving(true);
               setError('');
               try {
-                await onSave({ ...preferences, defaultView: preferences.defaultView || initialView });
+                await onSave({
+                  ...preferences,
+                  defaultView: preferences.defaultView || initialView,
+                });
                 onClose();
               } catch (cause) {
-                setError(cause instanceof Error ? cause.message : 'No pudimos guardar tus preferencias.');
+                setError(
+                  cause instanceof Error ? cause.message : 'No pudimos guardar tus preferencias.',
+                );
               } finally {
                 setSaving(false);
               }

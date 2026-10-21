@@ -1659,26 +1659,29 @@ function PrivateWorkspaceReady({
   useEffect(() => {
     if (workspaceRole === 'guest') return;
     let active = true;
-    void accountService.get().then((account) => {
-      if (!active) return;
-      const profile = { displayName: account.displayName, avatarDataUrl: account.avatarDataUrl };
-      const preferences = {
-        defaultView: account.defaultView,
-        dateFormat: account.dateFormat,
-        density: account.density,
-      };
-      setAccountProfile(profile);
-      setAccountPreferences(preferences);
-      applyAccountPreferences(preferences);
-      const explicitView = initialNav ?? new URLSearchParams(location.search).get('view');
-      if (!explicitView && preferences.defaultView) {
-        const nextNav = getInitialNav(workspaceRole, preferences.defaultView);
-        setActiveNavState(nextNav);
-        setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
-      }
-    }).catch(() => {
-      // Keep the shell available if account settings cannot be loaded.
-    });
+    void accountService
+      .get()
+      .then((account) => {
+        if (!active) return;
+        const profile = { displayName: account.displayName, avatarDataUrl: account.avatarDataUrl };
+        const preferences = {
+          defaultView: account.defaultView,
+          dateFormat: account.dateFormat,
+          density: account.density,
+        };
+        setAccountProfile(profile);
+        setAccountPreferences(preferences);
+        applyAccountPreferences(preferences);
+        const explicitView = initialNav ?? new URLSearchParams(location.search).get('view');
+        if (!explicitView && preferences.defaultView) {
+          const nextNav = getInitialNav(workspaceRole, preferences.defaultView);
+          setActiveNavState(nextNav);
+          setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
+        }
+      })
+      .catch(() => {
+        // Keep the shell available if account settings cannot be loaded.
+      });
     return () => {
       active = false;
       if (typeof document === 'undefined' || !document.documentElement) return;
@@ -4159,18 +4162,18 @@ function PrivateWorkspaceReady({
           initialPreferences={accountPreferences}
           onClose={() => setAccountPanel(null)}
           onSave={async (preferences) => {
-              const account = await accountService.updatePreferences(preferences);
-              const savedPreferences = {
-                defaultView: account.defaultView,
-                dateFormat: account.dateFormat,
-                density: account.density,
-              };
-              setAccountPreferences(savedPreferences);
-              applyAccountPreferences(savedPreferences);
-              const nextNav = getInitialNav(workspaceRole, savedPreferences.defaultView);
-              setActiveNavState(nextNav);
-              setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
-              notify('Preferencias guardadas en tu cuenta');
+            const account = await accountService.updatePreferences(preferences);
+            const savedPreferences = {
+              defaultView: account.defaultView,
+              dateFormat: account.dateFormat,
+              density: account.density,
+            };
+            setAccountPreferences(savedPreferences);
+            applyAccountPreferences(savedPreferences);
+            const nextNav = getInitialNav(workspaceRole, savedPreferences.defaultView);
+            setActiveNavState(nextNav);
+            setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
+            notify('Preferencias guardadas en tu cuenta');
           }}
         />
       )}

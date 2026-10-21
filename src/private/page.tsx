@@ -58,17 +58,23 @@ export function PrivatePage({
 
   useEffect(() => {
     let active = true;
-    void accountService.get().then((account) => {
-      if (!active) return;
-      setAccountProfile({ displayName: account.displayName, avatarDataUrl: account.avatarDataUrl });
-      const preferences = {
-        defaultView: account.defaultView,
-        dateFormat: account.dateFormat,
-        density: account.density,
-      };
-      setAccountPreferences(preferences);
-      applyAccountPreferences(preferences);
-    }).catch(() => {});
+    void accountService
+      .get()
+      .then((account) => {
+        if (!active) return;
+        setAccountProfile({
+          displayName: account.displayName,
+          avatarDataUrl: account.avatarDataUrl,
+        });
+        const preferences = {
+          defaultView: account.defaultView,
+          dateFormat: account.dateFormat,
+          density: account.density,
+        };
+        setAccountPreferences(preferences);
+        applyAccountPreferences(preferences);
+      })
+      .catch(() => {});
     return () => {
       active = false;
       if (typeof document === 'undefined' || !document.documentElement) return;
@@ -195,7 +201,10 @@ export function PrivatePage({
             onClose={() => setAccountPanel(null)}
             onSave={async (profile) => {
               const account = await accountService.updateProfile(profile);
-              setAccountProfile({ displayName: account.displayName, avatarDataUrl: account.avatarDataUrl });
+              setAccountProfile({
+                displayName: account.displayName,
+                avatarDataUrl: account.avatarDataUrl,
+              });
             }}
           />
         )}
@@ -214,7 +223,8 @@ export function PrivatePage({
               };
               setAccountPreferences(savedPreferences);
               applyAccountPreferences(savedPreferences);
-              if (savedPreferences.defaultView !== activeItem) onNavigate?.(savedPreferences.defaultView);
+              if (savedPreferences.defaultView !== activeItem)
+                onNavigate?.(savedPreferences.defaultView);
             }}
           />
         )}

@@ -1349,8 +1349,10 @@ export function AdminContent({
             type: roomTypeNameById(roomTypes, room.roomTypeId),
             capacity: roomType?.capacity ?? 2,
             rate: rate ? centsToAmount(rate.priceCents) : 0,
-          status: room.active ? roomStatusLabel(room.status, room.housekeepingStatus) : 'Archivada',
-          active: room.active,
+            status: room.active
+              ? roomStatusLabel(room.status, room.housekeepingStatus)
+              : 'Archivada',
+            active: room.active,
             features,
           };
         });
@@ -1654,21 +1656,37 @@ function AdminContentReady({
       const active = !archiveTarget.active;
       if (archiveTarget.kind === 'room') {
         const updated = await roomService.updateRoom(archiveTarget.id, { active });
-        setRooms((current) => current.map((item) => item.dbId === updated.id
-          ? { ...item, active: updated.active, status: updated.active
-              ? roomStatusLabel(updated.status, updated.housekeepingStatus)
-              : 'Archivada' }
-          : item));
+        setRooms((current) =>
+          current.map((item) =>
+            item.dbId === updated.id
+              ? {
+                  ...item,
+                  active: updated.active,
+                  status: updated.active
+                    ? roomStatusLabel(updated.status, updated.housekeepingStatus)
+                    : 'Archivada',
+                }
+              : item,
+          ),
+        );
       } else if (archiveTarget.kind === 'roomType') {
         const updated = await roomService.updateRoomType(archiveTarget.id, { active });
-        setRoomTypes((current) => current.map((item) => item.dbId === updated.id
-          ? { ...item, status: updated.active ? 'Activo' : 'Inactivo' }
-          : item));
+        setRoomTypes((current) =>
+          current.map((item) =>
+            item.dbId === updated.id
+              ? { ...item, status: updated.active ? 'Activo' : 'Inactivo' }
+              : item,
+          ),
+        );
       } else {
         const updated = await roomService.updateRate(archiveTarget.id, { active });
-        setSeasonRates((current) => current.map((item) => item.dbId === updated.id
-          ? { ...item, status: updated.active ? 'Activa' : 'Inactiva' }
-          : item));
+        setSeasonRates((current) =>
+          current.map((item) =>
+            item.dbId === updated.id
+              ? { ...item, status: updated.active ? 'Activa' : 'Inactiva' }
+              : item,
+          ),
+        );
       }
       onAction(`${archiveTarget.label} ${active ? 'restaurada' : 'archivada'} correctamente`);
       setArchiveTarget(null);
@@ -2616,9 +2634,20 @@ function AdminContentReady({
                       <button
                         className="icon-btn"
                         type="button"
-                        aria-label={r.active ? `Archivar habitación ${r.number}` : `Restaurar habitación ${r.number}`}
+                        aria-label={
+                          r.active
+                            ? `Archivar habitación ${r.number}`
+                            : `Restaurar habitación ${r.number}`
+                        }
                         title={r.active ? 'Archivar habitación' : 'Restaurar habitación'}
-                        onClick={() => setArchiveTarget({ kind: 'room', id: r.dbId, label: `habitación ${r.number}`, active: r.active })}
+                        onClick={() =>
+                          setArchiveTarget({
+                            kind: 'room',
+                            id: r.dbId,
+                            label: `habitación ${r.number}`,
+                            active: r.active,
+                          })
+                        }
                       >
                         <Archive size={16} />
                       </button>
@@ -2742,7 +2771,14 @@ function AdminContentReady({
                         type="button"
                         aria-label={`${rt.status === 'Activo' ? 'Archivar' : 'Restaurar'} tipo ${rt.name}`}
                         title={rt.status === 'Activo' ? 'Archivar tipo' : 'Restaurar tipo'}
-                        onClick={() => setArchiveTarget({ kind: 'roomType', id: rt.dbId, label: `tipo de habitación ${rt.name}`, active: rt.status === 'Activo' })}
+                        onClick={() =>
+                          setArchiveTarget({
+                            kind: 'roomType',
+                            id: rt.dbId,
+                            label: `tipo de habitación ${rt.name}`,
+                            active: rt.status === 'Activo',
+                          })
+                        }
                       >
                         <Archive size={16} />
                       </button>
@@ -2890,7 +2926,9 @@ function AdminContentReady({
         )}
         <ConfirmDialog
           open={archiveTarget?.kind === 'roomType'}
-          title={archiveTarget?.active ? 'Archivar tipo de habitación' : 'Restaurar tipo de habitación'}
+          title={
+            archiveTarget?.active ? 'Archivar tipo de habitación' : 'Restaurar tipo de habitación'
+          }
           description={`¿Seguro que quieres ${archiveTarget?.active ? 'archivar' : 'restaurar'} ${archiveTarget?.label ?? 'este tipo de habitación'}? ${archiveTarget?.active ? 'Se conservarán las habitaciones y reservas existentes, pero no podrá seleccionarse para nuevas reservas.' : 'Volverá a estar disponible para nuevas reservas.'}`}
           confirmLabel={archiveTarget?.active ? 'Archivar' : 'Restaurar'}
           pendingLabel={archiveTarget?.active ? 'Archivando...' : 'Restaurando...'}
@@ -2952,7 +2990,13 @@ function AdminContentReady({
                 <h3>Tarifas por temporada</h3>
                 <p>Configura tarifas especiales según la temporada</p>
               </div>
-              <button className="button primary" onClick={() => { setEditSeasonRate(null); setShowSeasonRateModal(true); }}>
+              <button
+                className="button primary"
+                onClick={() => {
+                  setEditSeasonRate(null);
+                  setShowSeasonRateModal(true);
+                }}
+              >
                 <Plus size={17} /> Nueva tarifa de temporada
               </button>
             </div>
@@ -2994,14 +3038,24 @@ function AdminContentReady({
                     <td className="adm-actions">
                       <EditIconButton
                         label={`Editar tarifa ${sr.seasonName}`}
-                        onClick={() => { setEditSeasonRate(sr); setShowSeasonRateModal(true); }}
+                        onClick={() => {
+                          setEditSeasonRate(sr);
+                          setShowSeasonRateModal(true);
+                        }}
                       />
                       <button
                         className="icon-btn"
                         type="button"
                         aria-label={`${sr.status === 'Activa' ? 'Archivar' : 'Restaurar'} tarifa ${sr.seasonName}`}
                         title={sr.status === 'Activa' ? 'Archivar tarifa' : 'Restaurar tarifa'}
-                        onClick={() => setArchiveTarget({ kind: 'rate', id: sr.dbId, label: `tarifa ${sr.seasonName}`, active: sr.status === 'Activa' })}
+                        onClick={() =>
+                          setArchiveTarget({
+                            kind: 'rate',
+                            id: sr.dbId,
+                            label: `tarifa ${sr.seasonName}`,
+                            active: sr.status === 'Activa',
+                          })
+                        }
                       >
                         <Archive size={16} />
                       </button>
@@ -3033,7 +3087,10 @@ function AdminContentReady({
           <SeasonRateModal
             rate={editSeasonRate}
             roomTypes={roomTypes}
-            onClose={() => { setShowSeasonRateModal(false); setEditSeasonRate(null); }}
+            onClose={() => {
+              setShowSeasonRateModal(false);
+              setEditSeasonRate(null);
+            }}
             onSave={async (sr) => {
               const roomType = roomTypes.find((type) => type.name === sr.roomType);
               if (!roomType) {
@@ -3053,17 +3110,23 @@ function AdminContentReady({
                 ? await roomService.updateRate(editSeasonRate.dbId, rateData)
                 : await roomService.createRate(rateData);
               const next: SeasonRate = {
-                  ...sr,
-                  id: editSeasonRate?.id ?? parseDbId(saved.id, Date.now()),
-                  dbId: saved.id,
-                  baseRate: roomType.basePrice,
-                  seasonalRate: centsToAmount(saved.priceCents),
-                  status: saved.active ? 'Activa' : 'Inactiva',
+                ...sr,
+                id: editSeasonRate?.id ?? parseDbId(saved.id, Date.now()),
+                dbId: saved.id,
+                baseRate: roomType.basePrice,
+                seasonalRate: centsToAmount(saved.priceCents),
+                status: saved.active ? 'Activa' : 'Inactiva',
               };
-              setSeasonRates((cur) => editSeasonRate
-                ? cur.map((item) => item.id === editSeasonRate.id ? next : item)
-                : [...cur, next]);
-              onAction(editSeasonRate ? 'Tarifa de temporada actualizada' : 'Tarifa de temporada creada correctamente');
+              setSeasonRates((cur) =>
+                editSeasonRate
+                  ? cur.map((item) => (item.id === editSeasonRate.id ? next : item))
+                  : [...cur, next],
+              );
+              onAction(
+                editSeasonRate
+                  ? 'Tarifa de temporada actualizada'
+                  : 'Tarifa de temporada creada correctamente',
+              );
               setEditSeasonRate(null);
               setShowSeasonRateModal(false);
             }}
@@ -3071,7 +3134,9 @@ function AdminContentReady({
         )}
         <ConfirmDialog
           open={archiveTarget?.kind === 'rate'}
-          title={archiveTarget?.active ? 'Archivar tarifa de temporada' : 'Restaurar tarifa de temporada'}
+          title={
+            archiveTarget?.active ? 'Archivar tarifa de temporada' : 'Restaurar tarifa de temporada'
+          }
           description={`¿Seguro que quieres ${archiveTarget?.active ? 'archivar' : 'restaurar'} ${archiveTarget?.label ?? 'esta tarifa'}? ${archiveTarget?.active ? 'Dejará de aplicarse a futuras reservas y el historial se conservará.' : 'Volverá a aplicarse durante su vigencia.'}`}
           confirmLabel={archiveTarget?.active ? 'Archivar' : 'Restaurar'}
           pendingLabel={archiveTarget?.active ? 'Archivando...' : 'Restaurando...'}
