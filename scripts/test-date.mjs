@@ -58,6 +58,14 @@ test('formatDateGT: 31 diciembre 2026 -> 31-12-2026', () => {
   assert.equal(formatDateGT(new Date(2026, 11, 31)), '31-12-2026');
 });
 
+test('formatDateGT: respeta el formato personal configurado en la sesión', () => {
+  globalThis.document = { documentElement: { dataset: { dateFormat: 'yyyy-mm-dd' } } };
+  assert.equal(formatDateGT(new Date(2026, 8, 8)), '2026-09-08');
+  globalThis.document.documentElement.dataset.dateFormat = 'dd/mmm/yyyy';
+  assert.equal(formatDateGT(new Date(2026, 8, 8)), '08/sep/2026');
+  delete globalThis.document;
+});
+
 test('formatDateGT: Date inválido -> lanza error', () => {
   assert.throws(() => formatDateGT(new Date(NaN)), /inválida/);
 });

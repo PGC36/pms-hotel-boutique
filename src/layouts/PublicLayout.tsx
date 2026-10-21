@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BedDouble, ShieldCheck, Sparkles } from 'lucide-react';
+import { BedDouble, Percent, ShieldCheck, Sparkles } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { routePaths } from '@/app/routes';
 import { PublicAuthModal } from '@/public/components/PublicAuthModal';
@@ -56,6 +56,13 @@ export function PublicLayout() {
             >
               <Sparkles size={15} aria-hidden="true" />
               <span className="visitor-tab-label">Amenidades</span>
+            </Link>
+            <Link
+              className={`visitor-tab ${activeSection === 'promociones' ? 'active' : ''}`}
+              to="/#promociones"
+            >
+              <Percent size={15} aria-hidden="true" />
+              <span className="visitor-tab-label">Promociones</span>
             </Link>
             <Link
               className={`visitor-tab ${activeSection === 'politicas' ? 'active' : ''}`}

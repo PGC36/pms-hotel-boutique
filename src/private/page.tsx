@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   ArrowRight,
   Bell,
@@ -9,6 +9,12 @@ import {
   UserRound,
 } from 'lucide-react';
 import { AccountPreferencesModal, AccountProfileModal } from '@/private/workspace/AccountPanels';
+import {
+  applyAccountPreferences,
+  defaultAccountPreferences,
+  type AccountProfile,
+} from '@/private/workspace/accountSettings';
+import { accountService } from '@/services/accountService';
 import './staff-shell.css';
 
 type PrivatePageProps = {
@@ -35,9 +41,47 @@ export function PrivatePage({
   const [accountPanel, setAccountPanel] = useState<'profile' | 'preferences' | null>(null);
   const [headerScrolled, setHeaderScrolled] = useState(false);
   const [name, role = 'Equipo'] = sessionLabel?.split(/\s*·\s*/, 2) ?? [];
-  const accountName = name || 'Hotel Aurora';
-  const accountInitials = accountName.slice(0, 2).toUpperCase();
+  const [accountProfile, setAccountProfile] = useState<AccountProfile>(() => ({
+    displayName: name,
+    avatarDataUrl: null,
+  }));
+  const [accountPreferences, setAccountPreferences] = useState(defaultAccountPreferences);
+  const accountName = accountProfile.displayName || name || 'Hotel Aurora';
+  const accountInitials = accountName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
   const preferenceViews = menuItems.length > 0 ? menuItems : [activeItem || 'Panel operativo'];
+
+  useEffect(() => {
+    let active = true;
+    void accountService
+      .get()
+      .then((account) => {
+        if (!active) return;
+        setAccountProfile({
+          displayName: account.displayName,
+          avatarDataUrl: account.avatarDataUrl,
+        });
+        const preferences = {
+          defaultView: account.defaultView,
+          dateFormat: account.dateFormat,
+          density: account.density,
+        };
+        setAccountPreferences(preferences);
+        applyAccountPreferences(preferences);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (typeof document === 'undefined' || !document.documentElement) return;
+      delete document.documentElement.dataset.dateFormat;
+      delete document.documentElement.dataset.density;
+    };
+  }, [sessionEmail]);
 
   return (
     <div className="app-shell staff-shell">
@@ -102,9 +146,15 @@ export function PrivatePage({
                   type="button"
                   onClick={() => setShowUserMenu((current) => !current)}
                 >
-                  <span className="avatar gold">{accountInitials}</span>
+                  <span className="avatar gold">
+                    {accountProfile.avatarDataUrl ? (
+                      <img src={accountProfile.avatarDataUrl} alt="" />
+                    ) : (
+                      accountInitials
+                    )}
+                  </span>
                   <span>
-                    <strong>{name}</strong>
+                    <strong>{accountName}</strong>
                     <small>{role}</small>
                   </span>
                   <ChevronDown size={15} />
@@ -147,19 +197,35 @@ export function PrivatePage({
             roleLabel={role}
             email={sessionEmail ?? ''}
             initials={accountInitials}
+            avatarDataUrl={accountProfile.avatarDataUrl}
             onClose={() => setAccountPanel(null)}
-            onSave={() => undefined}
+            onSave={async (profile) => {
+              const account = await accountService.updateProfile(profile);
+              setAccountProfile({
+                displayName: account.displayName,
+                avatarDataUrl: account.avatarDataUrl,
+              });
+            }}
           />
         )}
         {accountPanel === 'preferences' && (
           <AccountPreferencesModal
-            name={accountName}
-            roleLabel={role}
-            initials={accountInitials}
             initialView={activeItem || preferenceViews[0]}
             viewOptions={preferenceViews}
+            initialPreferences={accountPreferences}
             onClose={() => setAccountPanel(null)}
-            onSave={() => undefined}
+            onSave={async (preferences) => {
+              const account = await accountService.updatePreferences(preferences);
+              const savedPreferences = {
+                defaultView: account.defaultView,
+                dateFormat: account.dateFormat,
+                density: account.density,
+              };
+              setAccountPreferences(savedPreferences);
+              applyAccountPreferences(savedPreferences);
+              if (savedPreferences.defaultView !== activeItem)
+                onNavigate?.(savedPreferences.defaultView);
+            }}
           />
         )}
       </main>

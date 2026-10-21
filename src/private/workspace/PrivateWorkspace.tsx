@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
@@ -61,6 +61,12 @@ import {
   rolePermissionsFromSessionPermissions,
 } from '@/modules/administration/utils/rolePermissions';
 import { AccountPreferencesModal, AccountProfileModal } from '@/private/workspace/AccountPanels';
+import {
+  applyAccountPreferences,
+  defaultAccountPreferences,
+  type AccountProfile,
+} from '@/private/workspace/accountSettings';
+import { accountService } from '@/services/accountService';
 import { auditService } from '@/services/auditService';
 import { authService } from '@/services/authService';
 import { bookingService } from '@/services/bookingService';
@@ -1632,14 +1638,57 @@ function PrivateWorkspaceReady({
 }) {
   const activeRole = workspaceRole;
   const navigate = useNavigate();
-  const [activeNav, setActiveNav] = useState(() => getInitialNav(workspaceRole, initialNav));
+  const location = useLocation();
+  const initialWorkspaceNav = getInitialNav(
+    workspaceRole,
+    initialNav ?? new URLSearchParams(location.search).get('view') ?? undefined,
+  );
+  const [activeNav, setActiveNavState] = useState(() => initialWorkspaceNav);
   const [expandedNav, setExpandedNav] = useState(() =>
-    getDefaultExpandedNav(workspaceRole, getInitialNav(workspaceRole, initialNav)),
+    getDefaultExpandedNav(workspaceRole, initialWorkspaceNav),
   );
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [accountPanel, setAccountPanel] = useState<'profile' | 'preferences' | null>(null);
+  const [accountProfile, setAccountProfile] = useState<AccountProfile>(() => ({
+    displayName: sessionName ?? '',
+    avatarDataUrl: null,
+  }));
+  const [accountPreferences, setAccountPreferences] = useState(defaultAccountPreferences);
   const [toast, setToast] = useState('');
+  useEffect(() => {
+    if (workspaceRole === 'guest') return;
+    let active = true;
+    void accountService
+      .get()
+      .then((account) => {
+        if (!active) return;
+        const profile = { displayName: account.displayName, avatarDataUrl: account.avatarDataUrl };
+        const preferences = {
+          defaultView: account.defaultView,
+          dateFormat: account.dateFormat,
+          density: account.density,
+        };
+        setAccountProfile(profile);
+        setAccountPreferences(preferences);
+        applyAccountPreferences(preferences);
+        const explicitView = initialNav ?? new URLSearchParams(location.search).get('view');
+        if (!explicitView && preferences.defaultView) {
+          const nextNav = getInitialNav(workspaceRole, preferences.defaultView);
+          setActiveNavState(nextNav);
+          setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
+        }
+      })
+      .catch(() => {
+        // Keep the shell available if account settings cannot be loaded.
+      });
+    return () => {
+      active = false;
+      if (typeof document === 'undefined' || !document.documentElement) return;
+      delete document.documentElement.dataset.dateFormat;
+      delete document.documentElement.dataset.density;
+    };
+  }, [initialNav, location.search, sessionEmail, workspaceRole]);
   const [tasks, setTasks] = useState(initialData.tasks);
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1818,6 +1867,20 @@ function PrivateWorkspaceReady({
       : filteredNav;
   const shouldGroupNav = activeRole === 'admin' || permittedNav.length > 1;
   const nav = shouldGroupNav ? permittedNav : flattenPermittedNav(permittedNav);
+  const setActiveNav = (nextNav: string) => {
+    setActiveNavState(nextNav);
+    const params = new URLSearchParams(location.search);
+    if (nextNav === firstNavValue(nav)) params.delete('view');
+    else params.set('view', nextNav);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: params.toString() ? `?${params.toString()}` : '',
+        hash: location.hash,
+      },
+      { replace: true },
+    );
+  };
   const groupedNavLabels = nav
     .filter((item) => item.children?.length)
     .map((item) => item.label)
@@ -1837,6 +1900,9 @@ function PrivateWorkspaceReady({
     const isGuestBellDestination = activeRole === 'guest' && activeNav === 'Notificaciones';
     if (!isVisible && !isGuestBellDestination) setActiveNav(firstNavValue(nav));
   }, [activeNav, activeRole, nav]);
+  useEffect(() => {
+    setCgSelectedRequestId(null);
+  }, [activeNav]);
   const activeWorkspace = resolveWorkspaceNav(activeRole, activeNav, nav);
   const contentRole = activeWorkspace.role;
   const contentNav = activeWorkspace.nav;
@@ -1844,7 +1910,14 @@ function PrivateWorkspaceReady({
   const workspaceDataRole = contentRole;
   const role = roles.find((item) => item.id === activeRole) ?? roles[0];
   const contentRoleInfo = roles.find((item) => item.id === contentRole) ?? role;
-  const accountName = sessionName ?? role.person;
+  const accountName = accountProfile.displayName || sessionName || role.person;
+  const accountInitials = accountName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
   const accountRoleLabel = sessionRoleLabel ?? role.name;
   const greetingName = accountName.trim().split(/\s+/)[0] || role.person;
   const preferenceViews = nav.map((item) => item.label);
@@ -3616,7 +3689,13 @@ function PrivateWorkspaceReady({
                   setShowNotifications(false);
                 }}
               >
-                <span className={`avatar ${role.color}`}>{role.initials}</span>
+                <span className={`avatar ${role.color}`}>
+                  {accountProfile.avatarDataUrl ? (
+                    <img src={accountProfile.avatarDataUrl} alt="" />
+                  ) : (
+                    accountInitials || role.initials
+                  )}
+                </span>
                 <span>
                   <strong>{accountName}</strong>
                   <small>{accountRoleLabel}</small>
@@ -4062,22 +4141,40 @@ function PrivateWorkspaceReady({
           name={accountName}
           roleLabel={accountRoleLabel}
           email={sessionEmail ?? ''}
-          initials={role.initials}
+          initials={accountInitials || role.initials}
           tone={role.color}
+          avatarDataUrl={accountProfile.avatarDataUrl}
           onClose={() => setAccountPanel(null)}
-          onSave={notify}
+          onSave={async (profile) => {
+            const account = await accountService.updateProfile(profile);
+            setAccountProfile({
+              displayName: account.displayName,
+              avatarDataUrl: account.avatarDataUrl,
+            });
+            notify('Perfil guardado');
+          }}
         />
       )}
       {accountPanel === 'preferences' && (
         <AccountPreferencesModal
-          name={accountName}
-          roleLabel={accountRoleLabel}
-          initials={role.initials}
-          tone={role.color}
           initialView={activeNav}
           viewOptions={preferenceViews}
+          initialPreferences={accountPreferences}
           onClose={() => setAccountPanel(null)}
-          onSave={notify}
+          onSave={async (preferences) => {
+            const account = await accountService.updatePreferences(preferences);
+            const savedPreferences = {
+              defaultView: account.defaultView,
+              dateFormat: account.dateFormat,
+              density: account.density,
+            };
+            setAccountPreferences(savedPreferences);
+            applyAccountPreferences(savedPreferences);
+            const nextNav = getInitialNav(workspaceRole, savedPreferences.defaultView);
+            setActiveNavState(nextNav);
+            setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
+            notify('Preferencias guardadas en tu cuenta');
+          }}
         />
       )}
       {toast && (

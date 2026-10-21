@@ -1,53 +1,88 @@
 import { useState } from 'react';
+import { Check, ImagePlus, Settings, ShieldCheck, X } from 'lucide-react';
 import {
-  Bell,
-  CalendarDays,
-  Check,
-  Clock,
-  ImagePlus,
-  Phone,
-  Settings,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+  defaultAccountPreferences,
+  type AccountPreferences,
+  type AccountProfile,
+} from './accountSettings';
 
-type AccountPanelBaseProps = {
+type AccountProfileModalProps = {
   name: string;
   roleLabel: string;
   initials: string;
   tone?: string;
-  onClose: () => void;
-  onSave: (message: string) => void;
-};
-
-type AccountProfileModalProps = AccountPanelBaseProps & {
   email: string;
+  avatarDataUrl: string | null;
+  onClose: () => void;
+  onSave: (profile: AccountProfile) => void | Promise<void>;
 };
 
-type AccountPreferencesModalProps = AccountPanelBaseProps & {
+type AccountPreferencesModalProps = {
   initialView?: string;
   viewOptions?: string[];
+  initialPreferences?: AccountPreferences;
+  onClose: () => void;
+  onSave: (preferences: AccountPreferences) => void | Promise<void>;
 };
+
+function compressAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('Selecciona un archivo de imagen.'));
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      reject(new Error('La imagen debe pesar menos de 8 MB.'));
+      return;
+    }
+
+    const source = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, 320 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      URL.revokeObjectURL(source);
+      if (!context) {
+        reject(new Error('No fue posible preparar la imagen.'));
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(source);
+      reject(new Error('No fue posible leer la imagen seleccionada.'));
+    };
+    image.src = source;
+  });
+}
 
 export function AccountProfileModal({
   name,
   roleLabel,
   initials,
   tone = 'gold',
-  email: sessionEmail,
+  email,
+  avatarDataUrl,
   onClose,
   onSave,
 }: AccountProfileModalProps) {
   const [displayName, setDisplayName] = useState(name);
-  const [email, setEmail] = useState(sessionEmail);
-  const [phone, setPhone] = useState('+502 5555 0101');
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(avatarDataUrl);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const changePhoto = (file: File | undefined) => {
+  const changePhoto = async (file: File | undefined) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhotoPreview(typeof reader.result === 'string' ? reader.result : null);
-    reader.readAsDataURL(file);
+    try {
+      setError('');
+      setPhotoPreview(await compressAvatar(file));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No fue posible cargar la imagen.');
+    }
   };
 
   return (
@@ -68,7 +103,10 @@ export function AccountProfileModal({
             <input
               type="file"
               accept="image/*"
-              onChange={(event) => changePhoto(event.target.files?.[0])}
+              onChange={(event) => {
+                void changePhoto(event.target.files?.[0]);
+                event.currentTarget.value = '';
+              }}
             />
             {photoPreview ? (
               <img src={photoPreview} alt="" />
@@ -92,34 +130,26 @@ export function AccountProfileModal({
               className="hk-form-select"
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
+              maxLength={80}
             />
           </label>
           <label className="hk-form-label">
-            Correo
-            <input
-              className="hk-form-select"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </label>
-          <label className="hk-form-label">
-            Teléfono
-            <input
-              className="hk-form-select"
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-            />
+            Correo de acceso
+            <input className="hk-form-select" value={email || 'No disponible'} readOnly />
           </label>
         </div>
 
         <div className="account-info-grid">
           <span>
-            <Phone size={14} /> {phone}
-          </span>
-          <span>
-            <ShieldCheck size={14} /> Acceso protegido por rol
+            <ShieldCheck size={14} /> Correo y teléfono requieren verificación de credenciales para
+            cambiarse.
           </span>
         </div>
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="modal-foot">
           <button className="button secondary" type="button" onClick={onClose}>
@@ -128,12 +158,25 @@ export function AccountProfileModal({
           <button
             className="button primary"
             type="button"
-            onClick={() => {
-              onSave('Perfil actualizado');
-              onClose();
+            disabled={saving}
+            onClick={async () => {
+              if (!displayName.trim()) {
+                setError('Escribe el nombre que quieres mostrar.');
+                return;
+              }
+              setSaving(true);
+              setError('');
+              try {
+                await onSave({ displayName: displayName.trim(), avatarDataUrl: photoPreview });
+                onClose();
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : 'No pudimos guardar tu perfil.');
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            Guardar perfil <Check size={16} />
+            {saving ? 'Guardando…' : 'Guardar perfil'} {!saving ? <Check size={16} /> : null}
           </button>
         </div>
       </div>
@@ -144,16 +187,21 @@ export function AccountProfileModal({
 export function AccountPreferencesModal({
   initialView = 'Panel operativo',
   viewOptions = ['Panel operativo'],
+  initialPreferences = defaultAccountPreferences,
   onClose,
   onSave,
 }: AccountPreferencesModalProps) {
   const availableViews = Array.from(new Set([...viewOptions, initialView].filter(Boolean)));
-  const [defaultView, setDefaultView] = useState(initialView);
-  const [dateFormat, setDateFormat] = useState('dd-mm-aaaa');
-  const [density, setDensity] = useState('Comoda');
-  const [notifyArrivals, setNotifyArrivals] = useState(true);
-  const [notifyHousekeeping, setNotifyHousekeeping] = useState(true);
-  const [notifyCash, setNotifyCash] = useState(false);
+  const [preferences, setPreferences] = useState(() => {
+    return {
+      ...initialPreferences,
+      defaultView: availableViews.includes(initialPreferences.defaultView)
+        ? initialPreferences.defaultView
+        : initialView,
+    };
+  });
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -173,8 +221,10 @@ export function AccountPreferencesModal({
             Vista inicial
             <select
               className="hk-form-select"
-              value={defaultView}
-              onChange={(event) => setDefaultView(event.target.value)}
+              value={preferences.defaultView || initialView}
+              onChange={(event) =>
+                setPreferences((current) => ({ ...current, defaultView: event.target.value }))
+              }
             >
               {availableViews.map((view) => (
                 <option key={view}>{view}</option>
@@ -185,68 +235,50 @@ export function AccountPreferencesModal({
             Formato de fecha
             <select
               className="hk-form-select"
-              value={dateFormat}
-              onChange={(event) => setDateFormat(event.target.value)}
+              value={preferences.dateFormat}
+              onChange={(event) =>
+                setPreferences((current) => ({
+                  ...current,
+                  dateFormat: event.target.value as AccountPreferences['dateFormat'],
+                }))
+              }
             >
-              <option>dd-mm-aaaa</option>
-              <option>aaaa-mm-dd</option>
-              <option>dd/mmm/aaaa</option>
+              <option value="dd-mm-yyyy">dd-mm-aaaa</option>
+              <option value="yyyy-mm-dd">aaaa-mm-dd</option>
+              <option value="dd/mmm/yyyy">dd/mmm/aaaa</option>
             </select>
           </label>
           <label className="hk-form-label">
             Densidad de pantalla
             <select
               className="hk-form-select"
-              value={density}
-              onChange={(event) => setDensity(event.target.value)}
+              value={preferences.density}
+              onChange={(event) =>
+                setPreferences((current) => ({
+                  ...current,
+                  density: event.target.value as AccountPreferences['density'],
+                }))
+              }
             >
-              <option>Comoda</option>
-              <option>Compacta</option>
-              <option>Amplia</option>
+              <option value="comfortable">Cómoda</option>
+              <option value="compact">Compacta</option>
+              <option value="spacious">Amplia</option>
             </select>
           </label>
-        </div>
-
-        <div className="account-toggle-list">
-          <button
-            type="button"
-            className={notifyArrivals ? 'account-toggle on' : 'account-toggle'}
-            onClick={() => setNotifyArrivals((value) => !value)}
-          >
-            <span>
-              <CalendarDays size={16} /> Llegadas y salidas del día
-            </span>
-            <i />
-          </button>
-          <button
-            type="button"
-            className={notifyHousekeeping ? 'account-toggle on' : 'account-toggle'}
-            onClick={() => setNotifyHousekeeping((value) => !value)}
-          >
-            <span>
-              <Bell size={16} /> Alertas de limpieza y habitaciones
-            </span>
-            <i />
-          </button>
-          <button
-            type="button"
-            className={notifyCash ? 'account-toggle on' : 'account-toggle'}
-            onClick={() => setNotifyCash((value) => !value)}
-          >
-            <span>
-              <Clock size={16} /> Recordatorios de caja y cierres
-            </span>
-            <i />
-          </button>
         </div>
 
         <div className="account-preference-note">
           <Settings size={16} />
           <p>
-            Estas preferencias afectan solo tu sesión en el PMS. No cambian reglas del hotel ni
-            permisos de acceso.
+            Se guardan en tu cuenta y se aplican en tus dispositivos. La vista inicial se aplicará
+            al volver a entrar.
           </p>
         </div>
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="modal-foot">
           <button className="button secondary" type="button" onClick={onClose}>
@@ -255,12 +287,26 @@ export function AccountPreferencesModal({
           <button
             className="button primary"
             type="button"
-            onClick={() => {
-              onSave('Preferencias actualizadas');
-              onClose();
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              setError('');
+              try {
+                await onSave({
+                  ...preferences,
+                  defaultView: preferences.defaultView || initialView,
+                });
+                onClose();
+              } catch (cause) {
+                setError(
+                  cause instanceof Error ? cause.message : 'No pudimos guardar tus preferencias.',
+                );
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            Guardar preferencias <Check size={16} />
+            {saving ? 'Guardando…' : 'Guardar preferencias'} {!saving ? <Check size={16} /> : null}
           </button>
         </div>
       </div>

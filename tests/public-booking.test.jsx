@@ -609,13 +609,18 @@ test('BookingConfirmationScreen: muestra "Reserva registrada" y pendiente de con
   assert.ok(content.includes('Reserva registrada'));
   assert.ok(content.includes('Pendiente de confirmación por el hotel'));
   assert.ok(!content.includes('Reserva confirmada'));
-  const roomLink = view.root.find((node) => node.type === 'a' && text(node) === 'Ver habitación');
-  const roomUrl = new URL(roomLink.props.href, 'http://localhost');
-  assert.equal(roomUrl.pathname, `/rooms/${ROOM_TYPE_ID}`);
-  assert.equal(roomUrl.searchParams.get('checkIn'), CHECK_IN);
-  assert.equal(roomUrl.searchParams.get('checkOut'), CHECK_OUT);
-  assert.equal(roomUrl.searchParams.get('adults'), '2');
-  assert.equal(roomUrl.searchParams.get('children'), '0');
+  const reservationButton = view.root.find(
+    (node) => node.type === 'button' && text(node) === 'Ver mi reserva',
+  );
+  act(() => reservationButton.props.onClick());
+  const reservationDetails = view.root.find(
+    (node) => node.props.id === 'booking-reservation-details',
+  );
+  assert.ok(text(reservationDetails).includes('Detalle de tu reserva'));
+  assert.ok(text(reservationDetails).includes('BKG-TEST0001'));
+  assert.ok(text(reservationDetails).includes('Doble Deluxe'));
+  assert.ok(text(reservationDetails).includes('ana@aurora.test'));
+  assert.ok(text(reservationDetails).includes('Flexible'));
   assert.equal(requests.length, 0, 'la confirmación no consulta endpoints privados');
 });
 
