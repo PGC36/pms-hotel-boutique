@@ -83,6 +83,18 @@ export function BookingConfirmationScreen() {
               <span>Huésped</span>
               <strong>{guestName}</strong>
             </div>
+            {booking.promotionCode ? (
+              <>
+                <div>
+                  <span>Código aplicado</span>
+                  <strong>{booking.promotionCode}</strong>
+                </div>
+                <div>
+                  <span>Descuento ({booking.discountPercent}%)</span>
+                  <strong>-{formatCurrency(booking.discountAmountCents, booking.currency)}</strong>
+                </div>
+              </>
+            ) : null}
             <div>
               <span>Total estimado</span>
               <strong>{formatCurrency(booking.totalAmountCents, booking.currency)}</strong>
@@ -151,6 +163,20 @@ export function BookingConfirmationScreen() {
                   <span>Tarifa</span>
                   <strong>{booking.rateName}</strong>
                 </div>
+                {booking.promotionCode ? (
+                  <>
+                    <div>
+                      <span>Código de promoción</span>
+                      <strong>{booking.promotionCode}</strong>
+                    </div>
+                    <div>
+                      <span>Descuento ({booking.discountPercent}%)</span>
+                      <strong>
+                        -{formatCurrency(booking.discountAmountCents, booking.currency)}
+                      </strong>
+                    </div>
+                  </>
+                ) : null}
                 <div>
                   <span>Total estimado</span>
                   <strong>{formatCurrency(booking.totalAmountCents, booking.currency)}</strong>
