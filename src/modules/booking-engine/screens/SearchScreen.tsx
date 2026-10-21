@@ -5,6 +5,7 @@ import {
   Car,
   Check,
   Coffee,
+  Gift,
   ShieldCheck,
   Sparkles,
   UserRound,
@@ -14,13 +15,16 @@ import {
 } from 'lucide-react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { publicBookingCatalogService } from '@/services/publicBookingCatalogService';
+import { promotionService } from '@/services/promotionService';
 import { CatalogImage } from '@/shared/components/CatalogImage';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import type { Amenity, AmenityCategory } from '@/shared/types/entities/amenity';
+import type { Promotion } from '@/shared/types/entities/promotion';
 import { findPrimaryImage } from '@/shared/types/entities/media-image';
 import type { Rate } from '@/shared/types/entities/rate';
+import { findBaseRate } from '@/shared/utils/rateSelection';
 import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatAmenitySchedule } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
@@ -43,6 +47,11 @@ type AvailableRoomType = {
 type AmenitiesState =
   | { status: 'idle' | 'loading' }
   | { status: 'success'; amenities: Amenity[] }
+  | { status: 'error'; message: string };
+
+type PromotionsState =
+  | { status: 'idle' | 'loading' }
+  | { status: 'success'; promotions: Promotion[] }
   | { status: 'error'; message: string };
 
 /** Ícono de la etiqueta de cada amenidad, por categoría; la foto sale del backend. */
@@ -119,12 +128,6 @@ function isCompleteStayRange(range: DateRangeValue): range is { start: Date; end
   }
 }
 
-function findLowestRate(rates: Rate[], roomTypeId: string): Rate | undefined {
-  return rates
-    .filter((rate) => rate.active && rate.roomTypeId === roomTypeId)
-    .sort((left, right) => left.priceCents - right.priceCents)[0];
-}
-
 function parseGuests(value: string): { adults: number; children: number } {
   if (value === '1 adulto') return { adults: 1, children: 0 };
   if (value === '2 adultos - 1 niño') return { adults: 2, children: 1 };
@@ -156,6 +159,7 @@ export function SearchScreen() {
   const [hasSearched, setHasSearched] = useState(false);
   const [guests, setGuests] = useState('2 adultos');
   const [amenitiesState, setAmenitiesState] = useState<AmenitiesState>({ status: 'idle' });
+  const [promotionsState, setPromotionsState] = useState<PromotionsState>({ status: 'idle' });
 
   const scrollToSearch = useCallback(() => {
     document.getElementById('buscar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -195,6 +199,21 @@ export function SearchScreen() {
       setAmenitiesState({
         status: 'error',
         message: cause instanceof Error ? cause.message : 'No fue posible cargar las amenidades.',
+      });
+    }
+  }, []);
+
+  const loadPromotions = useCallback(async () => {
+    setPromotionsState({ status: 'loading' });
+    try {
+      setPromotionsState({
+        status: 'success',
+        promotions: await promotionService.getPublicPromotions(),
+      });
+    } catch (cause) {
+      setPromotionsState({
+        status: 'error',
+        message: cause instanceof Error ? cause.message : 'No fue posible cargar las promociones.',
       });
     }
   }, []);
@@ -250,6 +269,10 @@ export function SearchScreen() {
   useEffect(() => {
     if (publicTab === 'amenidades' && amenitiesState.status === 'idle') void loadAmenities();
   }, [publicTab, amenitiesState.status, loadAmenities]);
+
+  useEffect(() => {
+    if (publicTab === 'promociones' && promotionsState.status === 'idle') void loadPromotions();
+  }, [publicTab, promotionsState.status, loadPromotions]);
 
   return (
     <section className="booking-search-page">
@@ -422,7 +445,7 @@ export function SearchScreen() {
             {showcaseStatus === 'success' && roomCards.length > 0 ? (
               <div className="room-cards">
                 {roomCards.map(({ roomType, availableRooms, rate }, index) => {
-                  const displayRate = rate ?? findLowestRate(rates, roomType.id);
+                  const displayRate = rate ?? findBaseRate(rates, roomType.id);
                   const detailUrl = isCompleteStayRange(range)
                     ? `/rooms/${roomType.id}?checkIn=${dateKey(range.start)}&checkOut=${dateKey(range.end)}&adults=${guestCounts.adults}&children=${guestCounts.children}`
                     : `/rooms/${roomType.id}`;
@@ -495,6 +518,58 @@ export function SearchScreen() {
               </div>
             ) : null}
           </>
+        ) : null}
+
+        {publicTab === 'promociones' ? (
+          <section className="booking-public-section" id="promociones">
+            <div className="visitor-section-head">
+              <div>
+                <p className="eyebrow">Ofertas especiales</p>
+                <h2>Promociones para tu próxima estancia</h2>
+              </div>
+              <button className="text-button" type="button" onClick={scrollToSearch}>
+                Buscar fechas <ArrowRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+            {promotionsState.status === 'loading' || promotionsState.status === 'idle' ? (
+              <LoadingState label="Cargando promociones..." />
+            ) : null}
+            {promotionsState.status === 'error' ? (
+              <ErrorState description={promotionsState.message} onRetry={loadPromotions} />
+            ) : null}
+            {promotionsState.status === 'success' && promotionsState.promotions.length === 0 ? (
+              <EmptyState
+                title="No hay promociones disponibles"
+                description="Vuelve pronto para descubrir nuevas ofertas."
+              />
+            ) : null}
+            {promotionsState.status === 'success' && promotionsState.promotions.length > 0 ? (
+              <div className="booking-promo-grid">
+                {promotionsState.promotions.map((promotion) => (
+                  <article className="booking-promo-card" key={promotion.id}>
+                    <div className="booking-promo-image">
+                      <span className="booking-promo-icon" aria-hidden="true">
+                        <Gift size={32} strokeWidth={1.6} />
+                      </span>
+                      <span>{promotion.discountPercent}% de descuento</span>
+                    </div>
+                    <div className="booking-promo-body">
+                      <small>Código: {promotion.code}</small>
+                      <h3>{promotion.name}</h3>
+                      {promotion.description ? <p>{promotion.description}</p> : null}
+                      <p>
+                        Vigente del {formatDateGT(promotion.validFrom)} al{' '}
+                        {formatDateGT(promotion.validTo)}
+                      </p>
+                      <button className="button secondary" type="button" onClick={scrollToSearch}>
+                        Reservar ahora <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
         ) : null}
 
         {publicTab === 'amenidades' ? (

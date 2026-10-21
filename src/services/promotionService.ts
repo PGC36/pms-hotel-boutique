@@ -4,7 +4,7 @@ import {
   type PromotionDto,
 } from '@/shared/types/entities/promotion';
 import { simulateLatency } from './mockUtils';
-import { httpClient } from './http-client';
+import { getUserFacingErrorMessage, HttpError, httpClient } from './http-client';
 
 type ApiPromotion = {
   id: string;
@@ -93,6 +93,20 @@ async function getPromotionRequest(id: string, data: Partial<SavePromotionData>)
 }
 
 export const promotionService = {
+  async getPublicPromotions(): Promise<Promotion[]> {
+    await simulateLatency();
+    try {
+      const promotions = await httpClient.get<ApiPromotion[]>('/public/promotions', {
+        auth: { skipAuthorization: true, skipRefresh: true },
+      });
+      return promotions.map(toPromotionDto).map(toPromotion);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) {
+        throw new Error('No pudimos cargar las promociones. Intenta nuevamente.');
+      }
+      throw new Error(getUserFacingErrorMessage(error, 'No fue posible cargar las promociones.'));
+    }
+  },
   async getPromotions(): Promise<Promotion[]> {
     await simulateLatency();
     const promotions = await httpClient.get<ApiPromotion[]>('/admin/promotions');

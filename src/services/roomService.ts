@@ -49,6 +49,7 @@ type ApiRoom = {
   status: RoomDto['status'] | Room['status'];
   housekeepingStatus: RoomDto['housekeeping_status'];
   notes?: string | null;
+  active?: boolean;
   cleaningUserEmail?: string | null;
   cleaningStartedAt?: string | null;
   cleaningCompletedByUserEmail?: string | null;
@@ -125,6 +126,7 @@ function toRoomDto(api: ApiRoom): RoomDto {
     floor: api.floor,
     status: normalizeRoomStatus(api.status),
     housekeeping_status: api.housekeepingStatus,
+    active: api.active ?? true,
     notes: api.notes ?? undefined,
     cleaning_user_email: api.cleaningUserEmail ?? undefined,
     cleaning_started_at: api.cleaningStartedAt ?? undefined,
@@ -191,6 +193,7 @@ function toRoomRequest(data: CreateRoomDto | UpdateRoomDto) {
     status: data.status,
     housekeepingStatus: data.housekeeping_status,
     notes: data.notes?.trim() || undefined,
+    active: data.active,
   };
 }
 

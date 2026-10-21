@@ -26,6 +26,7 @@ import { ReceptionContent } from '@/modules/front-desk/components/workspace/Rece
 import { PrivateWorkspace } from '@/private/workspace/PrivateWorkspace';
 import { calculateNights } from '@/shared/utils/date';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import { findBaseRate, getSeasonalRates } from '@/shared/utils/rateSelection';
 import {
   BlockModal,
   ChargeModal,
@@ -4829,6 +4830,30 @@ test('promociones (administración): porcentaje de 1 a 100 y fin no anterior al 
   assert.equal(saved.length, 1);
   assert.equal(saved[0].code, 'AURORA15');
   assert.equal(saved[0].percentage, 15);
+});
+
+test('tarifas: conserva la base y separa la tarifa especial de menor vigencia', () => {
+  const rate = (id, name, validFrom, validTo, priceCents) => ({
+    id,
+    roomTypeId: 'room-type-1',
+    name,
+    validFrom: new Date(`${validFrom}T00:00:00`),
+    validTo: new Date(`${validTo}T00:00:00`),
+    priceCents,
+    currency: 'GTQ',
+    minimumNights: 1,
+    refundable: true,
+    active: true,
+    createdAt: new Date('2026-01-01T00:00:00'),
+    updatedAt: new Date('2026-01-01T00:00:00'),
+  });
+  const base = rate('base', 'Tarifa demo deluxe', '2026-01-01', '2026-12-31', 120000);
+  const seasonal = rate('season', 'Halloween', '2026-10-14', '2026-10-22', 85000);
+  const rates = [seasonal, base];
+
+  assert.equal(findBaseRate(rates, 'room-type-1').id, 'base');
+  assert.deepEqual(getSeasonalRates(rates).map((item) => item.id), ['season']);
+  assert.equal(findBaseRate(rates, 'missing'), undefined);
 });
 
 test('tarifas de temporada (administración): fechas, nombre y tarifa especial obligatoria', async () => {

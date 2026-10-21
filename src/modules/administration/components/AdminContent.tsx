@@ -11,6 +11,7 @@ import {
 } from 'react';
 import {
   Activity,
+  Archive,
   ArrowRight,
   Ban,
   BedDouble,
@@ -68,6 +69,7 @@ import { ImageGalleryField } from '@/shared/components/ImageGalleryField';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { toDtoCalendarDate } from '@/shared/types/common';
 import { catalogNameError } from '@/shared/utils/catalogName';
+import { findBaseRate, getSeasonalRates } from '@/shared/utils/rateSelection';
 import { formatAmenitySchedule, parseAmenityScheduleInput } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
@@ -159,6 +161,7 @@ type AdminRoom = {
   capacity: number;
   rate: number;
   status: string;
+  active: boolean;
   features: string[];
 };
 type AdminRoomType = {
@@ -1346,11 +1349,15 @@ export function AdminContent({
             type: roomTypeNameById(roomTypes, room.roomTypeId),
             capacity: roomType?.capacity ?? 2,
             rate: rate ? centsToAmount(rate.priceCents) : 0,
-            status: roomStatusLabel(room.status, room.housekeepingStatus),
+          status: room.active ? roomStatusLabel(room.status, room.housekeepingStatus) : 'Archivada',
+          active: room.active,
             features,
           };
         });
 
+        const baseRates = new Map(
+          roomTypes.map((roomType) => [roomType.id, findBaseRate(rates, roomType.id)]),
+        );
         const adminRoomTypes: AdminRoomType[] = roomTypes.map((roomType, index) => ({
           id: parseDbId(roomType.id, index + 1),
           dbId: roomType.id,
@@ -1361,22 +1368,21 @@ export function AdminContent({
           features: roomType.roomFeatureIds
             .map((featureId) => roomFeatures.find((feature) => feature.id === featureId)?.name)
             .filter((name): name is string => Boolean(name)),
-          basePrice: centsToAmount(
-            rates.find((rate) => rate.roomTypeId === roomType.id)?.priceCents ?? 0,
-          ),
+          basePrice: centsToAmount(baseRates.get(roomType.id)?.priceCents ?? 0),
           status: roomType.active ? 'Activo' : 'Inactivo',
           images: roomType.images,
         }));
 
-        const seasonRates: SeasonRate[] = rates.map((rate, index) => ({
+        const seasonRates: SeasonRate[] = getSeasonalRates(rates).map((rate, index) => ({
           id: parseDbId(rate.id, index + 1),
           dbId: rate.id,
           roomType: roomTypeNameById(roomTypes, rate.roomTypeId),
           seasonName: rate.name,
           startDate: toDtoCalendarDate(rate.validFrom),
           endDate: toDtoCalendarDate(rate.validTo),
-          baseRate: centsToAmount(rate.priceCents),
+          baseRate: centsToAmount(baseRates.get(rate.roomTypeId)?.priceCents ?? 0),
           seasonalRate: centsToAmount(rate.priceCents),
+          minimumNights: rate.minimumNights,
           status: rate.active ? 'Activa' : 'Inactiva',
         }));
 
@@ -1633,6 +1639,45 @@ function AdminContentReady({
   const [showRoomFeatureCatalog, setShowRoomFeatureCatalog] = useState(false);
   const [editRoomType, setEditRoomType] = useState<AdminRoomType | null>(null);
   const [showSeasonRateModal, setShowSeasonRateModal] = useState(false);
+  const [editSeasonRate, setEditSeasonRate] = useState<SeasonRate | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<
+    | { kind: 'room'; id: string; label: string; active: boolean }
+    | { kind: 'roomType'; id: string; label: string; active: boolean }
+    | { kind: 'rate'; id: string; label: string; active: boolean }
+    | null
+  >(null);
+  const [archiving, setArchiving] = useState(false);
+  const confirmArchive = async () => {
+    if (!archiveTarget) return;
+    setArchiving(true);
+    try {
+      const active = !archiveTarget.active;
+      if (archiveTarget.kind === 'room') {
+        const updated = await roomService.updateRoom(archiveTarget.id, { active });
+        setRooms((current) => current.map((item) => item.dbId === updated.id
+          ? { ...item, active: updated.active, status: updated.active
+              ? roomStatusLabel(updated.status, updated.housekeepingStatus)
+              : 'Archivada' }
+          : item));
+      } else if (archiveTarget.kind === 'roomType') {
+        const updated = await roomService.updateRoomType(archiveTarget.id, { active });
+        setRoomTypes((current) => current.map((item) => item.dbId === updated.id
+          ? { ...item, status: updated.active ? 'Activo' : 'Inactivo' }
+          : item));
+      } else {
+        const updated = await roomService.updateRate(archiveTarget.id, { active });
+        setSeasonRates((current) => current.map((item) => item.dbId === updated.id
+          ? { ...item, status: updated.active ? 'Activa' : 'Inactiva' }
+          : item));
+      }
+      onAction(`${archiveTarget.label} ${active ? 'restaurada' : 'archivada'} correctamente`);
+      setArchiveTarget(null);
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      setArchiving(false);
+    }
+  };
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [editPromo, setEditPromo] = useState<Promo | null>(null);
   const [showAmenityModal, setShowAmenityModal] = useState(false);
@@ -1756,15 +1801,28 @@ function AdminContentReady({
         { key: 'estado', label: 'Estado' },
       ];
     } else if (activeReportTab === 'Ingresos') {
-      data = periodCashMovements
-        .filter((movement) => movement.type === 'Ingreso')
-        .map((movement) => ({
-          periodo: period,
-          fecha: movement.date,
-          concepto: movement.concept,
-          monto: movement.amount,
-          responsable: movement.responsible,
-        }));
+      const officialReport = operationalReport.status === 'ready' ? operationalReport.data : null;
+      const reportedRevenue = officialReport?.revenueCents ?? 0;
+      data =
+        reportedRevenue > 0 && officialReport
+          ? [
+              {
+                periodo: period,
+                fecha: `${officialReport.from} / ${officialReport.to}`,
+                concepto: 'Ingresos totales del reporte financiero',
+                monto: centsToAmount(reportedRevenue),
+                responsable: 'Reporte financiero',
+              },
+            ]
+          : periodCashMovements
+              .filter((movement) => movement.type === 'Ingreso')
+              .map((movement) => ({
+                periodo: period,
+                fecha: movement.date,
+                concepto: movement.concept,
+                monto: movement.amount,
+                responsable: movement.responsible,
+              }));
       headers = [
         { key: 'periodo', label: 'Periodo' },
         { key: 'fecha', label: 'Fecha' },
@@ -2530,12 +2588,9 @@ function AdminContentReady({
                         }}
                       />
                       <StatusSwitch
-                        checked={r.status !== 'Mantenimiento'}
-                        label={
-                          r.status === 'Mantenimiento'
-                            ? 'Activar habitación'
-                            : 'Desactivar habitación'
-                        }
+                        checked={r.status !== 'Mantenimiento' && r.active}
+                        label={r.active ? 'Desactivar habitación' : 'Habitación archivada'}
+                        disabled={!r.active}
                         onChange={async () => {
                           const updated = await roomService.updateRoom(r.dbId, {
                             status: r.status === 'Mantenimiento' ? 'available' : 'maintenance',
@@ -2558,6 +2613,15 @@ function AdminContentReady({
                           );
                         }}
                       />
+                      <button
+                        className="icon-btn"
+                        type="button"
+                        aria-label={r.active ? `Archivar habitación ${r.number}` : `Restaurar habitación ${r.number}`}
+                        title={r.active ? 'Archivar habitación' : 'Restaurar habitación'}
+                        onClick={() => setArchiveTarget({ kind: 'room', id: r.dbId, label: `habitación ${r.number}`, active: r.active })}
+                      >
+                        <Archive size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2673,6 +2737,15 @@ function AdminContentReady({
                           );
                         }}
                       />
+                      <button
+                        className="icon-btn"
+                        type="button"
+                        aria-label={`${rt.status === 'Activo' ? 'Archivar' : 'Restaurar'} tipo ${rt.name}`}
+                        title={rt.status === 'Activo' ? 'Archivar tipo' : 'Restaurar tipo'}
+                        onClick={() => setArchiveTarget({ kind: 'roomType', id: rt.dbId, label: `tipo de habitación ${rt.name}`, active: rt.status === 'Activo' })}
+                      >
+                        <Archive size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2730,6 +2803,16 @@ function AdminContentReady({
             }}
           />
         )}
+        <ConfirmDialog
+          open={archiveTarget?.kind === 'room'}
+          title={archiveTarget?.active ? 'Archivar habitación' : 'Restaurar habitación'}
+          description={`¿Seguro que quieres ${archiveTarget?.active ? 'archivar' : 'restaurar'} ${archiveTarget?.label ?? 'esta habitación'}? ${archiveTarget?.active ? 'Dejará de ofrecerse para nuevas reservas; su historial se conservará.' : 'Volverá a estar disponible según su estado operativo.'}`}
+          confirmLabel={archiveTarget?.active ? 'Archivar' : 'Restaurar'}
+          pendingLabel={archiveTarget?.active ? 'Archivando...' : 'Restaurando...'}
+          pending={archiving}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={confirmArchive}
+        />
         {showRoomTypeModal && (
           <RoomTypeModal
             roomType={editRoomType}
@@ -2805,6 +2888,16 @@ function AdminContentReady({
             }}
           />
         )}
+        <ConfirmDialog
+          open={archiveTarget?.kind === 'roomType'}
+          title={archiveTarget?.active ? 'Archivar tipo de habitación' : 'Restaurar tipo de habitación'}
+          description={`¿Seguro que quieres ${archiveTarget?.active ? 'archivar' : 'restaurar'} ${archiveTarget?.label ?? 'este tipo de habitación'}? ${archiveTarget?.active ? 'Se conservarán las habitaciones y reservas existentes, pero no podrá seleccionarse para nuevas reservas.' : 'Volverá a estar disponible para nuevas reservas.'}`}
+          confirmLabel={archiveTarget?.active ? 'Archivar' : 'Restaurar'}
+          pendingLabel={archiveTarget?.active ? 'Archivando...' : 'Restaurando...'}
+          pending={archiving}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={confirmArchive}
+        />
         {showRoomFeatureCatalog && (
           <RoomFeatureCatalogModal
             features={roomFeatures}
@@ -2859,7 +2952,7 @@ function AdminContentReady({
                 <h3>Tarifas por temporada</h3>
                 <p>Configura tarifas especiales según la temporada</p>
               </div>
-              <button className="button primary" onClick={() => setShowSeasonRateModal(true)}>
+              <button className="button primary" onClick={() => { setEditSeasonRate(null); setShowSeasonRateModal(true); }}>
                 <Plus size={17} /> Nueva tarifa de temporada
               </button>
             </div>
@@ -2899,6 +2992,19 @@ function AdminContentReady({
                       </span>
                     </td>
                     <td className="adm-actions">
+                      <EditIconButton
+                        label={`Editar tarifa ${sr.seasonName}`}
+                        onClick={() => { setEditSeasonRate(sr); setShowSeasonRateModal(true); }}
+                      />
+                      <button
+                        className="icon-btn"
+                        type="button"
+                        aria-label={`${sr.status === 'Activa' ? 'Archivar' : 'Restaurar'} tarifa ${sr.seasonName}`}
+                        title={sr.status === 'Activa' ? 'Archivar tarifa' : 'Restaurar tarifa'}
+                        onClick={() => setArchiveTarget({ kind: 'rate', id: sr.dbId, label: `tarifa ${sr.seasonName}`, active: sr.status === 'Activa' })}
+                      >
+                        <Archive size={16} />
+                      </button>
                       <StatusSwitch
                         checked={sr.status === 'Activa'}
                         label={sr.status === 'Activa' ? 'Desactivar tarifa' : 'Activar tarifa'}
@@ -2925,38 +3031,54 @@ function AdminContentReady({
         )}
         {showSeasonRateModal && (
           <SeasonRateModal
+            rate={editSeasonRate}
             roomTypes={roomTypes}
-            onClose={() => setShowSeasonRateModal(false)}
+            onClose={() => { setShowSeasonRateModal(false); setEditSeasonRate(null); }}
             onSave={async (sr) => {
               const roomType = roomTypes.find((type) => type.name === sr.roomType);
               if (!roomType) {
                 notifyError(new Error('Selecciona un tipo de habitacion valido.'));
                 return;
               }
-              const created = await roomService.createRate({
+              const rateData = {
                 room_type_id: roomType.dbId,
                 name: sr.seasonName,
                 valid_from: sr.startDate,
                 valid_to: sr.endDate,
                 price_cents: amountToCents(sr.seasonalRate),
                 minimum_nights: sr.minimumNights,
-                active: true,
-              });
-              setSeasonRates((cur) => [
-                ...cur,
-                {
+                active: editSeasonRate ? editSeasonRate.status === 'Activa' : true,
+              };
+              const saved = editSeasonRate
+                ? await roomService.updateRate(editSeasonRate.dbId, rateData)
+                : await roomService.createRate(rateData);
+              const next: SeasonRate = {
                   ...sr,
-                  id: parseDbId(created.id, Date.now()),
-                  dbId: created.id,
-                  seasonalRate: centsToAmount(created.priceCents),
-                  status: created.active ? 'Activa' : 'Inactiva',
-                },
-              ]);
-              onAction('Tarifa de temporada creada correctamente');
+                  id: editSeasonRate?.id ?? parseDbId(saved.id, Date.now()),
+                  dbId: saved.id,
+                  baseRate: roomType.basePrice,
+                  seasonalRate: centsToAmount(saved.priceCents),
+                  status: saved.active ? 'Activa' : 'Inactiva',
+              };
+              setSeasonRates((cur) => editSeasonRate
+                ? cur.map((item) => item.id === editSeasonRate.id ? next : item)
+                : [...cur, next]);
+              onAction(editSeasonRate ? 'Tarifa de temporada actualizada' : 'Tarifa de temporada creada correctamente');
+              setEditSeasonRate(null);
               setShowSeasonRateModal(false);
             }}
           />
         )}
+        <ConfirmDialog
+          open={archiveTarget?.kind === 'rate'}
+          title={archiveTarget?.active ? 'Archivar tarifa de temporada' : 'Restaurar tarifa de temporada'}
+          description={`¿Seguro que quieres ${archiveTarget?.active ? 'archivar' : 'restaurar'} ${archiveTarget?.label ?? 'esta tarifa'}? ${archiveTarget?.active ? 'Dejará de aplicarse a futuras reservas y el historial se conservará.' : 'Volverá a aplicarse durante su vigencia.'}`}
+          confirmLabel={archiveTarget?.active ? 'Archivar' : 'Restaurar'}
+          pendingLabel={archiveTarget?.active ? 'Archivando...' : 'Restaurando...'}
+          pending={archiving}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={confirmArchive}
+        />
       </>
     );
   }
@@ -3463,12 +3585,13 @@ function AdminContentReady({
       totalReservations > 0
         ? Math.round((cancelledReservations / totalReservations) * 1000) / 10
         : 0;
-    const totalIncome =
-      officialReport !== null
-        ? centsToAmount(officialReport.revenueCents)
-        : periodCashMovements
-            .filter((movement) => movement.type === 'Ingreso')
-            .reduce((sum, movement) => sum + movement.amount, 0);
+    const cashIncome = periodCashMovements
+      .filter((movement) => movement.type === 'Ingreso')
+      .reduce((sum, movement) => sum + movement.amount, 0);
+    const usesOfficialRevenue = (officialReport?.revenueCents ?? 0) > 0;
+    const totalIncome = usesOfficialRevenue
+      ? centsToAmount(officialReport!.revenueCents)
+      : cashIncome;
     const incomeRows = periodCashMovements.filter((movement) => movement.type === 'Ingreso');
     const reservationRows =
       officialReport !== null
@@ -3538,7 +3661,10 @@ function AdminContentReady({
             description={operationalReport.message}
             onRetry={() => loadOperationalReport(reportFilter)}
           />
-        ) : officialReport !== null && officialReport.bookings === 0 ? (
+        ) : officialReport !== null &&
+          officialReport.bookings === 0 &&
+          officialReport.revenueCents === 0 &&
+          incomeRows.length === 0 ? (
           <EmptyReport message="No hay datos oficiales para este periodo" />
         ) : (
           <div className="adm-report-content">
@@ -3602,7 +3728,7 @@ function AdminContentReady({
                       <p>Ingresos del periodo</p>
                       <h2>{money(totalIncome)}</h2>
                       <span className="positive">
-                        {officialReport ? 'Datos del periodo' : 'Caja registrada'}
+                        {usesOfficialRevenue ? 'Datos del periodo' : 'Caja registrada'}
                       </span>
                     </div>
                   </div>
@@ -3613,22 +3739,22 @@ function AdminContentReady({
                     <div>
                       <p>Promedio por corte</p>
                       <h2>
-                        {officialReport
+                        {usesOfficialRevenue
                           ? 'No disponible'
                           : incomeRows.length > 0
                             ? money(totalIncome / incomeRows.length)
                             : money(0)}
                       </h2>
                       <span className="positive">
-                        {officialReport ? 'Sin cortes disponibles' : reportFilter}
+                        {usesOfficialRevenue ? 'Sin cortes disponibles' : reportFilter}
                       </span>
                     </div>
                   </div>
                 </div>
                 <BarChart
-                  data={officialReport ? [totalIncome] : incomeRows.map((row) => row.amount)}
+                  data={usesOfficialRevenue ? [totalIncome] : incomeRows.map((row) => row.amount)}
                   labels={
-                    officialReport
+                    usesOfficialRevenue && officialReport
                       ? [`${officialReport.from} / ${officialReport.to}`]
                       : incomeRows.length > 0
                         ? incomeRows.map((row) => row.date)
@@ -4740,6 +4866,7 @@ export function RoomModal({
         capacity: Number(capacity),
         rate: (moneyInputToCents(rate) ?? 0) / 100,
         status,
+        active: room?.active ?? true,
         features: selectedRoomType?.features ?? room?.features ?? [],
       }),
     );
@@ -5383,28 +5510,23 @@ const inputClass = (error?: string) => `hk-form-select${error ? ' error' : ''}`;
 
 export function SeasonRateModal({
   roomTypes,
+  rate,
   onClose,
   onSave,
 }: {
   roomTypes: AdminRoomType[];
+  rate: SeasonRate | null;
   onClose: () => void;
   onSave: (sr: SeasonRate) => void | Promise<void>;
 }) {
   type Field =
-    | 'roomType'
-    | 'seasonName'
-    | 'startDate'
-    | 'endDate'
-    | 'baseRate'
-    | 'seasonalRate'
-    | 'minimumNights';
-  const [roomType, setRoomType] = useState(roomTypes[0]?.name ?? '');
-  const [seasonName, setSeasonName] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [baseRate, setBaseRate] = useState('1850');
-  const [seasonalRate, setSeasonalRate] = useState('');
-  const [minimumNights, setMinimumNights] = useState('1');
+    'roomType' | 'seasonName' | 'startDate' | 'endDate' | 'seasonalRate' | 'minimumNights';
+  const [roomType, setRoomType] = useState(rate?.roomType ?? roomTypes[0]?.name ?? '');
+  const [seasonName, setSeasonName] = useState(rate?.seasonName ?? '');
+  const [startDate, setStartDate] = useState(rate?.startDate ?? '');
+  const [endDate, setEndDate] = useState(rate?.endDate ?? '');
+  const [seasonalRate, setSeasonalRate] = useState(rate ? String(rate.seasonalRate) : '');
+  const [minimumNights, setMinimumNights] = useState(String(rate?.minimumNights ?? 1));
   const [errors, setErrors] = useState<FieldErrors<Field>>({});
   const save = useAdminSubmit();
   const clearError = (...fields: Field[]) =>
@@ -5412,6 +5534,7 @@ export function SeasonRateModal({
       ...current,
       ...Object.fromEntries(fields.map((field) => [field, undefined])),
     }));
+  const selectedRoomType = roomTypes.find((item) => item.name === roomType);
   const submit = () => {
     // Backend: la fecha fin no puede ser anterior a la de inicio (`RateServiceImpl`).
     const range = validateDateRange(startDate, endDate);
@@ -5422,10 +5545,6 @@ export function SeasonRateModal({
       seasonName: validateRequiredText(seasonName, 'Ingresa el nombre de la temporada.'),
       startDate: range.start,
       endDate: range.end,
-      baseRate: validateMoneyAmount(baseRate, {
-        allowZero: true,
-        requiredMessage: 'Ingresa la tarifa base.',
-      }),
       // Backend: precio ≥ 0 (`CreateRateRequest`, @PositiveOrZero).
       seasonalRate: validateMoneyAmount(seasonalRate, {
         allowZero: true,
@@ -5448,18 +5567,14 @@ export function SeasonRateModal({
         seasonName: seasonName.trim(),
         startDate,
         endDate,
-        baseRate: (moneyInputToCents(baseRate) ?? 0) / 100,
+        baseRate: selectedRoomType?.basePrice ?? 0,
         seasonalRate: (moneyInputToCents(seasonalRate) ?? 0) / 100,
         minimumNights: Number(minimumNights),
         status: 'Activa',
       }),
     );
   };
-  const moneyField = (
-    field: 'baseRate' | 'seasonalRate',
-    value: string,
-    setValue: (value: string) => void,
-  ) => (
+  const moneyField = (field: 'seasonalRate', value: string, setValue: (value: string) => void) => (
     <input
       className={inputClass(errors[field])}
       type="text"
@@ -5478,13 +5593,13 @@ export function SeasonRateModal({
   );
   return (
     <AdminModal
-      title="Nueva tarifa de temporada"
+      title={rate ? 'Editar tarifa de temporada' : 'Nueva tarifa de temporada'}
       eyebrow="TARIFAS POR TEMPORADA"
       onClose={onClose}
       onSubmit={submit}
       submitting={save.submitting}
       error={save.error}
-      submitLabel="Crear tarifa"
+      submitLabel={rate ? 'Guardar cambios' : 'Crear tarifa'}
     >
       <div className="rc-form-grid">
         <label className="hk-form-label">
@@ -5556,11 +5671,13 @@ export function SeasonRateModal({
           <FieldError id="season-end-error" error={errors.endDate} />
         </label>
         <label className="hk-form-label">
-          Tarifa base *{moneyField('baseRate', baseRate, setBaseRate)}
-          <FieldError id="season-baseRate-error" error={errors.baseRate} />
+          Tarifa base actual
+          <div className="rc-rate-preview">
+            {selectedRoomType ? money(selectedRoomType.basePrice) : 'Sin tarifa base'} por noche
+          </div>
         </label>
         <label className="hk-form-label">
-          Tarifa especial *{moneyField('seasonalRate', seasonalRate, setSeasonalRate)}
+          Tarifa especial por noche *{moneyField('seasonalRate', seasonalRate, setSeasonalRate)}
           <FieldError id="season-seasonalRate-error" error={errors.seasonalRate} />
         </label>
         <label className="hk-form-label">

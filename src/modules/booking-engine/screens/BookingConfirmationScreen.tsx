@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import type { PublicBookingConfirmation } from '@/services/publicBookingCatalogService';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -15,6 +16,7 @@ function parseDate(value: string): Date {
 }
 
 export function BookingConfirmationScreen() {
+  const [reservationDetailsOpen, setReservationDetailsOpen] = useState(false);
   const { bookingId } = useParams<'bookingId'>();
   const location = useLocation();
   const { publicBookingConfirmation } =
@@ -41,12 +43,6 @@ export function BookingConfirmationScreen() {
   const checkOut = parseDate(booking.checkOut);
   const nights = booking.nights || calculateNights(checkIn, checkOut);
   const guestName = `${booking.guestFirstName} ${booking.guestLastName}`;
-  const roomDetailsParams = new URLSearchParams({
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    adults: String(booking.adults),
-    children: String(booking.children),
-  });
   // El backend crea toda reserva pública como pending; confirmarla le toca al hotel.
   const statusLabel =
     booking.status === 'pending' ? 'Pendiente de confirmación por el hotel' : 'Reserva registrada';
@@ -69,63 +65,99 @@ export function BookingConfirmationScreen() {
           <h2>Código de confirmación</h2>
           <div className="booking-confirmation-code">{booking.confirmationCode}</div>
           <p className="booking-muted">
-            Conserva este código para consultar tu reserva en recepción.
+            Guarda este código para identificar tu reserva cuando contactes al hotel.
           </p>
 
-          <div className="booking-rate-summary">
+          <div className="booking-reservation-summary">
             <div>
-              <span>Entrada</span>
-              <strong>{formatDateGT(checkIn)}</strong>
-            </div>
-            <div>
-              <span>Salida</span>
-              <strong>{formatDateGT(checkOut)}</strong>
-            </div>
-            <div>
-              <span>Noches</span>
-              <strong>{nights}</strong>
-            </div>
-            <div>
-              <span>Habitacion</span>
+              <span>Habitación</span>
               <strong>{booking.roomTypeName}</strong>
+            </div>
+            <div>
+              <span>Estancia</span>
+              <strong>
+                {formatDateGT(checkIn)} - {formatDateGT(checkOut)}
+              </strong>
             </div>
             <div>
               <span>Huésped</span>
               <strong>{guestName}</strong>
             </div>
             <div>
-              <span>Correo</span>
-              <strong>{booking.guestEmail}</strong>
-            </div>
-            <div>
-              <span>Tarifa</span>
-              <strong>{booking.rateName}</strong>
-            </div>
-            <div>
-              <span>Estado</span>
-              <strong>{statusLabel}</strong>
-            </div>
-            <div>
-              <span>Monto</span>
+              <span>Total estimado</span>
               <strong>{formatCurrency(booking.totalAmountCents, booking.currency)}</strong>
             </div>
           </div>
         </article>
 
         <aside className="booking-confirmation-card">
-          <h2>Siguiente paso</h2>
+          <h2>Tu reserva</h2>
           <p className="booking-muted">
-            Conserva tu código de confirmación. El hotel confirmará la reserva; el envío por correo
-            queda fuera de alcance.
+            Consulta las fechas, huéspedes, tarifa y estado de tu reservación.
           </p>
           <div className="booking-form-actions">
-            <Link
+            <button
               className="ui-action"
-              to={`/rooms/${booking.roomTypeId}?${roomDetailsParams.toString()}`}
+              type="button"
+              aria-expanded={reservationDetailsOpen}
+              aria-controls="booking-reservation-details"
+              onClick={() => setReservationDetailsOpen((open) => !open)}
             >
-              Ver habitación
-            </Link>
+              {reservationDetailsOpen ? 'Ocultar detalles' : 'Ver mi reserva'}
+            </button>
           </div>
+          {reservationDetailsOpen && (
+            <section
+              id="booking-reservation-details"
+              className="booking-reservation-details"
+              aria-labelledby="booking-reservation-details-title"
+            >
+              <h3 id="booking-reservation-details-title">Detalle de tu reserva</h3>
+              <div className="booking-confirmation-code">{booking.confirmationCode}</div>
+              <p className="booking-reservation-status">{statusLabel}</p>
+              <div className="booking-reservation-detail-grid">
+                <div>
+                  <span>Tipo de habitación</span>
+                  <strong>{booking.roomTypeName}</strong>
+                </div>
+                <div>
+                  <span>Huésped</span>
+                  <strong>{guestName}</strong>
+                </div>
+                <div>
+                  <span>Correo</span>
+                  <strong>{booking.guestEmail}</strong>
+                </div>
+                <div>
+                  <span>Entrada</span>
+                  <strong>{formatDateGT(checkIn)}</strong>
+                </div>
+                <div>
+                  <span>Salida</span>
+                  <strong>{formatDateGT(checkOut)}</strong>
+                </div>
+                <div>
+                  <span>Noches</span>
+                  <strong>{nights}</strong>
+                </div>
+                <div>
+                  <span>Huéspedes</span>
+                  <strong>
+                    {booking.adults} adultos
+                    {booking.children > 0 ? `, ${booking.children} niños` : ''}
+                  </strong>
+                </div>
+                <div>
+                  <span>Tarifa</span>
+                  <strong>{booking.rateName}</strong>
+                </div>
+                <div>
+                  <span>Total estimado</span>
+                  <strong>{formatCurrency(booking.totalAmountCents, booking.currency)}</strong>
+                </div>
+              </div>
+            </section>
+          )}
         </aside>
       </div>
     </section>
