@@ -7,6 +7,7 @@ import {
   CreditCard,
   Smartphone,
   StickyNote,
+  Tag,
   UserRound,
   UsersRound,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import {
   PublicBookingError,
   publicBookingCatalogService,
   type PublicAvailableRoomType,
+  type PublicPromotionQuote,
 } from '@/services/publicBookingCatalogService';
 import { Button } from '@/shared/components/Button';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -159,6 +161,10 @@ export function BookingFormScreen() {
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvc, setCardCvc] = useState('');
   const [quote, setQuote] = useState<QuoteState>({ status: 'idle' });
+  const [promotionCode, setPromotionCode] = useState('');
+  const [promotionQuote, setPromotionQuote] = useState<PublicPromotionQuote | null>(null);
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const [promotionLoading, setPromotionLoading] = useState(false);
   // Cada consulta lleva un número; solo la más reciente puede escribir el estado.
   const quoteRequestRef = useRef(0);
 
@@ -242,7 +248,9 @@ export function BookingFormScreen() {
   }, [loadQuote]);
 
   const quotedRate = quote.status === 'available' ? quote.result.rate : undefined;
-  const totalAmount = quote.status === 'available' ? quote.result.totalAmountCents : undefined;
+  const totalAmount =
+    promotionQuote?.totalAmountCents ??
+    (quote.status === 'available' ? quote.result.totalAmountCents : undefined);
   const quoteMessage =
     quote.status === 'loading'
       ? 'Consultando disponibilidad...'
@@ -269,7 +277,38 @@ export function BookingFormScreen() {
 
   function updateRange(nextRange: DateRangeValue) {
     setRange(nextRange);
+    setPromotionQuote(null);
+    setPromotionError(null);
     setErrors((current) => ({ ...current, dates: undefined }));
+  }
+
+  async function applyPromotion() {
+    setPromotionError(null);
+    setPromotionQuote(null);
+    if (!promotionCode.trim()) {
+      setPromotionError('Escribe el código de promoción.');
+      return;
+    }
+    if (!canQuote) {
+      setPromotionError('Completa primero la habitación, las fechas y los huéspedes.');
+      return;
+    }
+    setPromotionLoading(true);
+    try {
+      const result = await publicBookingCatalogService.quotePromotion({
+        roomTypeId,
+        checkIn: checkInKey,
+        checkOut: checkOutKey,
+        code: promotionCode,
+      });
+      setPromotionQuote(result);
+      setPromotionCode(result.code);
+    } catch (cause) {
+      setPromotionQuote(null);
+      setPromotionError(cause instanceof Error ? cause.message : 'No se pudo validar el código.');
+    } finally {
+      setPromotionLoading(false);
+    }
   }
 
   function validateForm(): boolean {
@@ -321,6 +360,11 @@ export function BookingFormScreen() {
     }
 
     if (step === 'confirmation') {
+      if (promotionLoading) return;
+      if (promotionCode.trim() && !promotionQuote) {
+        setPromotionError('Aplica el código o bórralo para continuar.');
+        return;
+      }
       setStep('payment');
       return;
     }
@@ -349,6 +393,7 @@ export function BookingFormScreen() {
         adults: Number(adults),
         children: Number(children),
         notes: notes.trim() || undefined,
+        promotionCode: promotionQuote?.code,
         guest: {
           firstName: normalizePersonName(guestFirstName),
           lastName: normalizePersonName(guestLastName),
@@ -522,6 +567,8 @@ export function BookingFormScreen() {
                   value={roomTypeId}
                   onChange={(event) => {
                     setRoomTypeId(event.target.value);
+                    setPromotionQuote(null);
+                    setPromotionError(null);
                     setErrors((current) => ({
                       ...current,
                       roomTypeId: undefined,
@@ -663,6 +710,40 @@ export function BookingFormScreen() {
               </div>
               <h2>Revisa tu reserva</h2>
               <p>Confirma que los datos de huesped, habitacion y fechas esten correctos.</p>
+              <div className="booking-promotion-entry">
+                <Input
+                  label="Código de promoción"
+                  value={promotionCode}
+                  maxLength={40}
+                  disabled={promotionLoading}
+                  autoCapitalize="characters"
+                  placeholder="Ej. AURORA20"
+                  onChange={(event) => {
+                    setPromotionCode(event.target.value.toUpperCase());
+                    setPromotionQuote(null);
+                    setPromotionError(null);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  loading={promotionLoading}
+                  onClick={applyPromotion}
+                >
+                  <Tag size={15} aria-hidden="true" /> Aplicar
+                </Button>
+                {promotionError ? (
+                  <p className="field-error" role="alert">
+                    {promotionError}
+                  </p>
+                ) : null}
+                {promotionQuote ? (
+                  <p className="booking-promotion-success" role="status">
+                    {promotionQuote.name}: {promotionQuote.discountPercent}% de descuento (
+                    {formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}).
+                  </p>
+                ) : null}
+              </div>
               <div className="booking-confirm-grid">
                 <span>Huesped</span>
                 <strong>{guestFullName}</strong>
@@ -674,6 +755,18 @@ export function BookingFormScreen() {
                     ? `${formatDateGT(range.start)} al ${formatDateGT(range.end)}`
                     : 'Por definir'}
                 </strong>
+                {promotionQuote ? (
+                  <>
+                    <span>Subtotal</span>
+                    <strong>
+                      {formatCurrency(promotionQuote.baseAmountCents, promotionQuote.currency)}
+                    </strong>
+                    <span>Descuento</span>
+                    <strong>
+                      -{formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}
+                    </strong>
+                  </>
+                ) : null}
                 <span>Total estimado</span>
                 <strong>
                   {totalAmount !== undefined
@@ -859,6 +952,9 @@ export function BookingFormScreen() {
                       ? formatCurrency(totalAmount, quotedRate?.currency)
                       : 'Por definir'}
                   </strong>
+                  {promotionQuote ? (
+                    <small>Descuento aplicado: {promotionQuote.discountPercent}%</small>
+                  ) : null}
                   <small>Tarifa sujeta a confirmacion final del hotel.</small>
                 </div>
               </div>
@@ -870,6 +966,7 @@ export function BookingFormScreen() {
               <Button
                 type="button"
                 variant="secondary"
+                disabled={promotionLoading}
                 onClick={() => setStep(step === 'payment' ? 'confirmation' : 'details')}
               >
                 Volver
@@ -937,6 +1034,22 @@ export function BookingFormScreen() {
                   : 'Por definir'}
               </strong>
             </div>
+            {promotionQuote ? (
+              <>
+                <div>
+                  <span>Subtotal</span>
+                  <strong>
+                    {formatCurrency(promotionQuote.baseAmountCents, promotionQuote.currency)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Descuento ({promotionQuote.discountPercent}%)</span>
+                  <strong>
+                    -{formatCurrency(promotionQuote.discountAmountCents, promotionQuote.currency)}
+                  </strong>
+                </div>
+              </>
+            ) : null}
             <div>
               <span>Total estimado</span>
               <strong>

@@ -73,6 +73,16 @@ type PublicAvailabilityResult = {
   currency: string;
 };
 
+export type PublicPromotionQuote = {
+  code: string;
+  name: string;
+  discountPercent: number;
+  baseAmountCents: number;
+  discountAmountCents: number;
+  totalAmountCents: number;
+  currency: Currency;
+};
+
 type PublicAvailabilityResponse = {
   checkIn: string;
   checkOut: string;
@@ -113,6 +123,7 @@ export type PublicBookingRequest = {
   adults: number;
   children: number;
   notes?: string;
+  promotionCode?: string;
   guest: {
     firstName: string;
     lastName: string;
@@ -136,6 +147,9 @@ export type PublicBookingConfirmation = {
   children: number;
   rateName: string;
   totalAmountCents: number;
+  promotionCode?: string | null;
+  discountPercent?: number | null;
+  discountAmountCents: number;
   currency: Currency;
   guestFirstName: string;
   guestLastName: string;
@@ -219,6 +233,7 @@ export type PublicBookingErrorKind =
   | 'not_found'
   | 'no_availability'
   | 'guest_conflict'
+  | 'invalid_promotion'
   | 'conflict';
 
 /**
@@ -237,7 +252,7 @@ export class PublicBookingError extends Error {
   }
 }
 
-type PublicOperation = 'catalog' | 'availability' | 'booking';
+type PublicOperation = 'catalog' | 'availability' | 'booking' | 'promotion';
 
 const SERVICE_UNAVAILABLE_MESSAGE =
   'El servicio de reservas no está disponible en este momento. Intenta nuevamente más tarde.';
@@ -246,12 +261,14 @@ const INVALID_REQUEST_MESSAGES: Record<PublicOperation, string> = {
   catalog: 'No fue posible cargar la información de habitaciones.',
   availability: 'Revisa las fechas y la cantidad de huéspedes.',
   booking: 'Revisa los datos de la reserva.',
+  promotion: 'No se pudo validar el código de promoción.',
 };
 
 // Mensajes fijos del contrato público del backend (#62). Solo se usan para
 // elegir un texto en español; el texto original nunca llega a la pantalla.
 const BACKEND_NO_AVAILABILITY = 'No availability for the requested room type and dates';
 const BACKEND_GUEST_CONFLICT_PREFIX = 'Guest details conflict';
+const BACKEND_INVALID_PROMOTION = 'El código no es válido o no está vigente para estas fechas.';
 const BACKEND_BAD_REQUEST_MESSAGES: Array<[match: string, message: string]> = [
   ['Check-in date cannot be in the past', 'La fecha de entrada no puede ser anterior a hoy.'],
   ['Stay cannot exceed', 'La estadía no puede superar 30 noches.'],
@@ -304,6 +321,13 @@ export function toPublicBookingError(
   }
 
   const message = backendMessage(error);
+  if (message === BACKEND_INVALID_PROMOTION) {
+    return new PublicBookingError(
+      'invalid_promotion',
+      'El código de promoción no es válido o ya venció para esas fechas.',
+      error.status,
+    );
+  }
   switch (error.status) {
     case 400: {
       const known = BACKEND_BAD_REQUEST_MESSAGES.find(([match]) => message.startsWith(match));
@@ -434,6 +458,7 @@ function toBookingBody(data: PublicBookingRequest): PublicBookingRequest {
     adults: data.adults,
     children: data.children,
     notes: data.notes,
+    promotionCode: data.promotionCode?.trim() || undefined,
     guest: {
       firstName: data.guest.firstName,
       lastName: data.guest.lastName,
@@ -447,6 +472,30 @@ function toBookingBody(data: PublicBookingRequest): PublicBookingRequest {
 }
 
 export const publicBookingCatalogService = {
+  async quotePromotion(data: {
+    roomTypeId: string;
+    checkIn: string;
+    checkOut: string;
+    code: string;
+  }): Promise<PublicPromotionQuote> {
+    const result = await publicRequest(
+      () =>
+        httpClient.post<PublicPromotionQuote>(
+          '/public/promotions/quote',
+          {
+            roomTypeId: data.roomTypeId,
+            checkIn: data.checkIn,
+            checkOut: data.checkOut,
+            code: data.code.trim(),
+          },
+          {
+            auth: { skipAuthorization: true, skipRefresh: true },
+          },
+        ),
+      'promotion',
+    );
+    return result;
+  },
   async getRoomTypes(): Promise<RoomType[]> {
     await simulateLatency();
     mockUtils.throwIfSimulatingError('No fue posible cargar los tipos de habitacion.');

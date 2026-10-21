@@ -237,6 +237,7 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
     adults: 2,
     children: 0,
     notes: 'Llegada tarde',
+    promotionCode: ' AURORA20 ',
     rateId: RATE_ID,
     roomId: 'room-1',
     status: 'confirmed',
@@ -263,6 +264,7 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
     'children',
     'guest',
     'notes',
+    'promotionCode',
     'roomTypeId',
   ]);
   for (const forbidden of ['rateId', 'roomId', 'status', 'totalAmountCents', 'guestId']) {
@@ -271,6 +273,62 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
   assert.equal('id' in body.guest, false);
   assert.equal(confirmation.confirmationCode, 'BKG-TEST0001');
   assert.equal(confirmation.status, 'pending');
+});
+
+test('POST /public/promotions/quote valida el código con el backend y devuelve importes', async () => {
+  handler = (request) => {
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, `${API}/public/promotions/quote`);
+    assert.deepEqual(request.body, {
+      roomTypeId: ROOM_TYPE_ID,
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      code: 'AURORA20',
+    });
+    return json({
+      code: 'AURORA20',
+      name: 'Estancia extendida',
+      discountPercent: 20,
+      baseAmountCents: 150000,
+      discountAmountCents: 30000,
+      totalAmountCents: 120000,
+      currency: 'GTQ',
+    });
+  };
+
+  const quote = await publicBookingCatalogService.quotePromotion({
+    roomTypeId: ROOM_TYPE_ID,
+    checkIn: CHECK_IN,
+    checkOut: CHECK_OUT,
+    code: ' AURORA20 ',
+  });
+
+  assertPublicRequests();
+  assert.equal(quote.discountAmountCents, 30000);
+  assert.equal(quote.totalAmountCents, 120000);
+});
+
+test('código promocional inválido muestra un mensaje entendible', async () => {
+  handler = () =>
+    json({ message: 'El código no es válido o no está vigente para estas fechas.' }, 400);
+
+  await assert.rejects(
+    publicBookingCatalogService.quotePromotion({
+      roomTypeId: ROOM_TYPE_ID,
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      code: 'NOEXISTE',
+    }),
+    (error) => {
+      assert.ok(error instanceof PublicBookingError);
+      assert.equal(error.kind, 'invalid_promotion');
+      assert.equal(
+        error.message,
+        'El código de promoción no es válido o ya venció para esas fechas.',
+      );
+      return true;
+    },
+  );
 });
 
 const errorCases = [
