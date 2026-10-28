@@ -7,6 +7,7 @@ await build({
   entryPoints: ['tests/workspace.test.jsx'],
   outfile: '.cache/workspace.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

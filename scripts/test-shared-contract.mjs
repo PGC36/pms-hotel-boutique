@@ -66,6 +66,7 @@ await build({
   outbase: 'src',
   outExtension: { '.js': '.cjs' },
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',
