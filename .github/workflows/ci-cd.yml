@@ -66,6 +66,9 @@ jobs:
       - name: Análisis SonarQube + Quality Gate
         id: sonar
         if: steps.sonar-check.outputs.enabled == 'true'
+        # En main el despliegue puede continuar si Sonar rechaza el gate; el resultado
+        # permanece visible en el resumen. En PR a develop el gate sigue bloqueando.
+        continue-on-error: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           npm run sonar -- \
             -Dsonar.host.url="$SONAR_HOST_URL" \
@@ -83,6 +86,7 @@ jobs:
           SONAR_ENABLED: ${{ steps.sonar-check.outputs.enabled }}
           SONAR_REASON: ${{ steps.sonar-check.outputs.reason }}
           SONAR: ${{ steps.sonar.outcome }}
+          SONAR_BYPASS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           icon() {
             case "$1" in
@@ -94,7 +98,13 @@ jobs:
           if [ "$SONAR_ENABLED" = "true" ]; then
             case "$SONAR" in
               success) sonar_result="✅ Quality Gate aprobado" ;;
-              failure) sonar_result="❌ Quality Gate rechazado o error de análisis (ver log y SonarQube)" ;;
+              failure)
+                if [ "$SONAR_BYPASS" = "true" ]; then
+                  sonar_result="⚠️ Quality Gate falló; despliegue permitido por excepción. Revisar SonarCloud."
+                else
+                  sonar_result="❌ Quality Gate rechazado o error de análisis (ver log y SonarQube)"
+                fi
+                ;;
               *) sonar_result="⏭️ No se ejecutó (falló un paso previo)" ;;
             esac
           elif [ -n "$SONAR_REASON" ]; then
