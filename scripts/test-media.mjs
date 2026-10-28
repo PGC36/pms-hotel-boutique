@@ -9,6 +9,7 @@ await build({
   entryPoints: ['tests/media.test.jsx'],
   outfile: '.cache/media.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

@@ -9,6 +9,7 @@ await build({
   entryPoints: ['tests/http-client.test.js'],
   outfile: '.cache/http-client.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

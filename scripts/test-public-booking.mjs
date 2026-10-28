@@ -9,6 +9,7 @@ await build({
   entryPoints: ['tests/public-booking.test.jsx'],
   outfile: '.cache/public-booking.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

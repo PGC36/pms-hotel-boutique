@@ -30,7 +30,9 @@
     "test:router": "node scripts/test-router.mjs",
     "test:media": "node scripts/test-media.mjs",
     "test:http-client": "node scripts/test-http-client.mjs",
-    "test:sentry-scrub": "node scripts/test-sentry-scrub.mjs"
+    "test:sentry-scrub": "node scripts/test-sentry-scrub.mjs",
+    "test:coverage": "c8 npm test",
+    "sonar": "sonar-scanner"
   },
   "dependencies": {
     "@sentry/react": "11.1.0",
@@ -42,10 +44,12 @@
   "devDependencies": {
     "@eslint/js": "^9.9.1",
     "@sentry/vite-plugin": "5.4.0",
+    "@sonar/scan": "^4.4.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.18",
+    "c8": "^12.0.0",
     "esbuild": "^0.21.5",
     "eslint": "^9.9.1",
     "eslint-config-prettier": "^10.1.8",

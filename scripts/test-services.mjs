@@ -78,6 +78,7 @@ await build({
   },
   outfile: '.cache/services-harness.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

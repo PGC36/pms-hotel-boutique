@@ -11,8 +11,8 @@ El proyecto cuenta con dos canalizaciones complementarias:
   On-Premise y permite archivar el build de producción desde el agente Jenkins.
 
 Ambos pipelines instalan dependencias de forma reproducible con `npm ci`,
-ejecutan las validaciones del proyecto y envían el análisis a SonarQube
-self-hosted. El build de producción se ejecuta únicamente para ramas de entrega
+ejecutan las validaciones del proyecto y envían el análisis a **SonarQube
+Cloud** (o, como alternativa, a un servidor SonarQube self-hosted). El build de producción se ejecuta únicamente para ramas de entrega
 o tags.
 
 ## Arquitectura de las canalizaciones
@@ -28,13 +28,16 @@ El workflow usa `ubuntu-latest`, Node.js 20 y caché de npm.
 | Push de tag `v*.*.*` | `validate-and-test` y build de producción |
 
 El job `validate-and-test` realiza checkout con `fetch-depth: 0`, instala las
-dependencias, ejecuta `npm run check`, ejecuta `npm run test:coverage
---if-present` y lanza el análisis de SonarQube cuando los secretos necesarios
-están configurados.
+dependencias, ejecuta `npm run check`, ejecuta `npm run test:coverage` (genera
+`coverage/lcov.info`) y lanza el análisis de SonarQube + Quality Gate con
+`npm run sonar`.
 
-Si `SONAR_TOKEN`, `SONAR_HOST_URL` o `SONAR_PROJECT_KEY` aún no existen, el
-workflow omite SonarQube con una nota para no romper el PR mientras se termina
-de levantar el servidor.
+Si faltan `SONAR_TOKEN` o `SONAR_HOST_URL`, o el servidor no responde `UP`
+desde el runner, el análisis se reporta como **OMITIDO** (nunca como aprobado) y
+el resto del pipeline decide el resultado. Al final de cada run, el **resumen
+del job** (pestaña _Summary_) muestra una tabla con el resultado de cada etapa,
+incluida una línea inequívoca de SonarQube: `✅ Quality Gate aprobado`,
+`❌ Quality Gate rechazado…` o `⚠️ OMITIDO — <motivo>. No es un Quality Gate aprobado.`
 
 El job `production-build-and-release` depende de `validate-and-test`, ejecuta
 `npm run build` con `NODE_ENV=production` y publica el contenido de `dist/`
@@ -55,12 +58,12 @@ Las etapas son:
 1. **Checkout & Setup**: obtiene el código con `checkout scm` y ejecuta
    `npm ci`.
 2. **Validation**: ejecuta `npm run check`.
-3. **Tests & Coverage**: ejecuta `npm run test:coverage --if-present`.
-4. **SonarQube Quality Gate**: ejecuta `sonar-scanner` contra el servidor
-   SonarQube configurado.
-5. **Wait Quality Gate**: espera el resultado del Quality Gate y corta el
-   pipeline si SonarQube lo rechaza.
-6. **Build Production**: se ejecuta en `main`, `master` o cuando la ejecución
+3. **Tests & Coverage**: ejecuta `npm run test:coverage`.
+4. **SonarQube + Quality Gate**: ejecuta `npm run sonar` con
+   `-Dsonar.qualitygate.wait=true`; si el gate falla, falla el build. Si faltan
+   las credenciales o el servidor no responde `UP`, la etapa se omite con un
+   aviso (y el build queda _unstable_ en el segundo caso).
+5. **Build Production**: se ejecuta en `main`, `master` o cuando la ejecución
    corresponde a un tag; compila y archiva `dist/**`.
 
 El bloque `post { always { cleanWs() } }` elimina el workspace al finalizar
@@ -71,17 +74,17 @@ cualquier ejecución, tanto exitosa como fallida.
 Configurar los siguientes secretos en **Repository Settings → Secrets and
 variables → Actions → Repository secrets**:
 
-| Secreto | Uso |
-| --- | --- |
-| `SONAR_TOKEN` | Token de autenticación para SonarQube. |
-| `SONAR_HOST_URL` | URL del servidor SonarQube, por ejemplo `http://localhost:9000`. |
-| `SONAR_PROJECT_KEY` | Identificador del proyecto en SonarQube, por ejemplo `pms-hotel-boutique-frontend`. |
+| Secreto | Obligatorio | Uso |
+| --- | --- | --- |
+| `SONAR_TOKEN` | No (sin él se omite SonarQube) | Token de análisis. Cloud: _My Account → Security_. |
+| `SONAR_HOST_URL` | No (sin él se omite SonarQube) | `https://sonarcloud.io` en Cloud. En self-hosted, una URL alcanzable **desde los runners de GitHub**. |
+| `SONAR_PROJECT_KEY` | No (default `pms-hotel-boutique` de `sonar-project.properties`) | projectKey. En Cloud es el que asigna SonarQube Cloud al importar el repo (suele ser `<organizacion>_pms-hotel-boutique`). |
+| `SONAR_ORGANIZATION` | Solo en SonarQube Cloud | Key de la organización en SonarQube Cloud. Vacío = self-hosted. |
 
 El workflow los consume mediante `${{ secrets.NOMBRE_DEL_SECRETO }}`. Los
 valores no deben escribirse en el repositorio, en archivos YAML ni en logs.
 Después de guardarlos, validar que el token tenga permisos para analizar el
-proyecto correspondiente. No se usa `SONAR_ORGANIZATION` porque ese valor es de
-SonarCloud, no de SonarQube self-hosted.
+proyecto correspondiente.
 
 ## Credenciales de Jenkins
 
@@ -92,17 +95,16 @@ En **Manage Jenkins → Credentials → Global** crear credenciales de tipo
 | --- | --- |
 | `sonar-token` | Token de SonarQube. |
 | `sonar-host-url` | URL del servidor SonarQube. |
-| `sonar-project-key` | Project key del frontend. |
+| `sonar-project-key` | Project key del frontend (opcional). |
+| `sonar-organization` | Key de la organización (solo SonarQube Cloud). |
 
 El `Jenkinsfile` expone temporalmente esas credenciales como variables de
 entorno. No se deben registrar los valores ni sustituirlos por claves literales
 en el archivo.
 
-El agente Jenkins también debe tener disponible el ejecutable `sonar-scanner`
-o una instalación configurada en Jenkins, además del tool NodeJS identificado
-como `NodeJS-20`. Para `waitForQualityGate()` debe estar instalado el plugin
-SonarQube Scanner for Jenkins y configurado el webhook de SonarQube hacia
-Jenkins.
+El agente Jenkins necesita `curl` y el tool NodeJS identificado como
+`NodeJS-20`. El scanner es la devDependency `@sonar/scan`, así que no hace
+falta instalar `sonar-scanner` ni el plugin de SonarQube en Jenkins.
 
 ## Quality Gate y métricas
 
@@ -125,13 +127,45 @@ sonar.tests=tests,scripts
 sonar.javascript.lcov.reportPaths=coverage/lcov.info
 ```
 
-El comando `npm run test:coverage --if-present` es opcional: si el script
-`test:coverage` existe, debe generar `coverage/lcov.info` para que Sonar pueda
-calcular cobertura. Si el script no existe o no genera el archivo, el análisis
-no tendrá cobertura LCOV disponible.
+`npm run test:coverage` ejecuta `npm test` bajo `c8` (`.c8rc.json`) y escribe
+`coverage/lcov.info`. Las pruebas se empaquetan con esbuild en `.cache/` con
+`sourcemap: 'inline'`, y `c8` las remapea a los archivos de `src/`
+(`exclude-after-remap`). Si se agrega un script `scripts/test-*.mjs` que
+empaqueta con esbuild, debe incluir `sourcemap: 'inline'` para que cuente en la
+cobertura.
 
-El stage `Wait Quality Gate` usa `waitForQualityGate abortPipeline: true` para
-bloquear la ejecución si SonarQube rechaza el Quality Gate.
+## SonarQube Cloud (opción en uso)
+
+El análisis corre contra **SonarQube Cloud** (`https://sonarcloud.io`), igual
+que la app móvil. El workflow y el Jenkinsfile detectan Cloud porque
+`SONAR_ORGANIZATION` tiene valor y agregan `-Dsonar.organization`; con
+`SONAR_ORGANIZATION` vacío funcionan como self-hosted.
+
+### Configuración (una sola vez)
+
+1. En sonarcloud.io, dentro de la organización, **importar el repo**
+   `PGC36/pms-hotel-boutique` (_+ → Analyze new project_).
+2. En el proyecto: _Administration → Analysis Method_ → **desactivar Automatic
+   Analysis**. Si queda activo, el análisis desde CI falla ("You are running CI
+   analysis while Automatic Analysis is enabled") y además no importa la
+   cobertura de `coverage/lcov.info`.
+3. Generar un token en _My Account → Security_.
+4. Cargar en GitHub los secrets `SONAR_TOKEN`,
+   `SONAR_HOST_URL=https://sonarcloud.io`, `SONAR_PROJECT_KEY` (el key que
+   muestra _Project Information_) y `SONAR_ORGANIZATION`.
+
+En el plan gratuito, SonarQube Cloud aplica el gate **Sonar way** (entre otras
+condiciones, cobertura ≥ 80 % en código nuevo). La organización tiene activado
+_Ignore duplication and coverage on small changes_: cobertura y duplicación se
+ignoran en cambios de menos de 20 líneas nuevas. SonarQube Cloud analiza PR y
+ramas: en GitHub Actions el scanner detecta el PR solo.
+
+Análisis manual en local contra Cloud:
+
+```bash
+npm run test:coverage
+npm run sonar -- -Dsonar.host.url=https://sonarcloud.io -Dsonar.organization=<organizacion> -Dsonar.projectKey=<project-key> -Dsonar.token=<SONAR_TOKEN> -Dsonar.qualitygate.wait=true
+```
 
 ## Empaquetado de producción
 

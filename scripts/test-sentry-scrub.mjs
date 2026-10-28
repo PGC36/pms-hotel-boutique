@@ -8,6 +8,7 @@ await build({
   entryPoints: ['tests/sentry-scrub.test.js'],
   outfile: '.cache/sentry-scrub.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',
