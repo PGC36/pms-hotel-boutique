@@ -18,7 +18,7 @@ jobs:
     name: Validate and test
     runs-on: ubuntu-latest
     env:
-      HAS_SONARQUBE: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' && secrets.SONAR_PROJECT_KEY != '' }}
+      HAS_SONARQUBE: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' && secrets.SONAR_PROJECT_KEY != '' && secrets.SONAR_ORGANIZATION != '' }}
 
     steps:
       - name: Checkout repository
@@ -49,6 +49,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >-
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
 
       - name: SonarQube quality gate
@@ -62,7 +63,7 @@ jobs:
       - name: SonarQube not configured
         if: env.HAS_SONARQUBE != 'true'
         run: |
-          echo "::notice title=SonarQube omitido::Configura SONAR_TOKEN, SONAR_HOST_URL y SONAR_PROJECT_KEY para activar analisis y Quality Gate."
+          echo "::notice title=SonarQube omitido::Configura SONAR_TOKEN, SONAR_HOST_URL, SONAR_ORGANIZATION y SONAR_PROJECT_KEY para activar analisis y Quality Gate."
 
   production-build-and-release:
     name: Production build and release
