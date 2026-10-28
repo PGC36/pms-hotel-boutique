@@ -865,6 +865,34 @@ const emptyCompanionDraft = (guestType: 'adult' | 'child'): CompanionDraft => ({
   guestType,
 });
 
+function validateDocumentNumber(value: string): string | undefined {
+  if (!value) return 'Ingresa el número de documento.';
+  if (!/^\d+$/.test(value)) return 'El documento solo debe contener números.';
+  return undefined;
+}
+
+function checkinReservationError(
+  reservation: Reservation,
+  room: RecRoom | undefined,
+  availableRoomCount: number,
+  today: string,
+): string | undefined {
+  if (!reservation.bookingId) return 'La reserva no está vinculada al backend.';
+  if (reservation.status !== 'Confirmada') return 'Confirma la reserva antes de hacer check-in.';
+  if (today < reservation.checkIn || today >= reservation.checkOut) {
+    return 'El check-in solo se puede realizar durante las fechas de la estadía.';
+  }
+  if (!room) {
+    return availableRoomCount > 0
+      ? 'Selecciona una habitación antes de hacer check-in.'
+      : 'No hay habitaciones compatibles disponibles para estas fechas.';
+  }
+  if (room.status !== 'Disponible') {
+    return 'La habitación asignada no está disponible para check-in.';
+  }
+  return undefined;
+}
+
 export function CheckinModal({
   reservation,
   rooms,
@@ -985,15 +1013,12 @@ export function CheckinModal({
     // Caracteres de nombres reales, sin el límite 3–20 propio de Nueva reserva.
     const firstName = normalizePersonNamePart(draft.firstName);
     const lastName = normalizePersonNamePart(draft.lastName);
+    const documentNumberError = validateDocumentNumber(draft.documentNumber.trim());
     const nextErrors: CompanionDraftErrors = {
       firstName: validatePersonNamePart(firstName, 'nombre') ?? undefined,
       lastName: validatePersonNamePart(lastName, 'apellido') ?? undefined,
       documentType: draft.documentType ? undefined : 'Selecciona el tipo de documento.',
-      documentNumber: !draft.documentNumber.trim()
-        ? 'Ingresa el número de documento.'
-        : /^\d+$/.test(draft.documentNumber)
-          ? undefined
-          : 'El documento solo debe contener números.',
+      documentNumber: documentNumberError,
       // 0 es válido (bebés); vacío no se convierte en 0.
       age:
         validateWholeNumber(draft.age, {
@@ -1038,40 +1063,18 @@ export function CheckinModal({
       nextFieldErrors.birthDate = 'La edad debe estar entre 0 y 110 años.';
     }
     setFieldErrors(nextFieldErrors);
-    if (!reservation.bookingId) {
-      setError('La reserva no está vinculada al backend.');
-      return;
-    }
-    if (reservation.status !== 'Confirmada') {
-      setError('Confirma la reserva antes de hacer check-in.');
-      return;
-    }
-    if (today < reservation.checkIn || today >= reservation.checkOut) {
-      setError('El check-in solo se puede realizar durante las fechas de la estadía.');
-      return;
-    }
-    if (!room) {
-      setError(
-        availableRooms.length > 0
-          ? 'Selecciona una habitación antes de hacer check-in.'
-          : 'No hay habitaciones compatibles disponibles para estas fechas.',
-      );
-      return;
-    }
-    if (room.status !== 'Disponible') {
-      setError('La habitación asignada no está disponible para check-in.');
+    const reservationError = checkinReservationError(
+      reservation,
+      room,
+      availableRooms.length,
+      today,
+    );
+    if (reservationError) {
+      setError(reservationError);
       return;
     }
     if (nextFieldErrors.docType || nextFieldErrors.docNumber || nextFieldErrors.birthDate) {
       setError('');
-      return;
-    }
-    if (companionsLoading) {
-      setError('Espera a que carguen los acompañantes registrados.');
-      return;
-    }
-    if (companionsError) {
-      setError(companionsError);
       return;
     }
     const compositionError = companionCompositionError(
@@ -1079,12 +1082,13 @@ export function CheckinModal({
       adultsDeclared,
       childrenDeclared,
     );
-    if (compositionError) {
-      setError(compositionError);
-      return;
-    }
-    if (capacityExceeded) {
-      setError(`Excede la capacidad de la habitación (${room?.capacity})`);
+    const companionError = companionsLoading
+      ? 'Espera a que carguen los acompañantes registrados.'
+      : companionsError ||
+        compositionError ||
+        (capacityExceeded ? `Excede la capacidad de la habitación (${room?.capacity})` : '');
+    if (companionError) {
+      setError(companionError);
       return;
     }
     setError('');

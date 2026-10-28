@@ -4,7 +4,7 @@ import { mediaService } from '@/services/mediaService';
 import type { MediaImage, MediaVariant } from '@/shared/types/entities/media-image';
 import './CatalogImage.css';
 
-export type CatalogImageProps = {
+export type CatalogImageProps = Readonly<{
   /** Imagen del backend. Sin imagen se muestra el placeholder neutral. */
   image?: MediaImage;
   variant?: MediaVariant;
@@ -19,7 +19,7 @@ export type CatalogImageProps = {
    */
   staffFallback?: boolean;
   className?: string;
-};
+}>;
 
 /**
  * Imagen de catálogo (tipo de habitación, producto, amenidad). Nunca inventa

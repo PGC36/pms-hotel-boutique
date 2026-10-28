@@ -113,9 +113,9 @@ import { formatDateGT } from '@/shared/utils/date';
 import type {
   InventoryItem,
   InventoryItemCategory,
+  InventoryItemCategoryDto,
   InventoryUnit,
 } from '@/shared/types/entities/inventory-item';
-import type { InventoryItemCategoryDto } from '@/shared/types/entities/inventory-item';
 import type { InventoryMovementReasonDto } from '@/shared/types/entities/inventory-movement';
 import type { InventoryMovementReason } from '@/shared/types/entities/inventory-movement';
 import type { Amenity as DomainAmenity, AmenityCategory } from '@/shared/types/entities/amenity';
@@ -1952,6 +1952,22 @@ function AdminContentReady({
     );
   };
 
+  const updateRoomServiceProductStatus = async (item: RoomServiceItem) => {
+    try {
+      const updated = await catalogService.updateAdminProduct(item.dbId, {
+        active: item.status !== 'Activo',
+      });
+      setRsItems((current) =>
+        current.map((entry, index) =>
+          entry.dbId === item.dbId ? adminProductFromDomain(updated, index) : entry,
+        ),
+      );
+      onAction('Producto actualizado correctamente');
+    } catch (error) {
+      onAction(serviceErrorMessage(error));
+    }
+  };
+
   const exportAuditReport = () => {
     const filtered = audit.filter((entry) => {
       const matchesSearch = `${entry.user} ${entry.module} ${entry.action} ${entry.description}`
@@ -1977,7 +1993,7 @@ function AdminContentReady({
   };
 
   // ─── DASHBOARD ───
-  if (nav === 'Dashboard') {
+  function renderDashboard() {
     const lowStock = inventory.filter((p) => p.stock <= p.minStock);
     const occupiedRooms = rooms.filter((room) => room.status === 'Ocupada').length;
     const availableRooms = rooms.filter((room) => room.status === 'Disponible').length;
@@ -2266,9 +2282,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Dashboard') return renderDashboard();
 
   // ─── USUARIOS Y ROLES ───
-  if (nav === 'Usuarios y roles' || nav === 'Gestión de usuarios' || nav === 'Roles y permisos') {
+  function renderUsersAndRoles() {
     const roleFilterOptions = ['Todos', 'Activo', 'Inactivo', ...roles.map((role) => role.name)];
     const filtered = users.filter((u) => {
       const ms = `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(search.toLowerCase());
@@ -2544,13 +2561,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Usuarios y roles' || nav === 'Gestión de usuarios' || nav === 'Roles y permisos')
+    return renderUsersAndRoles();
 
   // ─── HABITACIONES ───
-  if (
-    nav === 'Habitaciones' ||
-    nav === 'Gestión de habitaciones' ||
-    nav === 'Tipos de habitación'
-  ) {
+  function renderRoomsAndTypes() {
     const filtered = rooms.filter((r) => {
       const ms = `${r.number} ${r.floor} ${r.type} ${r.status}`
         .toLowerCase()
@@ -3005,9 +3020,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Habitaciones' || nav === 'Gestión de habitaciones' || nav === 'Tipos de habitación')
+    return renderRoomsAndTypes();
 
   // ─── TARIFAS ───
-  if (nav === 'Tarifas' || nav === 'Tarifas por temporada') {
+  function renderRates() {
     return (
       <>
         {ratesSection === 'Tarifas por temporada' && (
@@ -3174,9 +3191,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Tarifas' || nav === 'Tarifas por temporada') return renderRates();
 
   // ─── PROMOCIONES ───
-  if (nav === 'Promociones') {
+  function renderPromotions() {
     const filtered = promos.filter((p) =>
       `${p.name} ${p.code}`.toLowerCase().includes(search.toLowerCase()),
     );
@@ -3322,9 +3340,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Promociones') return renderPromotions();
 
   // ─── SERVICIOS (AMENIDADES + ROOM SERVICE) ───
-  if (nav === 'Servicios' || nav === 'Amenidades' || nav === 'Catálogo de Room Service') {
+  function renderServices() {
     const filteredRs = rsItems.filter((i) =>
       `${i.name} ${i.category} ${i.description}`.toLowerCase().includes(search.toLowerCase()),
     );
@@ -3508,25 +3527,7 @@ function AdminContentReady({
                         label={
                           item.status === 'Activo' ? 'Desactivar producto' : 'Activar producto'
                         }
-                        onChange={() => {
-                          void (async () => {
-                            try {
-                              const updated = await catalogService.updateAdminProduct(item.dbId, {
-                                active: item.status !== 'Activo',
-                              });
-                              setRsItems((current) =>
-                                current.map((entry, index) =>
-                                  entry.dbId === item.dbId
-                                    ? adminProductFromDomain(updated, index)
-                                    : entry,
-                                ),
-                              );
-                              onAction('Producto actualizado correctamente');
-                            } catch (error) {
-                              onAction(serviceErrorMessage(error));
-                            }
-                          })();
-                        }}
+                        onChange={() => void updateRoomServiceProductStatus(item)}
                       />
                       <button
                         className="icon-btn danger"
@@ -3692,9 +3693,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Servicios' || nav === 'Amenidades' || nav === 'Catálogo de Room Service')
+    return renderServices();
 
   // ─── REPORTES ───
-  if (nav === 'Reportes' || nav === 'Resumen operativo' || nav === 'Reportes financieros') {
+  function renderReports() {
     const periodCashMovements = cashMovements.filter((movement) =>
       isDateInReportPeriod(new Date(`${movement.date}T12:00:00`), reportFilter),
     );
@@ -3948,13 +3951,11 @@ function AdminContentReady({
       </div>
     );
   }
+  if (nav === 'Reportes' || nav === 'Resumen operativo' || nav === 'Reportes financieros')
+    return renderReports();
 
   // ─── INVENTARIO ───
-  if (
-    nav === 'Inventario' ||
-    nav === 'Gestión de inventario' ||
-    nav === 'Movimientos de inventario'
-  ) {
+  function renderInventory() {
     const filtered = inventory.filter((p) =>
       `${p.name} ${p.category}`.toLowerCase().includes(search.toLowerCase()),
     );
@@ -4252,9 +4253,15 @@ function AdminContentReady({
       </>
     );
   }
+  if (
+    nav === 'Inventario' ||
+    nav === 'Gestión de inventario' ||
+    nav === 'Movimientos de inventario'
+  )
+    return renderInventory();
 
   // ─── CAJA ───
-  if (nav === 'Caja') {
+  function renderCash() {
     const visibleCashMovements = cashMovements;
     const visibleCashSessions = cashSessions;
     const latestCashSession =
@@ -4532,9 +4539,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Caja') return renderCash();
 
   // ─── AUDITORÍA ───
-  if (nav === 'Auditoría') {
+  function renderAudit() {
     const filtered = audit.filter((a) => {
       const ms = `${a.user} ${a.module} ${a.action} ${a.description}`
         .toLowerCase()
@@ -4593,6 +4601,7 @@ function AdminContentReady({
       </div>
     );
   }
+  if (nav === 'Auditoría') return renderAudit();
 
   resetSearch();
   return (

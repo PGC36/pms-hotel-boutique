@@ -40,7 +40,7 @@ type ShowcaseStatus = 'loading' | 'success' | 'error';
 
 type AvailableRoomType = {
   roomType: RoomType;
-  availableRooms: number;
+  availableRooms?: number;
   rate?: Rate;
 };
 
@@ -270,11 +270,13 @@ export function SearchScreen() {
   const guestCounts = parseGuests(guests);
   // La disponibilidad no trae imágenes: se toman del catálogo público por id.
   const imagesByRoomTypeId = new Map(roomTypes.map((roomType) => [roomType.id, roomType.images]));
-  const roomCards = searchDirty
-    ? []
-    : hasSearched
-      ? results
-      : roomTypes.map((roomType) => ({ roomType, availableRooms: undefined, rate: undefined }));
+  let roomCards: AvailableRoomType[] = roomTypes.map((roomType) => ({
+    roomType,
+    availableRooms: undefined,
+    rate: undefined,
+  }));
+  if (hasSearched) roomCards = results;
+  if (searchDirty) roomCards = [];
   const publicTab = ['amenidades', 'promociones', 'politicas', 'privacidad', 'contacto'].includes(
     location.hash.replace('#', ''),
   )
@@ -289,6 +291,296 @@ export function SearchScreen() {
     if (publicTab === 'promociones' && promotionsState.status === 'idle') void loadPromotions();
   }, [publicTab, promotionsState.status, loadPromotions]);
 
+  const renderContactSection = () =>
+    publicTab === 'contacto' ? (
+      <section className="booking-public-section booking-policy-section" id="contacto">
+        <p className="eyebrow">Estamos para ayudarte</p>
+        <h2>Contacto</h2>
+        <p>
+          Si tienes preguntas sobre tu reserva, comunícate con la recepción del hotel mediante los
+          datos de contacto incluidos en tu confirmación.
+        </p>
+      </section>
+    ) : null;
+  const renderPrivacySection = () =>
+    publicTab === 'privacidad' ? (
+      <section className="booking-public-section booking-policy-section" id="privacidad">
+        <p className="eyebrow">Información personal</p>
+        <h2>Privacidad</h2>
+        <p>
+          Los datos solicitados durante la reserva permiten identificar al huésped y gestionar su
+          estancia. Para consultas sobre tus datos, comunícate con la recepción del hotel.
+        </p>
+      </section>
+    ) : null;
+  const renderPoliciesSection = () =>
+    publicTab === 'politicas' ? (
+      <section className="booking-public-section booking-policy-section" id="politicas">
+        <div>
+          <p className="eyebrow">Políticas claras</p>
+          <h2>Reserva con tranquilidad</h2>
+          <p>Antes de confirmar, revisa las condiciones principales de Hotel Aurora.</p>
+        </div>
+        <div className="booking-policy-list">
+          {policies.map((policy) => (
+            <article key={policy.title}>
+              <ShieldCheck size={18} aria-hidden="true" />
+              <div>
+                <h3>{policy.title}</h3>
+                <p>{policy.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    ) : null;
+  const renderAmenitiesSection = () =>
+    publicTab === 'amenidades' ? (
+      <section className="booking-public-section" id="amenidades">
+        <div className="visitor-section-head">
+          <div>
+            <p className="eyebrow">Amenidades incluidas</p>
+            <h2>Todo listo para disfrutar tu estancia</h2>
+          </div>
+          <button className="text-button" type="button" onClick={scrollToSearch}>
+            Buscar fechas <ArrowRight size={14} aria-hidden="true" />
+          </button>
+        </div>
+        {amenitiesState.status === 'loading' || amenitiesState.status === 'idle' ? (
+          <LoadingState label="Cargando amenidades..." />
+        ) : null}
+        {amenitiesState.status === 'error' ? (
+          <ErrorState description={amenitiesState.message} onRetry={loadAmenities} />
+        ) : null}
+        {amenitiesState.status === 'success' && amenitiesState.amenities.length === 0 ? (
+          <EmptyState
+            title="Sin amenidades publicadas"
+            description="Pronto compartiremos los servicios del hotel."
+          />
+        ) : null}
+        {amenitiesState.status === 'success' && amenitiesState.amenities.length > 0 ? (
+          <div className="booking-amenity-grid">
+            {amenitiesState.amenities.map((amenity) => {
+              const Icon = AMENITY_CATEGORY_ICONS[amenity.category] ?? Sparkles;
+              const schedule = formatAmenitySchedule(amenity);
+              return (
+                <article className="booking-amenity-card" key={amenity.id}>
+                  <div className="booking-amenity-image">
+                    <CatalogImage
+                      className="booking-amenity-photo"
+                      image={findPrimaryImage(amenity.images)}
+                      variant="medium"
+                      alt={`Foto de ${amenity.name}`}
+                    />
+                    <span>
+                      <Icon size={18} aria-hidden="true" />
+                      {schedule || 'Disponible'}
+                    </span>
+                  </div>
+                  <div>
+                    <h3>{amenity.name}</h3>
+                    {amenity.description ? <p>{amenity.description}</p> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className="booking-service-strip">
+          <span>
+            <Wifi size={16} aria-hidden="true" /> Wi-Fi de alta velocidad
+          </span>
+          <span>
+            <Car size={16} aria-hidden="true" /> Traslado bajo reserva
+          </span>
+          <span>
+            <Sparkles size={16} aria-hidden="true" /> Servicio a la habitación
+          </span>
+        </div>
+      </section>
+    ) : null;
+  const renderPromotionsSection = () =>
+    publicTab === 'promociones' ? (
+      <section className="booking-public-section" id="promociones">
+        <div className="visitor-section-head">
+          <div>
+            <p className="eyebrow">Ofertas especiales</p>
+            <h2>Promociones para tu próxima estancia</h2>
+          </div>
+          <button className="text-button" type="button" onClick={scrollToSearch}>
+            Buscar fechas <ArrowRight size={14} aria-hidden="true" />
+          </button>
+        </div>
+        {promotionsState.status === 'loading' || promotionsState.status === 'idle' ? (
+          <LoadingState label="Cargando promociones..." />
+        ) : null}
+        {promotionsState.status === 'error' ? (
+          <ErrorState description={promotionsState.message} onRetry={loadPromotions} />
+        ) : null}
+        {promotionsState.status === 'success' && promotionsState.promotions.length === 0 ? (
+          <EmptyState
+            title="No hay promociones disponibles"
+            description="Vuelve pronto para descubrir nuevas ofertas."
+          />
+        ) : null}
+        {promotionsState.status === 'success' && promotionsState.promotions.length > 0 ? (
+          <div className="booking-promo-grid">
+            {promotionsState.promotions.map((promotion) => (
+              <article className="booking-promo-card" key={promotion.id}>
+                <div className="booking-promo-image">
+                  <span className="booking-promo-icon" aria-hidden="true">
+                    <Gift size={32} strokeWidth={1.6} />
+                  </span>
+                  <span>{promotion.discountPercent}% de descuento</span>
+                </div>
+                <div className="booking-promo-body">
+                  <small>Código: {promotion.code}</small>
+                  <h3>{promotion.name}</h3>
+                  {promotion.description ? <p>{promotion.description}</p> : null}
+                  <p>
+                    Vigente del {formatDateGT(promotion.validFrom)} al{' '}
+                    {formatDateGT(promotion.validTo)}
+                  </p>
+                  <button className="button secondary" type="button" onClick={scrollToSearch}>
+                    Reservar ahora <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    ) : null;
+  const renderRoomsSection = () =>
+    publicTab === 'habitaciones' ? (
+      <>
+        {searchDirty ? (
+          <output className="search-error" aria-live="polite">
+            Cambiaron los datos de la búsqueda. Presiona Buscar disponibilidad para ver resultados
+            actualizados.
+          </output>
+        ) : null}
+        {hasSearched && !searchDirty && status === 'success' ? (
+          <div className="search-results-bar">
+            <div className="search-results-info">
+              <strong>
+                {formatDateGT(range.start!)} al {formatDateGT(range.end!)}
+              </strong>
+              <span className="search-results-nights">
+                {nights} {nights === 1 ? 'noche' : 'noches'}
+              </span>
+              <span className="search-results-guests">
+                <UserRound size={14} aria-hidden="true" />
+                {guests}
+              </span>
+            </div>
+            <span className="search-results-count">
+              {results.length} {results.length === 1 ? 'opción disponible' : 'opciones disponibles'}
+            </span>
+          </div>
+        ) : null}
+
+        <div className="visitor-section-head" id="habitaciones">
+          <div>
+            <p className="eyebrow">Elige tu espacio</p>
+            <h2>Habitaciones pensadas para ti</h2>
+          </div>
+        </div>
+
+        {showcaseStatus === 'loading' ? <LoadingState label="Cargando habitaciones..." /> : null}
+
+        {showcaseStatus === 'error' ? (
+          <ErrorState description={showcaseError ?? 'Intenta nuevamente.'} onRetry={loadShowcase} />
+        ) : null}
+
+        {showcaseStatus === 'success' &&
+        hasSearched &&
+        !searchDirty &&
+        status === 'success' &&
+        results.length === 0 ? (
+          <EmptyState
+            title="Sin disponibilidad"
+            description="No encontramos tipos de habitación disponibles para esas fechas."
+          />
+        ) : null}
+
+        {showcaseStatus === 'success' && roomCards.length > 0 ? (
+          <div className="room-cards">
+            {roomCards.map(({ roomType, availableRooms, rate }, index) => {
+              const displayRate = rate ?? findBaseRate(rates, roomType.id);
+              const detailUrl = isCompleteStayRange(range)
+                ? `/rooms/${roomType.id}?checkIn=${dateKey(range.start)}&checkOut=${dateKey(range.end)}&adults=${guestCounts.adults}&children=${guestCounts.children}`
+                : `/rooms/${roomType.id}`;
+
+              const coverImage = findPrimaryImage(
+                imagesByRoomTypeId.get(roomType.id) ?? roomType.images,
+              );
+
+              return (
+                <article className="visitor-room" key={roomType.id}>
+                  <div className="room-visual booking-room-visual">
+                    <CatalogImage
+                      className="booking-room-photo"
+                      image={coverImage}
+                      variant="medium"
+                      alt={`Foto de la habitación ${roomType.name}`}
+                      placeholderLabel={roomType.name}
+                    />
+                    <span className="room-tag">
+                      {availableRooms !== undefined
+                        ? `${availableRooms} disponibles`
+                        : index === 0
+                          ? 'Mejor precio'
+                          : index === 1
+                            ? 'Más reservada'
+                            : 'Experiencia premium'}
+                    </span>
+                  </div>
+                  <div className="room-card-body">
+                    <div>
+                      <h3>{roomType.name}</h3>
+                      <p>
+                        {roomType.bedConfiguration} - {roomType.capacity} huéspedes
+                      </p>
+                    </div>
+                    <div className="room-price">
+                      <small>Desde</small>
+                      <strong>
+                        {displayRate
+                          ? formatCurrency(displayRate.priceCents, displayRate.currency)
+                          : 'Consultar'}
+                      </strong>
+                      <span>por noche</span>
+                    </div>
+                  </div>
+                  <div className="room-features-list">
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                      {roomType.bedConfiguration}
+                    </span>
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                      Wi-Fi gratis
+                    </span>
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                      Desayuno incluido
+                    </span>
+                  </div>
+                  <div className="room-card-footer">
+                    <span className="booking-room-code">{roomType.code}</span>
+                    <Link className="text-button" to={detailUrl}>
+                      Ver detalle
+                      <ArrowRight size={13} aria-hidden="true" />
+                    </Link>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    ) : null;
   return (
     <section className="booking-search-page">
       <div className="visitor-hero booking-home-hero">
@@ -417,299 +709,15 @@ export function SearchScreen() {
       ) : null}
 
       <div className="visitor-content">
-        {publicTab === 'habitaciones' ? (
-          <>
-            {searchDirty ? (
-              <p className="search-error" role="status">
-                Cambiaron los datos de la búsqueda. Presiona Buscar disponibilidad para ver
-                resultados actualizados.
-              </p>
-            ) : null}
-            {hasSearched && !searchDirty && status === 'success' ? (
-              <div className="search-results-bar">
-                <div className="search-results-info">
-                  <strong>
-                    {formatDateGT(range.start!)} al {formatDateGT(range.end!)}
-                  </strong>
-                  <span className="search-results-nights">
-                    {nights} {nights === 1 ? 'noche' : 'noches'}
-                  </span>
-                  <span className="search-results-guests">
-                    <UserRound size={14} aria-hidden="true" />
-                    {guests}
-                  </span>
-                </div>
-                <span className="search-results-count">
-                  {results.length}{' '}
-                  {results.length === 1 ? 'opción disponible' : 'opciones disponibles'}
-                </span>
-              </div>
-            ) : null}
+        {renderRoomsSection()}
 
-            <div className="visitor-section-head" id="habitaciones">
-              <div>
-                <p className="eyebrow">Elige tu espacio</p>
-                <h2>Habitaciones pensadas para ti</h2>
-              </div>
-            </div>
+        {renderPromotionsSection()}
 
-            {showcaseStatus === 'loading' ? (
-              <LoadingState label="Cargando habitaciones..." />
-            ) : null}
+        {renderAmenitiesSection()}
 
-            {showcaseStatus === 'error' ? (
-              <ErrorState
-                description={showcaseError ?? 'Intenta nuevamente.'}
-                onRetry={loadShowcase}
-              />
-            ) : null}
-
-            {showcaseStatus === 'success' &&
-            hasSearched &&
-            !searchDirty &&
-            status === 'success' &&
-            results.length === 0 ? (
-              <EmptyState
-                title="Sin disponibilidad"
-                description="No encontramos tipos de habitación disponibles para esas fechas."
-              />
-            ) : null}
-
-            {showcaseStatus === 'success' && roomCards.length > 0 ? (
-              <div className="room-cards">
-                {roomCards.map(({ roomType, availableRooms, rate }, index) => {
-                  const displayRate = rate ?? findBaseRate(rates, roomType.id);
-                  const detailUrl = isCompleteStayRange(range)
-                    ? `/rooms/${roomType.id}?checkIn=${dateKey(range.start)}&checkOut=${dateKey(range.end)}&adults=${guestCounts.adults}&children=${guestCounts.children}`
-                    : `/rooms/${roomType.id}`;
-
-                  const coverImage = findPrimaryImage(
-                    imagesByRoomTypeId.get(roomType.id) ?? roomType.images,
-                  );
-
-                  return (
-                    <article className="visitor-room" key={roomType.id}>
-                      <div className="room-visual booking-room-visual">
-                        <CatalogImage
-                          className="booking-room-photo"
-                          image={coverImage}
-                          variant="medium"
-                          alt={`Foto de la habitación ${roomType.name}`}
-                          placeholderLabel={roomType.name}
-                        />
-                        <span className="room-tag">
-                          {availableRooms !== undefined
-                            ? `${availableRooms} disponibles`
-                            : index === 0
-                              ? 'Mejor precio'
-                              : index === 1
-                                ? 'Más reservada'
-                                : 'Experiencia premium'}
-                        </span>
-                      </div>
-                      <div className="room-card-body">
-                        <div>
-                          <h3>{roomType.name}</h3>
-                          <p>
-                            {roomType.bedConfiguration} - {roomType.capacity} huéspedes
-                          </p>
-                        </div>
-                        <div className="room-price">
-                          <small>Desde</small>
-                          <strong>
-                            {displayRate
-                              ? formatCurrency(displayRate.priceCents, displayRate.currency)
-                              : 'Consultar'}
-                          </strong>
-                          <span>por noche</span>
-                        </div>
-                      </div>
-                      <div className="room-features-list">
-                        <span>
-                          <Check size={12} aria-hidden="true" />
-                          {roomType.bedConfiguration}
-                        </span>
-                        <span>
-                          <Check size={12} aria-hidden="true" />
-                          Wi-Fi gratis
-                        </span>
-                        <span>
-                          <Check size={12} aria-hidden="true" />
-                          Desayuno incluido
-                        </span>
-                      </div>
-                      <div className="room-card-footer">
-                        <span className="booking-room-code">{roomType.code}</span>
-                        <Link className="text-button" to={detailUrl}>
-                          Ver detalle
-                          <ArrowRight size={13} aria-hidden="true" />
-                        </Link>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
-          </>
-        ) : null}
-
-        {publicTab === 'promociones' ? (
-          <section className="booking-public-section" id="promociones">
-            <div className="visitor-section-head">
-              <div>
-                <p className="eyebrow">Ofertas especiales</p>
-                <h2>Promociones para tu próxima estancia</h2>
-              </div>
-              <button className="text-button" type="button" onClick={scrollToSearch}>
-                Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-              </button>
-            </div>
-            {promotionsState.status === 'loading' || promotionsState.status === 'idle' ? (
-              <LoadingState label="Cargando promociones..." />
-            ) : null}
-            {promotionsState.status === 'error' ? (
-              <ErrorState description={promotionsState.message} onRetry={loadPromotions} />
-            ) : null}
-            {promotionsState.status === 'success' && promotionsState.promotions.length === 0 ? (
-              <EmptyState
-                title="No hay promociones disponibles"
-                description="Vuelve pronto para descubrir nuevas ofertas."
-              />
-            ) : null}
-            {promotionsState.status === 'success' && promotionsState.promotions.length > 0 ? (
-              <div className="booking-promo-grid">
-                {promotionsState.promotions.map((promotion) => (
-                  <article className="booking-promo-card" key={promotion.id}>
-                    <div className="booking-promo-image">
-                      <span className="booking-promo-icon" aria-hidden="true">
-                        <Gift size={32} strokeWidth={1.6} />
-                      </span>
-                      <span>{promotion.discountPercent}% de descuento</span>
-                    </div>
-                    <div className="booking-promo-body">
-                      <small>Código: {promotion.code}</small>
-                      <h3>{promotion.name}</h3>
-                      {promotion.description ? <p>{promotion.description}</p> : null}
-                      <p>
-                        Vigente del {formatDateGT(promotion.validFrom)} al{' '}
-                        {formatDateGT(promotion.validTo)}
-                      </p>
-                      <button className="button secondary" type="button" onClick={scrollToSearch}>
-                        Reservar ahora <ArrowRight size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {publicTab === 'amenidades' ? (
-          <section className="booking-public-section" id="amenidades">
-            <div className="visitor-section-head">
-              <div>
-                <p className="eyebrow">Amenidades incluidas</p>
-                <h2>Todo listo para disfrutar tu estancia</h2>
-              </div>
-              <button className="text-button" type="button" onClick={scrollToSearch}>
-                Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-              </button>
-            </div>
-            {amenitiesState.status === 'loading' || amenitiesState.status === 'idle' ? (
-              <LoadingState label="Cargando amenidades..." />
-            ) : null}
-            {amenitiesState.status === 'error' ? (
-              <ErrorState description={amenitiesState.message} onRetry={loadAmenities} />
-            ) : null}
-            {amenitiesState.status === 'success' && amenitiesState.amenities.length === 0 ? (
-              <EmptyState
-                title="Sin amenidades publicadas"
-                description="Pronto compartiremos los servicios del hotel."
-              />
-            ) : null}
-            {amenitiesState.status === 'success' && amenitiesState.amenities.length > 0 ? (
-              <div className="booking-amenity-grid">
-                {amenitiesState.amenities.map((amenity) => {
-                  const Icon = AMENITY_CATEGORY_ICONS[amenity.category] ?? Sparkles;
-                  const schedule = formatAmenitySchedule(amenity);
-                  return (
-                    <article className="booking-amenity-card" key={amenity.id}>
-                      <div className="booking-amenity-image">
-                        <CatalogImage
-                          className="booking-amenity-photo"
-                          image={findPrimaryImage(amenity.images)}
-                          variant="medium"
-                          alt={`Foto de ${amenity.name}`}
-                        />
-                        <span>
-                          <Icon size={18} aria-hidden="true" />
-                          {schedule || 'Disponible'}
-                        </span>
-                      </div>
-                      <div>
-                        <h3>{amenity.name}</h3>
-                        {amenity.description ? <p>{amenity.description}</p> : null}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
-            <div className="booking-service-strip">
-              <span>
-                <Wifi size={16} aria-hidden="true" /> Wi-Fi de alta velocidad
-              </span>
-              <span>
-                <Car size={16} aria-hidden="true" /> Traslado bajo reserva
-              </span>
-              <span>
-                <Sparkles size={16} aria-hidden="true" /> Servicio a la habitación
-              </span>
-            </div>
-          </section>
-        ) : null}
-
-        {publicTab === 'politicas' ? (
-          <section className="booking-public-section booking-policy-section" id="politicas">
-            <div>
-              <p className="eyebrow">Políticas claras</p>
-              <h2>Reserva con tranquilidad</h2>
-              <p>Antes de confirmar, revisa las condiciones principales de Hotel Aurora.</p>
-            </div>
-            <div className="booking-policy-list">
-              {policies.map((policy) => (
-                <article key={policy.title}>
-                  <ShieldCheck size={18} aria-hidden="true" />
-                  <div>
-                    <h3>{policy.title}</h3>
-                    <p>{policy.detail}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-        {publicTab === 'privacidad' ? (
-          <section className="booking-public-section booking-policy-section" id="privacidad">
-            <p className="eyebrow">Información personal</p>
-            <h2>Privacidad</h2>
-            <p>
-              Los datos solicitados durante la reserva permiten identificar al huésped y gestionar
-              su estancia. Para consultas sobre tus datos, comunícate con la recepción del hotel.
-            </p>
-          </section>
-        ) : null}
-        {publicTab === 'contacto' ? (
-          <section className="booking-public-section booking-policy-section" id="contacto">
-            <p className="eyebrow">Estamos para ayudarte</p>
-            <h2>Contacto</h2>
-            <p>
-              Si tienes preguntas sobre tu reserva, comunícate con la recepción del hotel mediante
-              los datos de contacto incluidos en tu confirmación.
-            </p>
-          </section>
-        ) : null}
+        {renderPoliciesSection()}
+        {renderPrivacySection()}
+        {renderContactSection()}
       </div>
 
       <section className="visitor-experience booking-experience">

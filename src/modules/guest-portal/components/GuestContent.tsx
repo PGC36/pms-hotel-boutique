@@ -1393,149 +1393,142 @@ function GuestContentReady({
       menuCat === 'Todos' ? initialMenu : initialMenu.filter((m) => m.category === menuCat);
     const pagedMenu = paginateItems(filteredMenu, menuPage);
     return (
-      <>
-        <div className="gs-rs-layout">
-          <div className="panel gs-rs-menu">
-            <div className="panel-heading">
-              <div>
-                <h3>Menú de Room Service</h3>
-                <p>Selecciona productos y envía tu pedido</p>
-              </div>
+      <div className="gs-rs-layout">
+        <div className="panel gs-rs-menu">
+          <div className="panel-heading">
+            <div>
+              <h3>Menú de Room Service</h3>
+              <p>Selecciona productos y envía tu pedido</p>
             </div>
-            <div className="toolbar">
-              <div className="filter-dropdown">
-                <button className="filter-button">
-                  <span>{menuCat}</span>
-                  <ChevronDown size={15} />
+          </div>
+          <div className="toolbar">
+            <div className="filter-dropdown">
+              <button className="filter-button">
+                <span>{menuCat}</span>
+                <ChevronDown size={15} />
+              </button>
+              <div className="filter-menu">
+                <button
+                  className={menuCat === 'Todos' ? 'active' : ''}
+                  onClick={() => {
+                    setMenuCat('Todos');
+                    setMenuPage(1);
+                  }}
+                >
+                  Todos
                 </button>
-                <div className="filter-menu">
+                {categories.map((cat) => (
                   <button
-                    className={menuCat === 'Todos' ? 'active' : ''}
+                    key={cat}
+                    className={menuCat === cat ? 'active' : ''}
                     onClick={() => {
-                      setMenuCat('Todos');
+                      setMenuCat(cat);
                       setMenuPage(1);
                     }}
                   >
-                    Todos
+                    {cat}
                   </button>
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      className={menuCat === cat ? 'active' : ''}
-                      onClick={() => {
-                        setMenuCat(cat);
-                        setMenuPage(1);
-                      }}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
+                ))}
               </div>
             </div>
-            <div className="gs-menu-grid">
-              {pagedMenu.items.map((item) => (
-                <div
-                  className={`gs-menu-card ${!item.available ? 'unavailable' : ''}`}
-                  key={item.id}
-                >
-                  <div className="gs-menu-card-photo">
-                    <CatalogImage
-                      image={item.image}
-                      variant="thumb"
-                      alt={`Foto de ${item.name}`}
-                      placeholderIcon={
-                        <Package aria-hidden="true" className="catalog-image__icon" />
-                      }
-                    />
-                  </div>
-                  <div className="gs-menu-card-body">
-                    <div>
-                      <strong>{item.name}</strong>
-                      <p>{item.description}</p>
-                      <span className="gs-menu-price">{money(item.price)}</span>
-                    </div>
-                    {item.available ? (
-                      <button className="button small primary" onClick={() => addToCart(item)}>
-                        <Plus size={14} /> Agregar
-                      </button>
-                    ) : (
-                      <span className="status-pill terracotta">No disponible</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Pagination
-              currentPage={pagedMenu.currentPage}
-              totalPages={pagedMenu.totalPages}
-              onPageChange={setMenuPage}
-              label="Paginación del menú de Room Service"
-            />
           </div>
-          <aside className="panel gs-rs-cart">
-            <div className="panel-heading">
-              <div>
-                <h3>Mi pedido</h3>
-                <p>Habitacion {currentStay?.roomNumber ?? 'Sin asignar'}</p>
-              </div>
-              {cart.length > 0 && <span className="status-pill warning">{cart.length} items</span>}
-            </div>
-            {cart.length === 0 ? (
-              <div className="hk-empty">
-                <ClipboardList size={22} />
-                <p>Tu pedido está vacío</p>
-                <small>Selecciona productos del menú para agregarlos</small>
-              </div>
-            ) : (
-              <>
-                <div className="gs-cart-list">
-                  {cart.map((item) => (
-                    <div className="gs-cart-row" key={item.id}>
-                      <div className="gs-cart-info">
-                        <strong>{item.name}</strong>
-                        <small>{money(item.price)} c/u</small>
-                      </div>
-                      <div className="gs-cart-controls">
-                        <button onClick={() => updateCartQty(item.id, -1)}>
-                          <X size={12} />
-                        </button>
-                        <span>{item.quantity}</span>
-                        <button onClick={() => updateCartQty(item.id, 1)}>
-                          <Plus size={12} />
-                        </button>
-                        <strong className="gs-cart-subtotal">
-                          {money(item.price * item.quantity)}
-                        </strong>
-                        <button className="gs-cart-remove" onClick={() => removeFromCart(item.id)}>
-                          <Ban size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <label className="hk-form-label">
-                  Notas del pedido
-                  <textarea
-                    className="hk-form-textarea"
-                    value={orderNote}
-                    onChange={(e) => setOrderNote(e.target.value)}
-                    placeholder="Indica preferencias o alergias..."
+          <div className="gs-menu-grid">
+            {pagedMenu.items.map((item) => (
+              <div className={`gs-menu-card ${!item.available ? 'unavailable' : ''}`} key={item.id}>
+                <div className="gs-menu-card-photo">
+                  <CatalogImage
+                    image={item.image}
+                    variant="thumb"
+                    alt={`Foto de ${item.name}`}
+                    placeholderIcon={<Package aria-hidden="true" className="catalog-image__icon" />}
                   />
-                </label>
-                <div className="gs-cart-total">
-                  <span>Total</span>
-                  <strong>{money(cartTotal)}</strong>
                 </div>
-                <button className="button primary gs-cart-submit" onClick={submitOrder}>
-                  <ClipboardList size={16} /> Enviar pedido a habitacion{' '}
-                  {currentStay?.roomNumber ?? 'Sin asignar'} <ArrowRight size={16} />
-                </button>
-              </>
-            )}
-          </aside>
+                <div className="gs-menu-card-body">
+                  <div>
+                    <strong>{item.name}</strong>
+                    <p>{item.description}</p>
+                    <span className="gs-menu-price">{money(item.price)}</span>
+                  </div>
+                  {item.available ? (
+                    <button className="button small primary" onClick={() => addToCart(item)}>
+                      <Plus size={14} /> Agregar
+                    </button>
+                  ) : (
+                    <span className="status-pill terracotta">No disponible</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Pagination
+            currentPage={pagedMenu.currentPage}
+            totalPages={pagedMenu.totalPages}
+            onPageChange={setMenuPage}
+            label="Paginación del menú de Room Service"
+          />
         </div>
-      </>
+        <aside className="panel gs-rs-cart">
+          <div className="panel-heading">
+            <div>
+              <h3>Mi pedido</h3>
+              <p>Habitacion {currentStay?.roomNumber ?? 'Sin asignar'}</p>
+            </div>
+            {cart.length > 0 && <span className="status-pill warning">{cart.length} items</span>}
+          </div>
+          {cart.length === 0 ? (
+            <div className="hk-empty">
+              <ClipboardList size={22} />
+              <p>Tu pedido está vacío</p>
+              <small>Selecciona productos del menú para agregarlos</small>
+            </div>
+          ) : (
+            <>
+              <div className="gs-cart-list">
+                {cart.map((item) => (
+                  <div className="gs-cart-row" key={item.id}>
+                    <div className="gs-cart-info">
+                      <strong>{item.name}</strong>
+                      <small>{money(item.price)} c/u</small>
+                    </div>
+                    <div className="gs-cart-controls">
+                      <button onClick={() => updateCartQty(item.id, -1)}>
+                        <X size={12} />
+                      </button>
+                      <span>{item.quantity}</span>
+                      <button onClick={() => updateCartQty(item.id, 1)}>
+                        <Plus size={12} />
+                      </button>
+                      <strong className="gs-cart-subtotal">
+                        {money(item.price * item.quantity)}
+                      </strong>
+                      <button className="gs-cart-remove" onClick={() => removeFromCart(item.id)}>
+                        <Ban size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <label className="hk-form-label">
+                Notas del pedido
+                <textarea
+                  className="hk-form-textarea"
+                  value={orderNote}
+                  onChange={(e) => setOrderNote(e.target.value)}
+                  placeholder="Indica preferencias o alergias..."
+                />
+              </label>
+              <div className="gs-cart-total">
+                <span>Total</span>
+                <strong>{money(cartTotal)}</strong>
+              </div>
+              <button className="button primary gs-cart-submit" onClick={submitOrder}>
+                <ClipboardList size={16} /> Enviar pedido a habitacion{' '}
+                {currentStay?.roomNumber ?? 'Sin asignar'} <ArrowRight size={16} />
+              </button>
+            </>
+          )}
+        </aside>
+      </div>
     );
   }
 

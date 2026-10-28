@@ -1441,31 +1441,37 @@ type PrivateWorkspaceProps = {
   onLogout?: () => void;
 };
 
+function getRequestedNav(role: RoleId, initialNav: string): string | undefined {
+  const adminLegacyNav: Record<string, string> = {
+    'Usuarios y roles': scopedNav('admin', 'Gestión de usuarios'),
+    Habitaciones: scopedNav('admin', 'Gestión de habitaciones'),
+    Tarifas: scopedNav('admin', 'Tarifas por temporada'),
+    Servicios: scopedNav('admin', 'Amenidades'),
+    Reportes: scopedNav('admin', 'Resumen operativo'),
+    Inventario: scopedNav('admin', 'Gestión de inventario'),
+  };
+  const legacyNav = role === 'admin' ? adminLegacyNav[initialNav] : undefined;
+  if (legacyNav) return legacyNav;
+
+  const directItem = navByRole[role].find((item) => item.label === initialNav);
+  if (directItem) return directItem.children?.[0]?.nav ?? directItem.nav ?? initialNav;
+
+  const childItem = navByRole[role]
+    .flatMap((item) => item.children ?? [])
+    .find((child) => child.nav === initialNav || child.label === initialNav);
+  if (childItem) return childItem.nav;
+
+  const scopedRoleItem = navByRole.admin
+    .flatMap((item) => item.children ?? [])
+    .find(
+      (child) => child.role === role && (child.nav === initialNav || child.label === initialNav),
+    );
+  return scopedRoleItem?.nav;
+}
+
 function getInitialNav(role: RoleId, initialNav?: string) {
-  if (initialNav) {
-    const adminLegacyNav: Record<string, string> = {
-      'Usuarios y roles': scopedNav('admin', 'Gestión de usuarios'),
-      Habitaciones: scopedNav('admin', 'Gestión de habitaciones'),
-      Tarifas: scopedNav('admin', 'Tarifas por temporada'),
-      Servicios: scopedNav('admin', 'Amenidades'),
-      Reportes: scopedNav('admin', 'Resumen operativo'),
-      Inventario: scopedNav('admin', 'Gestión de inventario'),
-    };
-    if (role === 'admin' && adminLegacyNav[initialNav]) return adminLegacyNav[initialNav];
-    const directItem = navByRole[role].find((item) => item.label === initialNav);
-    if (directItem?.children?.length) return directItem.children[0].nav;
-    if (directItem) return directItem.nav ?? initialNav;
-    const childItem = navByRole[role]
-      .flatMap((item) => item.children ?? [])
-      .find((child) => child.nav === initialNav || child.label === initialNav);
-    if (childItem) return childItem.nav;
-    const scopedRoleItem = navByRole.admin
-      .flatMap((item) => item.children ?? [])
-      .find(
-        (child) => child.role === role && (child.nav === initialNav || child.label === initialNav),
-      );
-    if (scopedRoleItem) return scopedRoleItem.nav;
-  }
+  const requestedNav = initialNav ? getRequestedNav(role, initialNav) : undefined;
+  if (requestedNav) return requestedNav;
   if (role === 'admin') return scopedNav('admin', 'Dashboard');
   if (role === 'guest') return 'Inicio';
   if (role === 'housekeeping') return 'Inicio';

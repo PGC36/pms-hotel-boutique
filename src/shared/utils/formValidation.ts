@@ -45,7 +45,7 @@ export function keepPersonNameCharacters(value: string): string {
 
 /** Conserva únicamente los dígitos ASCII de un documento o teléfono numérico. */
 export function keepDigits(value: string): string {
-  return value.replace(/[^0-9]/g, '');
+  return value.replace(/\D/g, '');
 }
 
 /** Filtro de escritura para montos: dígitos y como máximo un punto con 2 decimales. */
