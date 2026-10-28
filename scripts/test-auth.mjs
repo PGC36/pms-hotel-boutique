@@ -7,6 +7,7 @@ await build({
   entryPoints: ['tests/auth.test.jsx'],
   outfile: '.cache/auth.test.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

@@ -159,6 +159,7 @@ await build({
   },
   outfile: '.cache/http-client-harness.cjs',
   bundle: true,
+  sourcemap: 'inline',
   platform: 'node',
   format: 'cjs',
   packages: 'external',

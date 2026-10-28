@@ -1,0 +1,9 @@
+{
+  "all": true,
+  "exclude-after-remap": true,
+  "src": ["src"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.jsx"],
+  "extension": [".ts", ".tsx", ".js", ".jsx"],
+  "reporter": ["lcov", "text-summary"],
+  "reports-dir": "coverage"
+}

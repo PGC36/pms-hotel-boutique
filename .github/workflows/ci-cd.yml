@@ -18,7 +18,10 @@ jobs:
     name: Validate and test
     runs-on: ubuntu-latest
     env:
-      HAS_SONARQUBE: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' && secrets.SONAR_PROJECT_KEY != '' && secrets.SONAR_ORGANIZATION != '' }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }} # solo SonarQube Cloud
 
     steps:
       - name: Checkout repository
@@ -36,34 +39,78 @@ jobs:
         run: npm ci
 
       - name: Run static checks
+        id: check
         run: npm run check
 
       - name: Run tests and coverage
-        run: npm run test:coverage --if-present
+        id: test
+        run: npm run test:coverage
 
-      - name: SonarQube analysis
-        if: env.HAS_SONARQUBE == 'true'
-        uses: SonarSource/sonarqube-scan-action@v5.0.0
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          args: >-
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-
-      - name: SonarQube quality gate
-        if: env.HAS_SONARQUBE == 'true'
-        uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      - name: SonarQube not configured
-        if: env.HAS_SONARQUBE != 'true'
+      - name: Verificar disponibilidad de SonarQube
+        id: sonar-check
         run: |
-          echo "::notice title=SonarQube omitido::Configura SONAR_TOKEN, SONAR_HOST_URL, SONAR_ORGANIZATION y SONAR_PROJECT_KEY para activar analisis y Quality Gate."
+          if [ -z "$SONAR_TOKEN" ] || [ -z "$SONAR_HOST_URL" ]; then
+            echo "::notice title=SonarQube omitido::SONAR_TOKEN o SONAR_HOST_URL no están configurados. El análisis no se ejecutó; no equivale a un Quality Gate aprobado."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "reason=SONAR_TOKEN o SONAR_HOST_URL no configurados" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if curl -fsS --max-time 20 "${SONAR_HOST_URL%/}/api/system/status" | grep -q '"status":"UP"'; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=SonarQube omitido::${SONAR_HOST_URL} no responde UP desde el runner. El análisis no se ejecutó; no equivale a un Quality Gate aprobado."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "reason=el servidor no responde UP desde el runner" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Análisis SonarQube + Quality Gate
+        id: sonar
+        if: steps.sonar-check.outputs.enabled == 'true'
+        run: |
+          npm run sonar -- \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.token="$SONAR_TOKEN" \
+            ${SONAR_PROJECT_KEY:+-Dsonar.projectKey="$SONAR_PROJECT_KEY"} \
+            ${SONAR_ORGANIZATION:+-Dsonar.organization="$SONAR_ORGANIZATION"} \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
+
+      - name: Resumen
+        if: always()
+        env:
+          CHECK: ${{ steps.check.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          SONAR_ENABLED: ${{ steps.sonar-check.outputs.enabled }}
+          SONAR_REASON: ${{ steps.sonar-check.outputs.reason }}
+          SONAR: ${{ steps.sonar.outcome }}
+        run: |
+          icon() {
+            case "$1" in
+              success) echo "✅ OK" ;;
+              failure) echo "❌ Falló" ;;
+              *) echo "⏭️ No se ejecutó (falló un paso previo)" ;;
+            esac
+          }
+          if [ "$SONAR_ENABLED" = "true" ]; then
+            case "$SONAR" in
+              success) sonar_result="✅ Quality Gate aprobado" ;;
+              failure) sonar_result="❌ Quality Gate rechazado o error de análisis (ver log y SonarQube)" ;;
+              *) sonar_result="⏭️ No se ejecutó (falló un paso previo)" ;;
+            esac
+          elif [ -n "$SONAR_REASON" ]; then
+            sonar_result="⚠️ OMITIDO — ${SONAR_REASON}. No es un Quality Gate aprobado."
+          else
+            sonar_result="⏭️ No se ejecutó (falló un paso previo)"
+          fi
+          {
+            echo "## Frontend CI"
+            echo ""
+            echo "| Etapa | Resultado |"
+            echo "| --- | --- |"
+            echo "| Validaciones (formato, tipos, lint, build, pruebas) | $(icon "$CHECK") |"
+            echo "| Pruebas + cobertura | $(icon "$TEST") |"
+            echo "| SonarQube | ${sonar_result} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   production-build-and-release:
     name: Production build and release
