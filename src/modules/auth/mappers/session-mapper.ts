@@ -15,6 +15,7 @@ const backendPermissionMap: Record<string, Permission[]> = {
 };
 
 function permissionsFromAuthorities(session: AuthSession): Permission[] {
+  if (session.user.role === 'GUEST') return [...rolePermissions.GUEST];
   if (session.authorities.includes('ROLE_ADMIN')) return [...rolePermissions.ADMIN];
   const mapped = session.authorities.flatMap((authority) => backendPermissionMap[authority] ?? []);
   // Rol personalizado: solo lo que conceden sus permisos reales, sin heredar los

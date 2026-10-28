@@ -16,6 +16,7 @@ export interface BookingDTO {
   guest_id: string;
   room_id?: string;
   room_type_id: string;
+  room_type_name?: string;
   rate_id?: string;
   check_in: string;
   check_out: string;

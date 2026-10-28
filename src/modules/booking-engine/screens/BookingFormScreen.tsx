@@ -28,7 +28,12 @@ import type { RoomType } from '@/shared/types/entities/room-type';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights, formatDateGT } from '@/shared/utils/date';
 import { validateBookingCapacity } from '@/shared/utils/bookingCapacity';
-import { validateOptionalText, validateRequiredText } from '@/shared/utils/formValidation';
+import {
+  keepDigits,
+  keepPersonNameCharacters,
+  validateOptionalText,
+  validateRequiredText,
+} from '@/shared/utils/formValidation';
 import {
   EMAIL_MAX_LENGTH,
   NAME_MAX_LENGTH,
@@ -328,6 +333,9 @@ export function BookingFormScreen() {
       DOCUMENT_NUMBER_MAX_LENGTH,
     );
     if (documentError) nextErrors.guestDocumentNumber = documentError;
+    else if (!/^\d+$/.test(guestDocumentNumber.trim())) {
+      nextErrors.guestDocumentNumber = 'El documento solo debe contener números.';
+    }
     if (!selectedRoomType) nextErrors.roomTypeId = 'Selecciona un tipo de habitacion valido.';
     // Entrada desde hoy en Guatemala, salida posterior y como máximo 90 noches.
     const datesError = validateStayDates(checkInKey, checkOutKey);
@@ -488,7 +496,7 @@ export function BookingFormScreen() {
                   maxLength={NAME_MAX_LENGTH}
                   value={guestFirstName}
                   onChange={(event) => {
-                    setGuestFirstName(event.target.value);
+                    setGuestFirstName(keepPersonNameCharacters(event.target.value));
                     setErrors((current) => ({ ...current, guestFirstName: undefined }));
                   }}
                   error={errors.guestFirstName}
@@ -501,7 +509,7 @@ export function BookingFormScreen() {
                   maxLength={NAME_MAX_LENGTH}
                   value={guestLastName}
                   onChange={(event) => {
-                    setGuestLastName(event.target.value);
+                    setGuestLastName(keepPersonNameCharacters(event.target.value));
                     setErrors((current) => ({ ...current, guestLastName: undefined }));
                   }}
                   error={errors.guestLastName}
@@ -555,7 +563,7 @@ export function BookingFormScreen() {
                   maxLength={DOCUMENT_NUMBER_MAX_LENGTH}
                   value={guestDocumentNumber}
                   onChange={(event) => {
-                    setGuestDocumentNumber(event.target.value);
+                    setGuestDocumentNumber(keepDigits(event.target.value));
                     setErrors((current) => ({ ...current, guestDocumentNumber: undefined }));
                   }}
                   error={errors.guestDocumentNumber}

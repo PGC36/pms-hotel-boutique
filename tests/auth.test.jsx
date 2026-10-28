@@ -17,6 +17,7 @@ import { AuthProvider } from '@/modules/auth/components/AuthProvider';
 import { authService, sessionStorageKey } from '@/modules/auth/services/auth-service';
 import { getLoginDestination } from '@/private/routes/navigation';
 import { toSession } from '@/modules/auth/mappers/session-mapper';
+import { hasPermission } from '@/modules/auth/models/session';
 import { authService as sharedAuthService } from '@/services/authService';
 import { httpClient } from '@/services/http-client';
 
@@ -1083,6 +1084,18 @@ test('B3: los roles predefinidos siguen igual y no reciben código personalizado
   assert.equal(session.user.role, 'RECEPTION');
   assert.equal(session.user.roleCode, undefined);
   assert.ok(toSession(session).permissions.includes('front-desk:operate'));
+});
+
+test('un huésped no recibe acceso a recepción aunque el token incluya permisos de reservas', async () => {
+  const staff = await sharedAuthService.login('recepcion@hotelboutique.test', password);
+  const session = toSession({
+    ...staff,
+    user: { ...staff.user, role: 'GUEST' },
+    authorities: ['ROLE_GUEST', 'bookings.read'],
+  });
+  assert.equal(session.role, 'GUEST');
+  assert.equal(hasPermission(session, 'reception:view'), false);
+  assert.deepEqual(session.permissions, ['dashboard:view']);
 });
 
 test('B3: un rol personalizado sin área válida se rechaza sin fallback', async () => {

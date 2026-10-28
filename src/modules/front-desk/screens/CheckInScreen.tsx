@@ -23,7 +23,12 @@ import type {
 import type { Guest, GuestDocumentTypeDto } from '@/shared/types/entities/guest';
 import type { Room } from '@/shared/types/entities/room';
 import { formatDateGT } from '@/shared/utils/date';
-import { normalizePersonNamePart, validatePersonNamePart } from '@/shared/utils/formValidation';
+import {
+  keepDigits,
+  keepPersonNameCharacters,
+  normalizePersonNamePart,
+  validatePersonNamePart,
+} from '@/shared/utils/formValidation';
 import './front-desk.css';
 
 type ScreenState =
@@ -430,7 +435,7 @@ export function CheckInScreen() {
           <Input
             label="Número de documento"
             value={documentNumber}
-            onChange={(event) => setDocumentNumber(event.target.value)}
+            onChange={(event) => setDocumentNumber(keepDigits(event.target.value))}
             placeholder="Ej. 1234 56789 0101"
           />
           <div className="front-desk-form-grid-full front-desk-companion-header">
@@ -457,18 +462,28 @@ export function CheckInScreen() {
               <Input
                 label="Nombre"
                 required
+                maxLength={80}
                 autoComplete="off"
                 value={companion.firstName}
                 error={companionErrors[index]?.firstName ?? undefined}
-                onChange={(event) => updateCompanion(index, { firstName: event.target.value })}
+                onChange={(event) =>
+                  updateCompanion(index, {
+                    firstName: keepPersonNameCharacters(event.target.value),
+                  })
+                }
               />
               <Input
                 label="Apellido"
                 required
+                maxLength={80}
                 autoComplete="off"
                 value={companion.lastName}
                 error={companionErrors[index]?.lastName ?? undefined}
-                onChange={(event) => updateCompanion(index, { lastName: event.target.value })}
+                onChange={(event) =>
+                  updateCompanion(index, {
+                    lastName: keepPersonNameCharacters(event.target.value),
+                  })
+                }
               />
               <Select
                 label="Documento"
@@ -486,8 +501,12 @@ export function CheckInScreen() {
               </Select>
               <Input
                 label="Numero"
+                inputMode="numeric"
+                maxLength={30}
                 value={companion.documentNumber}
-                onChange={(event) => updateCompanion(index, { documentNumber: event.target.value })}
+                onChange={(event) =>
+                  updateCompanion(index, { documentNumber: keepDigits(event.target.value) })
+                }
               />
               <Select
                 label="Tipo"

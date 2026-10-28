@@ -38,6 +38,7 @@ import { serviceRequestService } from '@/services/serviceRequestService';
 import { CatalogImage } from '@/shared/components/CatalogImage';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { Pagination } from '@/shared/components/Pagination';
 import { findPrimaryImage, type MediaImage } from '@/shared/types/entities/media-image';
 import type { Order } from '@/shared/types/entities/order';
 import type { Product } from '@/shared/types/entities/product';
@@ -45,6 +46,7 @@ import type { ServiceRequest } from '@/shared/types/entities/service-request';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights } from '@/shared/utils/date';
+import { paginateItems } from '@/shared/utils/pagination';
 import './GuestContent.css';
 import {
   CancelOrderModal,
@@ -515,6 +517,7 @@ function GuestContentReady({
     'Todas',
   );
   const [menuCat, setMenuCat] = useState('Todos');
+  const [menuPage, setMenuPage] = useState(1);
 
   const detailRes =
     detailResId !== null ? (reservations.find((r) => r.id === detailResId) ?? null) : null;
@@ -1365,9 +1368,6 @@ function GuestContentReady({
                       </span>
                     )}
                     {req.status === 'Completada' && <Check size={16} className="gs-req-done" />}
-                    {req.status === 'Cancelada' && (
-                      <span className="gs-req-cancelled">Cancelada</span>
-                    )}
                   </div>
                 </div>
               ))
@@ -1391,6 +1391,7 @@ function GuestContentReady({
     const categories = [...new Set(initialMenu.map((m) => m.category))];
     const filteredMenu =
       menuCat === 'Todos' ? initialMenu : initialMenu.filter((m) => m.category === menuCat);
+    const pagedMenu = paginateItems(filteredMenu, menuPage);
     return (
       <>
         <div className="gs-rs-layout">
@@ -1410,7 +1411,10 @@ function GuestContentReady({
                 <div className="filter-menu">
                   <button
                     className={menuCat === 'Todos' ? 'active' : ''}
-                    onClick={() => setMenuCat('Todos')}
+                    onClick={() => {
+                      setMenuCat('Todos');
+                      setMenuPage(1);
+                    }}
                   >
                     Todos
                   </button>
@@ -1418,7 +1422,10 @@ function GuestContentReady({
                     <button
                       key={cat}
                       className={menuCat === cat ? 'active' : ''}
-                      onClick={() => setMenuCat(cat)}
+                      onClick={() => {
+                        setMenuCat(cat);
+                        setMenuPage(1);
+                      }}
                     >
                       {cat}
                     </button>
@@ -1427,13 +1434,18 @@ function GuestContentReady({
               </div>
             </div>
             <div className="gs-menu-grid">
-              {filteredMenu.map((item) => (
+              {pagedMenu.items.map((item) => (
                 <div
                   className={`gs-menu-card ${!item.available ? 'unavailable' : ''}`}
                   key={item.id}
                 >
                   <div className="gs-menu-card-photo">
-                    <CatalogImage image={item.image} variant="thumb" alt={`Foto de ${item.name}`} />
+                    <CatalogImage
+                      image={item.image}
+                      variant="thumb"
+                      alt={`Foto de ${item.name}`}
+                      placeholderIcon={<Package aria-hidden="true" className="catalog-image__icon" />}
+                    />
                   </div>
                   <div className="gs-menu-card-body">
                     <div>
@@ -1452,6 +1464,12 @@ function GuestContentReady({
                 </div>
               ))}
             </div>
+            <Pagination
+              currentPage={pagedMenu.currentPage}
+              totalPages={pagedMenu.totalPages}
+              onPageChange={setMenuPage}
+              label="Paginación del menú de Room Service"
+            />
           </div>
           <aside className="panel gs-rs-cart">
             <div className="panel-heading">
@@ -1632,9 +1650,6 @@ function GuestContentReady({
                       </span>
                     )}
                     {req.status === 'Completada' && <Check size={16} className="gs-req-done" />}
-                    {req.status === 'Cancelada' && (
-                      <span className="gs-req-cancelled">Cancelada</span>
-                    )}
                   </div>
                 </div>
               ))

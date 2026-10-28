@@ -2427,6 +2427,15 @@ button {
   font-size: var(--font-size-xs);
   border-top: var(--size-legacy-1) solid var(--color-legacy-eee6de);
 }
+.visitor-footer-links a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.visitor-footer-links a:hover,
+.visitor-footer-links a:focus-visible {
+  color: var(--color-brand-gold-dark);
+}
 
 .visitor-experience {
   max-width: var(--size-legacy-1100);
@@ -2853,6 +2862,57 @@ button {
   }
   .promo-image {
     height: var(--size-legacy-130);
+  }
+}
+
+/* Room Service: rules must follow the desktop grid definitions above. */
+@media (max-width: 600px) {
+  .rs-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rs-layout > *,
+  .rs-order-card,
+  .rs-order-head > div,
+  .rs-order-items > div > span:first-child {
+    min-width: 0;
+  }
+
+  .rs-order-card {
+    padding: var(--space-5);
+  }
+
+  .rs-order-head {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .rs-order-head h3,
+  .rs-order-items > div > span:first-child {
+    overflow-wrap: anywhere;
+  }
+
+  .rs-order-items > div {
+    gap: var(--space-3);
+  }
+
+  .rs-order-items > div > span:last-child {
+    flex-shrink: 0;
+  }
+
+  .rs-order-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .rs-order-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .rs-menu-grid,
+  .rs-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .auth-choice,
@@ -4540,6 +4600,52 @@ button {
   gap: var(--size-legacy-7);
   align-items: center;
   margin-left: auto;
+}
+
+@media (max-width: 600px) {
+  .rs-layout > *,
+  .rs-order-card,
+  .rs-order-head > div,
+  .rs-order-items > div > span:first-child {
+    min-width: 0;
+  }
+
+  .rs-order-card {
+    padding: var(--space-5);
+  }
+
+  .rs-order-head {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .rs-order-head h3,
+  .rs-order-items > div > span:first-child {
+    overflow-wrap: anywhere;
+  }
+
+  .rs-order-items > div {
+    gap: var(--space-3);
+  }
+
+  .rs-order-items > div > span:last-child {
+    flex-shrink: 0;
+  }
+
+  .rs-order-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .rs-order-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .rs-menu-grid,
+  .rs-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .rs-side-panel {
@@ -8917,4 +9023,28 @@ button {
     height: var(--size-legacy-150);
     gap: var(--space-3);
   }
+}
+
+@media (max-width: 600px) {
+  .rs-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rs-layout > *,
+  .rs-order-card,
+  .rs-order-head > div,
+  .rs-order-items > div > span:first-child {
+    min-width: 0;
+  }
+
+  .rs-order-card { padding: var(--space-5); }
+  .rs-order-head { flex-wrap: wrap; gap: var(--space-3); }
+  .rs-order-head h3,
+  .rs-order-items > div > span:first-child { overflow-wrap: anywhere; }
+  .rs-order-items > div { gap: var(--space-3); }
+  .rs-order-items > div > span:last-child { flex-shrink: 0; }
+  .rs-order-actions { width: 100%; margin-left: 0; }
+  .rs-order-actions .button { flex: 1 1 auto; justify-content: center; }
+  .rs-menu-grid,
+  .rs-inventory-grid { grid-template-columns: minmax(0, 1fr); }
 }

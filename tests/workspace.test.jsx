@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, afterEach, mock } from 'node:test';
 import { create, act } from 'react-test-renderer';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import {
   ReservationEditModal,
   ReservationFormModal,
@@ -2539,12 +2539,19 @@ function installReceptionBackend({
 }
 
 let recBackend;
+function ReceptionLocationProbe() {
+  const location = useLocation();
+  return <span id="reception-location-search">{location.pathname}{location.search}</span>;
+}
 async function mountReception(options) {
   recBackend = installReceptionBackend(options);
   await act(async () => {
     view = create(
-      <MemoryRouter>
-        <PrivateWorkspace role="reception" sessionName="Recepción Test" />
+      <MemoryRouter initialEntries={[options?.initialEntry ?? '/pms/reception']}>
+        <>
+          <ReceptionLocationProbe />
+          <PrivateWorkspace role="reception" sessionName="Recepción Test" />
+        </>
       </MemoryRouter>,
     );
   });
@@ -2573,6 +2580,47 @@ test('recepción: con sus permisos reales conserva todas sus secciones', async (
     'Habitaciones',
     'Caja',
   ]);
+});
+
+test('recepción: una recarga con la vista Reservas conserva la pestaña activa', async () => {
+  await mountReception();
+  const reservationButton = view.root.findAll(
+    (node) => node.type === 'button' && hasClass(node, 'nav-item') && text(node) === 'Reservas',
+  )[0];
+  assert.ok(reservationButton);
+  await act(async () => {
+    reservationButton.props.onClick();
+    await Promise.resolve();
+  });
+  await settle(100);
+  const location = text(view.root.findByProps({ id: 'reception-location-search' }));
+  assert.equal(
+    new URLSearchParams(location.split('?')[1]).get('view'),
+    'reception:Reservas',
+    `URL ${location}; nav visible: ${JSON.stringify(navLabels())}`,
+  );
+  const activeReservations = view.root.findAll(
+    (node) =>
+      node.type === 'button' &&
+      hasClass(node, 'nav-item') &&
+      text(node) === 'Reservas' &&
+      hasClass(node, 'active'),
+  );
+  assert.ok(activeReservations.length > 0, `pestaña activa; URL ${location}`);
+  act(() => view.unmount());
+  view = undefined;
+  await mountReception({ initialEntry: location });
+  const reloadedReservations = view.root.findAll(
+    (node) =>
+      node.type === 'button' &&
+      hasClass(node, 'nav-item') &&
+      text(node) === 'Reservas' &&
+      hasClass(node, 'active'),
+  );
+  assert.ok(
+    reloadedReservations.length > 0,
+    `URL ${location}; nav visible: ${JSON.stringify(navLabels())}; clases: ${reloadedReservations.map((button) => button.props.className).join(', ')}`,
+  );
 });
 
 test('recepción: consulta finanzas con sus permisos y no consulta solicitudes internas', async () => {
@@ -3243,14 +3291,12 @@ const VALID_NAMES = [
   'Muñoz',
   'De la Cruz',
   'María-José de León',
-  'Ma. José',
   'Xiomara Ixchel',
   // Internacionales
   "O'Connor",
   'O\u2019Connor',
   'Jean-Pierre',
   "D'Ángelo",
-  'St. John',
   'Nguyễn Văn An',
   'Zoë',
   'Øyvind',
@@ -3263,6 +3309,8 @@ const INVALID_NAMES = [
   'J0sé',
   '@na',
   'Ana!',
+    'Ma. José',
+    'St. John',
   'Ana_Lucía',
   'Ana/Lucía',
   '<script>',
@@ -3302,8 +3350,11 @@ test('nueva reserva · nombres: mínimo 3 letras reales', () => {
   assert.equal(validatePersonName('Jo', 'nombre'), 'Mínimo 3 letras.');
   assert.equal(validatePersonName('Li', 'apellido'), 'Mínimo 3 letras.');
   // Una o dos letras con separadores: los separadores no cuentan como letras.
-  for (const name of ['A.', 'J.R.', 'A-B', 'A B', 'Jo.', '  s  ', 'A. B.']) {
+  for (const name of ['A-B', 'A B', '  s  ']) {
     assert.equal(validatePersonName(name, 'nombre'), 'Mínimo 3 letras.', name);
+  }
+  for (const name of ['A.', 'J.R.', 'Jo.', 'A. B.']) {
+    assert.equal(validatePersonName(name, 'nombre'), 'Solo se permiten letras.', name);
   }
   // Separadores sueltos o en un extremo: se rechazan por formato.
   for (const name of ['-', "'", '.', '- -', "O'", '-A', 'A-']) {
@@ -3389,7 +3440,7 @@ test('nueva reserva · correo: acepta formatos válidos que el backend también 
   assert.match(validateEmail('ana@localhost'), /formato válido/);
 });
 
-test('nueva reserva: rechaza nombres con dígitos y guarda los nombres normalizados', () => {
+test('nueva reserva: filtra caracteres no alfabéticos y guarda los nombres normalizados', () => {
   const saved = renderReservationForm();
   fillGuestAndRoom();
   setDates(IN_5, IN_7);
@@ -3398,34 +3449,42 @@ test('nueva reserva: rechaza nombres con dígitos y guarda los nombres normaliza
   assert.equal(lastName.props.maxLength, 20);
   typeInto(name, 'Ana2');
   typeInto(lastName, 'L@pez');
+  assert.equal(name.props.value, 'Ana');
+  assert.equal(lastName.props.value, 'Lpez');
   openSummary();
-  assert.ok(formIsOpen(), 'no avanza al resumen');
-  assert.equal(
-    fieldErrors().filter((error) => error === 'Solo se permiten letras.').length,
-    2,
-    'un error en nombre y otro en apellido',
-  );
+  assert.ok(!formIsOpen(), 'con los caracteres inválidos filtrados, puede avanzar');
+  assert.match(text(view.root), /Ana Lpez/);
+  act(() => buttons('Confirmar reserva')[0].props.onClick());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].guest.name, 'Ana');
+  assert.equal(saved[0].guest.lastName, 'Lpez');
+  act(() => view.unmount());
 
-  typeInto(name, '');
+  const nextSaved = renderReservationForm();
+  fillGuestAndRoom();
+  setDates(IN_5, IN_7);
+  const [nextName] = textInputs();
+
+  typeInto(nextName, '');
   openSummary();
   assert.ok(fieldErrors().includes('Ingresa el nombre.'));
 
   // "s" / "w": una sola letra no permite avanzar al resumen.
-  typeInto(name, 's');
-  typeInto(lastName, 'w');
+  typeInto(nextName, 's');
+  typeInto(textInputs()[1], 'w');
   openSummary();
   assert.ok(formIsOpen(), 'no avanza al resumen con "s" / "w"');
   assert.equal(fieldErrors().filter((error) => error === 'Mínimo 3 letras.').length, 2);
-  assert.equal(saved.length, 0);
+  assert.equal(nextSaved.length, 0);
 
-  typeInto(name, '  José   María ');
-  typeInto(lastName, 'de la Cruz');
+  typeInto(nextName, '  José   María ');
+  typeInto(textInputs()[1], 'de la Cruz');
   openSummary();
   assert.match(text(view.root), /José María de la Cruz/);
   act(() => buttons('Confirmar reserva')[0].props.onClick());
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].guest.name, 'José María');
-  assert.equal(saved[0].guest.lastName, 'de la Cruz', 'conserva las minúsculas originales');
+  assert.equal(nextSaved.length, 1);
+  assert.equal(nextSaved[0].guest.name, 'José María');
+  assert.equal(nextSaved[0].guest.lastName, 'de la Cruz', 'conserva las minúsculas originales');
 });
 
 test('nueva reserva: al cambiar el día en Guatemala, valida con la fecha nueva al guardar', () => {
@@ -4397,30 +4456,33 @@ test('check-in (recepción): documento, acompañantes con campos separados, comp
     act(() => labelledControls('Edad *')[0].props.onChange({ target: { value: 'diez' } }));
     assert.equal(labelledControls('Edad *')[0].props.value, '', 'la edad solo admite dígitos');
     fillCheckinCompanion({ firstName: 'Juan💻', lastName: '', documentNumber: '', age: '' });
+    assert.equal(labelledControls('Nombre *')[0].props.value, 'Juan');
     assert.deepEqual(shownErrors(), [
       'El número de documento es obligatorio.',
-      'Solo se permiten letras, con espacios, guiones o apóstrofos entre ellas.',
       'Ingresa el apellido.',
       'Ingresa el número de documento.',
       'Ingresa la edad.',
     ]);
 
-    fillCheckinCompanion({ firstName: 'María-José', lastName: "O'Connor", documentNumber: 'P-1' });
+    fillCheckinCompanion({ firstName: 'Ana', lastName: 'Lopez', documentNumber: '77', age: '111' });
+    assert.match(text(view.root), /La edad no puede superar 110 años/);
+
+    fillCheckinCompanion({ firstName: 'María-José', lastName: "O'Connor", documentNumber: '1' });
     // Bebé: la edad 0 es válida y no se confunde con un campo vacío.
     fillCheckinCompanion({
       firstName: 'Li',
       lastName: 'Núñez',
-      documentNumber: 'P-2',
+      documentNumber: '2',
       age: '0',
       guestType: 'child',
     });
-    assert.match(text(view.root), /María-José O'Connor · Adulto · P-1 · 30 años/);
-    assert.match(text(view.root), /Li Núñez · Menor · P-2 · 0 años/);
+    assert.match(text(view.root), /María-José O'Connor · Adulto · 1 · 30 años/);
+    assert.match(text(view.root), /Li Núñez · Menor · 2 · 0 años/);
 
     typeIn(labelledControls('Fecha de nacimiento')[0], nextCalendarDay(hotelToday()));
     typeIn(labelledControls('Número de documento *')[0], '  1234567890101 ');
     await act(async () => confirm().props.onClick());
-    assert.deepEqual(shownErrors(), ['La fecha de nacimiento no puede ser futura.']);
+    assert.deepEqual(shownErrors(), ['La edad debe estar entre 0 y 110 años.']);
 
     typeIn(labelledControls('Fecha de nacimiento')[0], '1990-05-04');
     await act(async () => confirm().props.onClick());
@@ -4466,7 +4528,7 @@ test('check-in (recepción): la composición debe coincidir con adultos y menore
             bookingId: '33333333-3333-4333-8333-333333333333',
             adults: 2,
             children: 0,
-            guest: { ...checkinReservation().guest, docNumber: 'DPI-1' },
+            guest: { ...checkinReservation().guest, docNumber: '1' },
           })}
           rooms={rooms}
           hasConflict={() => false}
@@ -4484,9 +4546,42 @@ test('check-in (recepción): la composición debe coincidir con adultos y menore
       /La reserva declara 2 adultos y 0 menores: registra 1 acompañante adulto y 0 menores \(ahora hay 0 y 0\)/,
     );
     assert.equal(checkins.length, 0);
-    fillCheckinCompanion({ firstName: 'Mario', lastName: 'López', documentNumber: 'P-9' });
+    fillCheckinCompanion({ firstName: 'Mario', lastName: 'López', documentNumber: '9' });
     await act(async () => buttons('check-in')[0].props.onClick());
     assert.equal(checkins.length, 1, 'con la composición correcta sí se envía');
+  } finally {
+    globalThis.fetch = originalFetchForTest;
+  }
+});
+
+test('check-in (recepción): permite una reserva de una persona sin acompañantes', async () => {
+  const checkins = [];
+  const originalFetchForTest = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    act(() => {
+      view = create(
+        <CheckinModal
+          reservation={checkinReservation({
+            bookingId: '44444444-4444-4444-8444-444444444444',
+            adults: 1,
+            children: 0,
+          })}
+          rooms={rooms}
+          hasConflict={() => false}
+          isRoomBlocked={() => false}
+          onClose={() => {}}
+          onCheckin={(...args) => checkins.push(args)}
+        />,
+      );
+    });
+    await settle(700);
+    typeIn(labelledControls('Número de documento *')[0], '12345678');
+    await act(async () => buttons('check-in')[0].props.onClick());
+    assert.equal(checkins.length, 1);
+    assert.deepEqual(checkins[0][2], []);
+    assert.doesNotMatch(text(view.root), /acompañante adulto/);
   } finally {
     globalThis.fetch = originalFetchForTest;
   }
@@ -4547,12 +4642,12 @@ test('usuarios (administración): nombre y apellido separados, correo, contrase�
   ]);
   typeIn(formControl('Nombre'), 'J4ne');
   typeIn(formControl('Apellido'), 'Doe@');
+  assert.equal(formControl('Nombre').props.value, 'Jne');
+  assert.equal(formControl('Apellido').props.value, 'Doe');
   typeIn(formControl('Correo electrónico'), 'ana@');
   typeIn(formControl('Contraseña temporal'), '1234567');
   submit();
-  const [firstNameError, lastNameError, emailError, passwordError] = shownErrors();
-  assert.match(firstNameError, /Solo se permiten letras/);
-  assert.match(lastNameError, /Solo se permiten letras/);
+  const [emailError, passwordError] = shownErrors();
   assert.match(emailError, /formato válido/);
   assert.equal(passwordError, 'Mínimo 8 caracteres.');
   assert.equal(formControl('Correo electrónico').props['aria-describedby'], 'user-email-error');
@@ -4604,10 +4699,11 @@ test('usuarios (administración): un nombre guardado que no cumple las reglas no
   assert.equal(saved[0].status, 'Inactivo');
 
   typeIn(formControl('Nombre'), 'Wu 3');
+  assert.equal(formControl('Nombre').props.value, 'Wu ');
   await act(async () => buttons('Guardar cambios')[0].props.onClick());
-  assert.equal(shownErrors().length, 1, 'un nombre editado sí se valida');
-  assert.match(shownErrors()[0], /Solo se permiten letras/);
-  assert.equal(saved.length, 1);
+  assert.equal(shownErrors().length, 0, 'el filtro elimina los dígitos antes de guardar');
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].firstName, 'Wu');
 });
 
 test('usuarios (administración): al editar la contraseña es opcional y solo se envía si se escribe', async () => {

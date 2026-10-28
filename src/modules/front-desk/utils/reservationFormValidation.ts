@@ -70,12 +70,11 @@ const EMAIL_DOMAIN_LABEL =
   /^[A-Za-z0-9_\u0080-\uFFFF](?:[A-Za-z0-9_\u0080-\uFFFF-]*[A-Za-z0-9_\u0080-\uFFFF])?$/u;
 const WHOLE_NUMBER = /^\d+$/;
 /**
- * Nombre o apellido ya normalizado: empieza con letra (cualquier alfabeto, con
- * sus marcas diacríticas); entre palabras un solo separador (espacio, guion,
- * apóstrofo recto o tipográfico, o punto opcionalmente seguido de espacio);
- * termina en letra o punto ("Ma. José", "Jr.").
+ * Nombre o apellido ya normalizado: letras Unicode y marcas diacríticas;
+ * permite espacios, guiones y apóstrofos entre palabras. No acepta números,
+ * puntos ni otros caracteres especiales.
  */
-const PERSON_NAME = /^\p{L}[\p{L}\p{M}]*(?:(?:[ '\u2019-]|\. ?)\p{L}[\p{L}\p{M}]*)*\.?$/u;
+const PERSON_NAME = /^\p{L}[\p{L}\p{M}]*(?:[ '\u2019-]\p{L}[\p{L}\p{M}]*)*$/u;
 
 /**
  * Fecha civil de hoy en Guatemala (YYYY-MM-DD), independiente de la zona

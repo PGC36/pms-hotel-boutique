@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   CalendarDays,
@@ -158,6 +158,8 @@ export function SearchScreen() {
   const [rangeError, setRangeError] = useState<string | undefined>();
   const [hasSearched, setHasSearched] = useState(false);
   const [guests, setGuests] = useState('2 adultos');
+  const availabilityRequest = useRef(0);
+  const [searchDirty, setSearchDirty] = useState(false);
   const [amenitiesState, setAmenitiesState] = useState<AmenitiesState>({ status: 'idle' });
   const [promotionsState, setPromotionsState] = useState<PromotionsState>({ status: 'idle' });
 
@@ -234,6 +236,8 @@ export function SearchScreen() {
     setError(null);
     setStatus('loading');
     setHasSearched(true);
+    setSearchDirty(false);
+    const request = ++availabilityRequest.current;
 
     try {
       const guestCounts = parseGuests(guests);
@@ -243,24 +247,35 @@ export function SearchScreen() {
         adults: guestCounts.adults,
         children: guestCounts.children,
       });
+      if (request !== availabilityRequest.current) return;
 
       setResults(availableRoomTypes);
       setSearchParams({ checkIn: dateKey(range.start), checkOut: dateKey(range.end) });
       setStatus('success');
     } catch (cause) {
+      if (request !== availabilityRequest.current) return;
       setError(cause instanceof Error ? cause.message : 'No fue posible buscar disponibilidad.');
       setStatus('error');
     }
   }, [guests, range, setSearchParams]);
 
+  const invalidateAvailability = () => {
+    availabilityRequest.current += 1;
+    if (hasSearched) setSearchDirty(true);
+    setStatus('idle');
+    setResults([]);
+  };
+
   const nights = isCompleteStayRange(range) ? calculateNights(range.start, range.end) : 0;
   const guestCounts = parseGuests(guests);
   // La disponibilidad no trae imágenes: se toman del catálogo público por id.
   const imagesByRoomTypeId = new Map(roomTypes.map((roomType) => [roomType.id, roomType.images]));
-  const roomCards = hasSearched
-    ? results
-    : roomTypes.map((roomType) => ({ roomType, availableRooms: undefined, rate: undefined }));
-  const publicTab = ['amenidades', 'promociones', 'politicas'].includes(
+  const roomCards = searchDirty
+    ? []
+    : hasSearched
+      ? results
+      : roomTypes.map((roomType) => ({ roomType, availableRooms: undefined, rate: undefined }));
+  const publicTab = ['amenidades', 'promociones', 'politicas', 'privacidad', 'contacto'].includes(
     location.hash.replace('#', ''),
   )
     ? location.hash.replace('#', '')
@@ -343,6 +358,7 @@ export function SearchScreen() {
               aria-invalid={rangeError ? true : undefined}
               aria-describedby={rangeError ? 'search-range-error' : undefined}
               onChange={(event) => {
+                invalidateAvailability();
                 setRange((current) => ({ ...current, start: parseDateKey(event.target.value) }));
                 setRangeError(undefined);
               }}
@@ -357,6 +373,7 @@ export function SearchScreen() {
               aria-invalid={rangeError ? true : undefined}
               aria-describedby={rangeError ? 'search-range-error' : undefined}
               onChange={(event) => {
+                invalidateAvailability();
                 setRange((current) => ({ ...current, end: parseDateKey(event.target.value) }));
                 setRangeError(undefined);
               }}
@@ -364,7 +381,10 @@ export function SearchScreen() {
           </label>
           <label>
             <span>Huéspedes</span>
-            <select value={guests} onChange={(event) => setGuests(event.target.value)}>
+            <select value={guests} onChange={(event) => {
+              invalidateAvailability();
+              setGuests(event.target.value);
+            }}>
               <option>1 adulto</option>
               <option>2 adultos</option>
               <option>2 adultos - 1 niño</option>
@@ -396,7 +416,12 @@ export function SearchScreen() {
       <div className="visitor-content">
         {publicTab === 'habitaciones' ? (
           <>
-            {hasSearched && status === 'success' ? (
+            {searchDirty ? (
+              <p className="search-error" role="status">
+                Cambiaron los datos de la búsqueda. Presiona Buscar disponibilidad para ver resultados actualizados.
+              </p>
+            ) : null}
+            {hasSearched && !searchDirty && status === 'success' ? (
               <div className="search-results-bar">
                 <div className="search-results-info">
                   <strong>
@@ -435,7 +460,7 @@ export function SearchScreen() {
               />
             ) : null}
 
-            {showcaseStatus === 'success' && hasSearched && results.length === 0 ? (
+            {showcaseStatus === 'success' && hasSearched && !searchDirty && status === 'success' && results.length === 0 ? (
               <EmptyState
                 title="Sin disponibilidad"
                 description="No encontramos tipos de habitación disponibles para esas fechas."
@@ -657,6 +682,20 @@ export function SearchScreen() {
             </div>
           </section>
         ) : null}
+        {publicTab === 'privacidad' ? (
+          <section className="booking-public-section booking-policy-section" id="privacidad">
+            <p className="eyebrow">Información personal</p>
+            <h2>Privacidad</h2>
+            <p>Los datos solicitados durante la reserva permiten identificar al huésped y gestionar su estancia. Para consultas sobre tus datos, comunícate con la recepción del hotel.</p>
+          </section>
+        ) : null}
+        {publicTab === 'contacto' ? (
+          <section className="booking-public-section booking-policy-section" id="contacto">
+            <p className="eyebrow">Estamos para ayudarte</p>
+            <h2>Contacto</h2>
+            <p>Si tienes preguntas sobre tu reserva, comunícate con la recepción del hotel mediante los datos de contacto incluidos en tu confirmación.</p>
+          </section>
+        ) : null}
       </div>
 
       <section className="visitor-experience booking-experience">
@@ -689,7 +728,9 @@ export function SearchScreen() {
 
       <footer className="visitor-footer">
         <span>© 2024 Aurora Hotel Group</span>
-        <span>Privacidad · Términos · Contacto</span>
+        <span className="visitor-footer-links">
+          <Link to="/#privacidad">Privacidad</Link> · <Link to="/#politicas">Términos</Link> · <Link to="/#contacto">Contacto</Link>
+        </span>
       </footer>
     </section>
   );

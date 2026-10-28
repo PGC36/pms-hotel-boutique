@@ -249,7 +249,7 @@ test('POST /public/bookings no envía campos que decide el backend', async () =>
       lastName: 'Lopez',
       email: 'ana@aurora.test',
       documentType: 'passport',
-      documentNumber: 'P-1',
+      documentNumber: '1',
     },
   });
 
@@ -523,7 +523,7 @@ test('BookingFormScreen: sin disponibilidad muestra mensaje y no deja continuar'
     fieldInput('Apellido').props.onChange({ target: { value: 'Lopez' } });
     fieldInput('Correo').props.onChange({ target: { value: 'ana@aurora.test' } });
     fieldInput('Telefono').props.onChange({ target: { value: '+502 5555 0000' } });
-    fieldInput('Numero de documento').props.onChange({ target: { value: 'P-1' } });
+    fieldInput('Numero de documento').props.onChange({ target: { value: '1' } });
   });
   await act(async () => {
     view.root.findByType('form').props.onSubmit({ preventDefault() {} });
@@ -707,7 +707,7 @@ test('BookingFormScreen: datos del huésped con las reglas aprobadas; con errore
   await settle(1600);
 
   act(() => {
-    fieldInput('Nombre').props.onChange({ target: { value: 'J0hn' } });
+    fieldInput('Nombre').props.onChange({ target: { value: 'J0' } });
     fieldInput('Apellido').props.onChange({ target: { value: 'Li' } });
     fieldInput('Correo').props.onChange({ target: { value: 'ana@' } });
     fieldInput('Telefono').props.onChange({ target: { value: '+502 5555-00' } });
@@ -721,7 +721,7 @@ test('BookingFormScreen: datos del huésped con las reglas aprobadas; con errore
 
   await submitBookingForm();
   const errors = visibleFieldErrors();
-  assert.ok(errors.includes('Solo se permiten letras.'), errors.join(' | '));
+  assert.equal(fieldInput('Nombre').props.value, 'J', 'el filtro elimina dígitos al escribir');
   assert.ok(errors.includes('Mínimo 3 letras.'), errors.join(' | '));
   assert.ok(
     errors.some((error) => /formato válido/.test(error)),
@@ -745,7 +745,7 @@ test('BookingFormScreen: entrada anterior a hoy o más de 90 noches no avanza', 
       fieldInput('Apellido').props.onChange({ target: { value: 'López' } });
       fieldInput('Correo').props.onChange({ target: { value: 'ana@aurora.test' } });
       fieldInput('Telefono').props.onChange({ target: { value: '55550000' } });
-      fieldInput('Numero de documento').props.onChange({ target: { value: 'P-1' } });
+      fieldInput('Numero de documento').props.onChange({ target: { value: '1' } });
     });
 
   renderAt(
@@ -801,4 +801,26 @@ test('SearchScreen: entrada anterior a hoy se informa con un error accesible y n
   assert.equal(checkIn.props['aria-describedby'], 'search-range-error');
   const after = requests.filter((request) => pathOf(request) === '/public/availability').length;
   assert.equal(after, before, 'no consulta disponibilidad con fechas inválidas');
+});
+
+test('SearchScreen: cambiar huéspedes invalida los resultados de la consulta anterior', async () => {
+  handler = (request) => {
+    const path = pathOf(request);
+    if (path === '/public/room-types') return json([apiRoomType]);
+    if (path === '/public/rates') return json([openEndedRate]);
+    if (path === '/public/availability') return json(availabilityResponse([availabilityResult()]));
+    return json([]);
+  };
+  renderAt(`/?checkIn=${CHECK_IN}&checkOut=${CHECK_OUT}`, '/', <SearchScreen />);
+  await settle(1000);
+  await act(async () => {
+    view.root.findByProps({ id: 'buscar' }).props.onSubmit({ preventDefault() {} });
+  });
+  await settle(1000);
+  assert.match(text(view.toJSON()), /3 disponibles/);
+  act(() => {
+    view.root.findByType('select').props.onChange({ target: { value: '4 huéspedes' } });
+  });
+  assert.doesNotMatch(text(view.toJSON()), /3 disponibles/);
+  assert.match(text(view.toJSON()), /Presiona Buscar disponibilidad/);
 });
