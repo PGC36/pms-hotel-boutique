@@ -160,6 +160,13 @@ _Ignore duplication and coverage on small changes_: cobertura y duplicación se
 ignoran en cambios de menos de 20 líneas nuevas. SonarQube Cloud analiza PR y
 ramas: en GitHub Actions el scanner detecta el PR solo.
 
+**Límite de líneas:** el plan gratuito permite 50 000 líneas privadas por
+organización, sumando los tres proyectos (web, backend y móvil). Si un análisis
+lo supera, SonarQube Cloud lo rechaza al procesarlo (`CE Task finished
+abnormally with status: FAILED`; el motivo está en el `errorMessage` de
+`/api/ce/task?id=<id>`). Para mantenerse debajo del límite, los archivos `.css`
+están en `sonar.exclusions` y no se analizan.
+
 Análisis manual en local contra Cloud:
 
 ```bash
