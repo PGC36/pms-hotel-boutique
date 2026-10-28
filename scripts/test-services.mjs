@@ -2042,7 +2042,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
           first_name: 'Marcos',
           last_name: 'Rodas',
           document_type: 'national_id',
-          document_number: '1234 56789 0101',
+          document_number: '1234567890101',
           guest_type: 'adult',
         },
       ]),
@@ -2060,7 +2060,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
     firstName: 'Marcos',
     lastName: 'Rodas',
     documentType: 'national_id',
-    documentNumber: '1234 56789 0101',
+    documentNumber: '1234567890101',
     guestType: 'adult',
   });
 
@@ -2073,7 +2073,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
           first_name: 'Marco',
           last_name: 'Rodas',
           document_type: 'national_id',
-          document_number: '1234 56789 0101',
+          document_number: '1234567890101',
           guest_type: 'adult',
         },
       ]),
@@ -2091,7 +2091,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
     firstName: 'Marco',
     lastName: 'Rodas',
     documentType: 'national_id',
-    documentNumber: '1234 56789 0101',
+    documentNumber: '1234567890101',
     guestType: 'adult',
   });
 
@@ -2117,7 +2117,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
           first_name: 'Marcos',
           last_name: 'Rodas',
           document_type: 'national_id',
-          document_number: '1234 56789 0101',
+          document_number: '1234567890101',
           guest_type: 'adult',
         },
       ]),
@@ -2132,7 +2132,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
           first_name: 'Sofia',
           last_name: 'Rodas',
           document_type: 'passport',
-          document_number: 'P-123',
+          document_number: '123',
           guest_type: 'adult',
         },
       ]),

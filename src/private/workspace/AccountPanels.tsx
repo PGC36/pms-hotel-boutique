@@ -5,6 +5,7 @@ import {
   type AccountPreferences,
   type AccountProfile,
 } from './accountSettings';
+import { keepPersonNameCharacters } from '@/shared/utils/formValidation';
 
 type AccountProfileModalProps = {
   name: string;
@@ -129,7 +130,7 @@ export function AccountProfileModal({
             <input
               className="hk-form-select"
               value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
+              onChange={(event) => setDisplayName(keepPersonNameCharacters(event.target.value))}
               maxLength={80}
             />
           </label>

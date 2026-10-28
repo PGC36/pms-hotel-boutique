@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
@@ -98,6 +98,7 @@ import { LoadingState } from '@/shared/components/LoadingState';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights } from '@/shared/utils/date';
+import { keepDigits, keepPersonNameCharacters } from '@/shared/utils/formValidation';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
 import type {
   OrderStatus as DomainOrderStatus,
@@ -431,9 +432,13 @@ const formatDbTime = (value?: Date) => {
   return value.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
-const getRoomTypeLabel = (roomTypeId: string | undefined, roomTypes: RoomTypeModel[]): RoomType => {
+const getRoomTypeLabel = (
+  roomTypeId: string | undefined,
+  roomTypes: RoomTypeModel[],
+  roomTypeName?: string,
+): RoomType => {
   const roomType = roomTypes.find((type) => type.id === roomTypeId);
-  const name = roomType?.name.toLowerCase() ?? '';
+  const name = (roomTypeName ?? roomType?.name ?? '').toLowerCase();
   if (name.includes('suite')) return 'Suite';
   if (name.includes('deluxe')) return 'Deluxe';
   return 'Estándar';
@@ -1067,7 +1072,7 @@ async function loadWorkspaceData(
       checkIn: toDtoCalendarDate(booking.checkIn),
       checkOut: toDtoCalendarDate(booking.checkOut),
       roomNumber: room?.roomNumber ?? 'Sin asignar',
-      roomType: getRoomTypeLabel(booking.roomTypeId, roomTypes),
+      roomType: getRoomTypeLabel(booking.roomTypeId, roomTypes, booking.roomTypeName),
       rate: centsToAmount(booking.totalAmountCents) / nights,
       guestCount: booking.adults + booking.children,
       adults: booking.adults,
@@ -1436,25 +1441,37 @@ type PrivateWorkspaceProps = {
   onLogout?: () => void;
 };
 
+function getRequestedNav(role: RoleId, initialNav: string): string | undefined {
+  const adminLegacyNav: Record<string, string> = {
+    'Usuarios y roles': scopedNav('admin', 'Gestión de usuarios'),
+    Habitaciones: scopedNav('admin', 'Gestión de habitaciones'),
+    Tarifas: scopedNav('admin', 'Tarifas por temporada'),
+    Servicios: scopedNav('admin', 'Amenidades'),
+    Reportes: scopedNav('admin', 'Resumen operativo'),
+    Inventario: scopedNav('admin', 'Gestión de inventario'),
+  };
+  const legacyNav = role === 'admin' ? adminLegacyNav[initialNav] : undefined;
+  if (legacyNav) return legacyNav;
+
+  const directItem = navByRole[role].find((item) => item.label === initialNav);
+  if (directItem) return directItem.children?.[0]?.nav ?? directItem.nav ?? initialNav;
+
+  const childItem = navByRole[role]
+    .flatMap((item) => item.children ?? [])
+    .find((child) => child.nav === initialNav || child.label === initialNav);
+  if (childItem) return childItem.nav;
+
+  const scopedRoleItem = navByRole.admin
+    .flatMap((item) => item.children ?? [])
+    .find(
+      (child) => child.role === role && (child.nav === initialNav || child.label === initialNav),
+    );
+  return scopedRoleItem?.nav;
+}
+
 function getInitialNav(role: RoleId, initialNav?: string) {
-  if (initialNav) {
-    const adminLegacyNav: Record<string, string> = {
-      'Usuarios y roles': scopedNav('admin', 'Gestión de usuarios'),
-      Habitaciones: scopedNav('admin', 'Gestión de habitaciones'),
-      Tarifas: scopedNav('admin', 'Tarifas por temporada'),
-      Servicios: scopedNav('admin', 'Amenidades'),
-      Reportes: scopedNav('admin', 'Resumen operativo'),
-      Inventario: scopedNav('admin', 'Gestión de inventario'),
-    };
-    if (role === 'admin' && adminLegacyNav[initialNav]) return adminLegacyNav[initialNav];
-    const directItem = navByRole[role].find((item) => item.label === initialNav);
-    if (directItem?.children?.length) return directItem.children[0].nav;
-    if (directItem) return directItem.nav ?? initialNav;
-    const childItem = navByRole[role]
-      .flatMap((item) => item.children ?? [])
-      .find((child) => child.nav === initialNav || child.label === initialNav);
-    if (childItem) return childItem.nav;
-  }
+  const requestedNav = initialNav ? getRequestedNav(role, initialNav) : undefined;
+  if (requestedNav) return requestedNav;
   if (role === 'admin') return scopedNav('admin', 'Dashboard');
   if (role === 'guest') return 'Inicio';
   if (role === 'housekeeping') return 'Inicio';
@@ -1643,7 +1660,11 @@ function PrivateWorkspaceReady({
     workspaceRole,
     initialNav ?? new URLSearchParams(location.search).get('view') ?? undefined,
   );
-  const [activeNav, setActiveNavState] = useState(() => initialWorkspaceNav);
+  const [activeNavState, setActiveNavState] = useState(() => initialWorkspaceNav);
+  const activeNav = useMemo(() => {
+    const requestedView = new URLSearchParams(location.search).get('view');
+    return requestedView ? getInitialNav(workspaceRole, requestedView) : activeNavState;
+  }, [activeNavState, location.search, workspaceRole]);
   const [expandedNav, setExpandedNav] = useState(() =>
     getDefaultExpandedNav(workspaceRole, initialWorkspaceNav),
   );
@@ -1881,6 +1902,13 @@ function PrivateWorkspaceReady({
       { replace: true },
     );
   };
+  useEffect(() => {
+    const requestedView = new URLSearchParams(location.search).get('view');
+    if (!requestedView) return;
+    const nextNav = getInitialNav(workspaceRole, requestedView);
+    setActiveNavState(nextNav);
+    setExpandedNav(getDefaultExpandedNav(workspaceRole, nextNav));
+  }, [location.search, workspaceRole]);
   const groupedNavLabels = nav
     .filter((item) => item.children?.length)
     .map((item) => item.label)
@@ -1894,14 +1922,39 @@ function PrivateWorkspaceReady({
     });
   }, [groupedNavLabels]);
   useEffect(() => {
+    // No corrijas la pestaña inicial mientras los permisos aún están cargando:
+    // el menú vacío temporalmente hacía caer `?view=Reservas` en Resumen.
+    if (nav.length === 0) return;
+    const requestedView = new URLSearchParams(location.search).get('view');
+    const requestedNav = requestedView ? getInitialNav(workspaceRole, requestedView) : undefined;
+    const requestedNavIsDefinedForRole = requestedNav
+      ? navByRole[workspaceRole].some(
+          (item) =>
+            (item.nav ?? item.label) === requestedNav ||
+            item.children?.some((child) => child.nav === requestedNav),
+        ) ||
+        navByRole.admin.some((item) =>
+          item.children?.some(
+            (child) => child.role === workspaceRole && child.nav === requestedNav,
+          ),
+        )
+      : false;
+    const requestedNavIsVisible = requestedNav
+      ? nav.some((item) => (item.nav ?? item.label) === requestedNav) ||
+        nav.some((item) => item.children?.some((child) => child.nav === requestedNav))
+      : false;
+    // Mantén una pestaña válida para el rol durante la restauración inicial.
+    // El menú puede estar todavía recalculándose con los permisos de sesión.
+    if (requestedNavIsVisible || requestedNavIsDefinedForRole) return;
     const isVisible =
       nav.some((item) => (item.nav ?? item.label) === activeNav) ||
       nav.some((item) => item.children?.some((child) => child.nav === activeNav));
     const isGuestBellDestination = activeRole === 'guest' && activeNav === 'Notificaciones';
     if (!isVisible && !isGuestBellDestination) setActiveNav(firstNavValue(nav));
-  }, [activeNav, activeRole, nav]);
+  }, [activeNav, activeRole, location.search, nav, workspaceRole]);
   useEffect(() => {
     setCgSelectedRequestId(null);
+    setSearch('');
   }, [activeNav]);
   const activeWorkspace = resolveWorkspaceNav(activeRole, activeNav, nav);
   const contentRole = activeWorkspace.role;
@@ -6673,7 +6726,10 @@ function VisitorScreen({
       </section>
       <footer className="visitor-footer">
         <span>© 2024 Aurora Hotel Group</span>
-        <span>Privacidad · Términos · Contacto</span>
+        <span className="visitor-footer-links">
+          <Link to="/#privacidad">Privacidad</Link> · <Link to="/#politicas">Términos</Link> ·{' '}
+          <Link to="/#contacto">Contacto</Link>
+        </span>
       </footer>
 
       {detailRoom && (
@@ -6850,7 +6906,9 @@ function VisitorScreen({
                     <span>Nombre completo *</span>
                     <input
                       value={resData.name}
-                      onChange={(e) => setResData({ ...resData, name: e.target.value })}
+                      onChange={(e) =>
+                        setResData({ ...resData, name: keepPersonNameCharacters(e.target.value) })
+                      }
                       placeholder="Tu nombre completo"
                     />
                     {resErrors.name && <em className="res-error">{resErrors.name}</em>}
@@ -6868,7 +6926,12 @@ function VisitorScreen({
                     <span>Teléfono *</span>
                     <input
                       value={resData.phone}
-                      onChange={(e) => setResData({ ...resData, phone: e.target.value })}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={20}
+                      onChange={(e) =>
+                        setResData({ ...resData, phone: keepDigits(e.target.value) })
+                      }
                       placeholder="+52 555 123 4567"
                     />
                     {resErrors.phone && <em className="res-error">{resErrors.phone}</em>}
@@ -6909,7 +6972,11 @@ function VisitorScreen({
                       <span>Número de tarjeta *</span>
                       <input
                         value={resData.card}
-                        onChange={(e) => setResData({ ...resData, card: e.target.value })}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        onChange={(e) =>
+                          setResData({ ...resData, card: keepDigits(e.target.value).slice(0, 16) })
+                        }
                         placeholder="4242 4242 4242 4242"
                         maxLength={19}
                       />
@@ -6919,7 +6986,12 @@ function VisitorScreen({
                       <span>Nombre del titular *</span>
                       <input
                         value={resData.cardName}
-                        onChange={(e) => setResData({ ...resData, cardName: e.target.value })}
+                        onChange={(e) =>
+                          setResData({
+                            ...resData,
+                            cardName: keepPersonNameCharacters(e.target.value),
+                          })
+                        }
                         placeholder="Como aparece en la tarjeta"
                       />
                       {resErrors.cardName && <em className="res-error">{resErrors.cardName}</em>}
@@ -6939,7 +7011,14 @@ function VisitorScreen({
                         <span>CVC *</span>
                         <input
                           value={resData.cardCvc}
-                          onChange={(e) => setResData({ ...resData, cardCvc: e.target.value })}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          onChange={(e) =>
+                            setResData({
+                              ...resData,
+                              cardCvc: keepDigits(e.target.value).slice(0, 4),
+                            })
+                          }
                           placeholder="123"
                           maxLength={4}
                         />

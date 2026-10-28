@@ -11,6 +11,7 @@
 export const MAX_WHOLE_NUMBER = 2_147_483_647;
 
 const DIGITS_ONLY = /^\d*$/;
+const PERSON_NAME_INPUT = /[^\p{L}\p{M} '’-]/gu;
 /** Monto en edición: dígitos con punto decimal opcional y como máximo 2 decimales. */
 const MONEY_TYPING = /^\d*(?:\.\d{0,2})?$/;
 const MONEY_VALUE = /^\d+(?:\.\d{1,2})?$|^\.\d{1,2}$/;
@@ -35,6 +36,16 @@ export const maxLengthMessage = (max: number) => `Máximo ${max} caracteres.`;
  */
 export function isWholeNumberInput(value: string): boolean {
   return DIGITS_ONLY.test(value);
+}
+
+/** Conserva letras Unicode y separadores válidos de nombres al escribir o pegar. */
+export function keepPersonNameCharacters(value: string): string {
+  return value.normalize('NFC').replace(PERSON_NAME_INPUT, '');
+}
+
+/** Conserva únicamente los dígitos ASCII de un documento o teléfono numérico. */
+export function keepDigits(value: string): string {
+  return value.replace(/\D/g, '');
 }
 
 /** Filtro de escritura para montos: dígitos y como máximo un punto con 2 decimales. */

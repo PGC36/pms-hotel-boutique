@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ImageOff } from 'lucide-react';
 import { mediaService } from '@/services/mediaService';
 import type { MediaImage, MediaVariant } from '@/shared/types/entities/media-image';
 import './CatalogImage.css';
 
-export type CatalogImageProps = {
+export type CatalogImageProps = Readonly<{
   /** Imagen del backend. Sin imagen se muestra el placeholder neutral. */
   image?: MediaImage;
   variant?: MediaVariant;
@@ -12,13 +12,14 @@ export type CatalogImageProps = {
   alt: string;
   /** Texto visible del placeholder. */
   placeholderLabel?: string;
+  placeholderIcon?: ReactNode;
   /**
    * Solo personal: si la URL pública falla (imagen de un registro inactivo),
    * pide la vista previa autenticada en vez de mostrar el placeholder.
    */
   staffFallback?: boolean;
   className?: string;
-};
+}>;
 
 /**
  * Imagen de catálogo (tipo de habitación, producto, amenidad). Nunca inventa
@@ -30,6 +31,7 @@ export function CatalogImage({
   variant = 'medium',
   alt,
   placeholderLabel,
+  placeholderIcon,
   staffFallback = false,
   className,
 }: CatalogImageProps) {
@@ -68,7 +70,7 @@ export function CatalogImage({
   if (!src) {
     return (
       <div className={`${classes} catalog-image--placeholder`} role="img" aria-label={alt}>
-        <ImageOff aria-hidden="true" className="catalog-image__icon" />
+        {placeholderIcon ?? <ImageOff aria-hidden="true" className="catalog-image__icon" />}
         {placeholderLabel ? <span>{placeholderLabel}</span> : null}
       </div>
     );

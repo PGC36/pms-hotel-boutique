@@ -10,6 +10,7 @@ export interface Booking {
   guestId: string;
   roomId?: string;
   roomTypeId: string;
+  roomTypeName?: string;
   rateId?: string;
   checkIn: Date;
   checkOut: Date;

@@ -49,6 +49,7 @@ export type Credentials = LoginDTO;
 export function hasPermission(session: Session | null, permission: Permission) {
   return (
     !!session &&
+    (session.role !== 'GUEST' || permission === 'dashboard:view') &&
     session.expiresAt.getTime() > Date.now() &&
     session.permissions.includes(permission)
   );

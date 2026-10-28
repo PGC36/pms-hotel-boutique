@@ -20,6 +20,7 @@ type ApiBooking = {
   roomId?: string | null;
   room?: { id: string } | null;
   roomTypeId?: string;
+  roomTypeName?: string;
   roomType?: { id: string };
   rateId?: string | null;
   rate?: { id: string } | null;
@@ -94,6 +95,7 @@ function toBookingDto(api: ApiBooking): BookingDto {
     guest_id: requireRelatedId(api.guestId ?? api.guest?.id, 'guestId'),
     room_id: api.roomId ?? api.room?.id ?? undefined,
     room_type_id: requireRelatedId(api.roomTypeId ?? api.roomType?.id, 'roomTypeId'),
+    room_type_name: api.roomTypeName,
     rate_id: api.rateId ?? api.rate?.id ?? undefined,
     check_in: api.checkIn,
     check_out: api.checkOut,

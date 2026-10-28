@@ -7,6 +7,7 @@ import {
 import type { ID } from '@/shared/types/common';
 import { getControlledBackendMessage, HttpError, httpClient } from './http-client';
 import { mockUtils, simulateLatency } from './mockUtils';
+import { normalizePersonNamePart, validatePersonNamePart } from '@/shared/utils/formValidation';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -92,8 +93,8 @@ async function getBackendCompanions(bookingId: ID): Promise<ApiBookingCompanion[
 function normalizeCompanion(data: UpsertBookingCompanionDto): UpsertBookingCompanionDto {
   return {
     ...data,
-    first_name: data.first_name.trim(),
-    last_name: data.last_name.trim(),
+    first_name: normalizePersonNamePart(data.first_name),
+    last_name: normalizePersonNamePart(data.last_name),
     document_number: data.document_number.trim(),
   };
 }
@@ -103,8 +104,17 @@ function assertCompanionFields(companions: UpsertBookingCompanionDto[]) {
     const label = `Acompanante ${index + 1}`;
     if (!companion.first_name) throw new Error(`${label}: ingresa el nombre.`);
     if (!companion.last_name) throw new Error(`${label}: ingresa el apellido.`);
+    if (validatePersonNamePart(companion.first_name, 'nombre')) {
+      throw new Error(`${label}: el nombre solo debe contener letras.`);
+    }
+    if (validatePersonNamePart(companion.last_name, 'apellido')) {
+      throw new Error(`${label}: el apellido solo debe contener letras.`);
+    }
     if (!companion.document_type) throw new Error(`${label}: selecciona el tipo de documento.`);
     if (!companion.document_number) throw new Error(`${label}: ingresa el numero de documento.`);
+    if (!/^\d+$/.test(companion.document_number)) {
+      throw new Error(`${label}: el documento solo debe contener números.`);
+    }
     if (companion.guest_type !== 'adult' && companion.guest_type !== 'child') {
       throw new Error(`${label}: selecciona si es adulto o menor.`);
     }
