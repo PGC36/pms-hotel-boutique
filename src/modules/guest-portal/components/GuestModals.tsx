@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- Helpers compartidos del prototipo Bolt migrado. */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaImage } from '@/shared/types/entities/media-image';
 import { CatalogImage } from '@/shared/components/CatalogImage';
 import { inventoryService, type GuestHousekeepingItem } from '@/services/inventoryService';
@@ -29,6 +29,7 @@ import type {
 } from '@/private/workspace/PrivateWorkspace';
 import { toDomainCalendarDate } from '@/shared/types/common';
 import { calculateNights } from '@/shared/utils/date';
+import { formatCurrency } from '@/shared/utils/currency';
 import {
   editCheckOutMin,
   hotelToday,
@@ -39,7 +40,12 @@ import {
   validateEditedStay,
   validateGuestCounts,
 } from '@/modules/front-desk/utils/reservationFormValidation';
-import { fieldErrorProps, validateOptionalText } from '@/shared/utils/formValidation';
+import {
+  fieldErrorProps,
+  keepDigits,
+  keepPersonNameCharacters,
+  validateOptionalText,
+} from '@/shared/utils/formValidation';
 
 /** Notas de una reserva del huésped: límite del backend (`CreateGuestBookingRequest`, 1000). */
 export const GUEST_BOOKING_NOTES_MAX_LENGTH = 1000;
@@ -140,8 +146,7 @@ export type GuestOrder = {
   room: string;
 };
 
-export const money = (n: number) =>
-  `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const money = (n: number) => formatCurrency(Math.round(n * 100), 'GTQ');
 
 export const fmtDate = (d: string) => {
   const date = new Date(d + 'T00:00:00');
@@ -369,12 +374,19 @@ export function ModifyReservationModal({
         <label className="hk-form-label">
           Número de huéspedes
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             className="hk-form-select"
             value={guestCount}
             min={1}
             max={4}
-            onChange={(e) => setGuestCount(Number(e.target.value))}
+            onChange={(e) => {
+              const value = keepDigits(e.target.value);
+              if (!value) return;
+              const count = Number(value);
+              if (count >= 1 && count <= 4) setGuestCount(count);
+            }}
           />
         </label>
         <label className="hk-form-label">
@@ -699,7 +711,7 @@ export function EditProfileModal({
             <input
               className="hk-form-select"
               value={data.name}
-              onChange={(e) => update('name', e.target.value)}
+              onChange={(e) => update('name', keepPersonNameCharacters(e.target.value))}
             />
           </label>
           <label className="hk-form-label">
@@ -707,7 +719,7 @@ export function EditProfileModal({
             <input
               className="hk-form-select"
               value={data.lastName}
-              onChange={(e) => update('lastName', e.target.value)}
+              onChange={(e) => update('lastName', keepPersonNameCharacters(e.target.value))}
             />
           </label>
           <label className="hk-form-label">
@@ -715,7 +727,10 @@ export function EditProfileModal({
             <input
               className="hk-form-select"
               value={data.phone}
-              onChange={(e) => update('phone', e.target.value)}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={20}
+              onChange={(e) => update('phone', keepDigits(e.target.value))}
             />
           </label>
           <label className="hk-form-label">
@@ -744,7 +759,10 @@ export function EditProfileModal({
             <input
               className="hk-form-select"
               value={data.docNumber}
-              onChange={(e) => update('docNumber', e.target.value)}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={30}
+              onChange={(e) => update('docNumber', keepDigits(e.target.value))}
             />
           </label>
           <label className="hk-form-label">
@@ -753,6 +771,8 @@ export function EditProfileModal({
               type="date"
               className="hk-form-select"
               value={data.birthDate}
+              min={`${Number(hotelToday().slice(0, 4)) - 110}${hotelToday().slice(4)}`}
+              max={hotelToday()}
               onChange={(e) => update('birthDate', e.target.value)}
             />
           </label>
@@ -761,7 +781,7 @@ export function EditProfileModal({
             <input
               className="hk-form-select"
               value={data.nationality}
-              onChange={(e) => update('nationality', e.target.value)}
+              onChange={(e) => update('nationality', keepPersonNameCharacters(e.target.value))}
             />
           </label>
         </div>
@@ -1255,7 +1275,18 @@ export function CreateBookingModal({
     availableRooms: number;
     totalAmountCents: number;
     rateName: string;
+    selectionKey: string;
   } | null>(null);
+  const availabilityRequestId = useRef(0);
+  const availabilitySelectionKey = JSON.stringify({
+    roomTypeId: selectedRoomTypeId,
+    checkIn,
+    checkOut,
+    adults,
+    children,
+  });
+  const currentAvailabilitySelection = useRef(availabilitySelectionKey);
+  currentAvailabilitySelection.current = availabilitySelectionKey;
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -1295,7 +1326,9 @@ export function CreateBookingModal({
     return Object.keys(nextErrors).length === 0;
   };
   const clearFieldError = (...fields: (keyof GuestBookingErrors)[]) => {
+    availabilityRequestId.current += 1;
     setAvailabilityResult(null);
+    setError(null);
     setFieldErrors((current) => ({
       ...current,
       ...Object.fromEntries(fields.map((field) => [field, undefined])),
@@ -1304,6 +1337,8 @@ export function CreateBookingModal({
 
   const handleCheckAvailability = async () => {
     if (checkingAvailability || !validate()) return;
+    const requestId = ++availabilityRequestId.current;
+    const selectionKey = availabilitySelectionKey;
     setError(null);
     setCheckingAvailability(true);
     setAvailabilityResult(null);
@@ -1318,18 +1353,30 @@ export function CreateBookingModal({
           roomTypeId: selectedRoomTypeId,
         }),
       );
+      if (
+        requestId !== availabilityRequestId.current ||
+        selectionKey !== currentAvailabilitySelection.current
+      ) {
+        return;
+      }
       const match = results.find((r) => r.roomType.id === selectedRoomTypeId);
       if (match && match.availableRooms > 0) {
         setAvailabilityResult({
           availableRooms: match.availableRooms,
           totalAmountCents: match.totalAmountCents,
           rateName: match.rate.name,
+          selectionKey,
         });
       } else {
         setError('No hay habitaciones disponibles para esas fechas y cantidad de huéspedes.');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error al consultar disponibilidad.');
+      if (
+        requestId === availabilityRequestId.current &&
+        selectionKey === currentAvailabilitySelection.current
+      ) {
+        setError(err instanceof Error ? err.message : 'Error al consultar disponibilidad.');
+      }
     } finally {
       setCheckingAvailability(false);
     }
@@ -1338,9 +1385,43 @@ export function CreateBookingModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting || !validate()) return;
+    if (availabilityResult?.selectionKey !== availabilitySelectionKey) {
+      setAvailabilityResult(null);
+      setError(
+        'Verifica la disponibilidad para las fechas y habitación seleccionadas antes de reservar.',
+      );
+      return;
+    }
     setError(null);
     setSubmitting(true);
+    setCheckingAvailability(true);
     try {
+      // Reconfirmar antes de crear evita reservar con disponibilidad ya vencida.
+      // El backend vuelve a validar y mantiene la última palabra ante solicitudes simultáneas.
+      const { publicBookingCatalogService } =
+        await import('@/services/publicBookingCatalogService');
+      const results = await publicBookingCatalogService.getAvailability({
+        checkIn,
+        checkOut,
+        adults: Number(adults),
+        children: Number(children),
+        roomTypeId: selectedRoomTypeId,
+      });
+      const match = results.find((r) => r.roomType.id === selectedRoomTypeId);
+      if (!match || match.availableRooms <= 0) {
+        setAvailabilityResult(null);
+        setError(
+          'Ya no hay habitaciones disponibles para esas fechas y cantidad de huéspedes. Elige otras fechas.',
+        );
+        return;
+      }
+      setAvailabilityResult({
+        availableRooms: match.availableRooms,
+        totalAmountCents: match.totalAmountCents,
+        rateName: match.rate.name,
+        selectionKey: availabilitySelectionKey,
+      });
+
       const { guestPortalService } = await import('@/services/guestPortalService');
       const booking = await guestPortalService.createBooking({
         roomTypeId: selectedRoomTypeId,
@@ -1353,6 +1434,8 @@ export function CreateBookingModal({
       onCreated(`¡Reserva creada exitosamente! Código: ${booking.confirmationCode}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'No fue posible crear la reserva.');
+    } finally {
+      setCheckingAvailability(false);
       setSubmitting(false);
     }
   };
@@ -1536,7 +1619,7 @@ export function CreateBookingModal({
               {checkingAvailability ? 'Verificando...' : 'Verificar disponibilidad y tarifa'}
             </button>
 
-            {availabilityResult && (
+            {availabilityResult?.selectionKey === availabilitySelectionKey && (
               <div
                 style={{
                   marginTop: '0.5rem',
@@ -1551,6 +1634,11 @@ export function CreateBookingModal({
                 Tarifa: {availabilityResult.rateName} · Total:{' '}
                 {money(availabilityResult.totalAmountCents / 100)}
               </div>
+            )}
+            {!availabilityResult && !error && (
+              <small style={{ display: 'block', marginTop: '0.5rem', color: '#8b7b70' }}>
+                Verifica disponibilidad para habilitar la creación de la reserva.
+              </small>
             )}
           </div>
 
@@ -1592,8 +1680,16 @@ export function CreateBookingModal({
             >
               Cancelar
             </button>
-            <button type="submit" className="button primary" disabled={submitting}>
-              {submitting ? 'Confirmando reserva...' : 'Crear reserva'}
+            <button
+              type="submit"
+              className="button primary"
+              disabled={
+                submitting ||
+                checkingAvailability ||
+                availabilityResult?.selectionKey !== availabilitySelectionKey
+              }
+            >
+              {submitting ? 'Verificando y confirmando...' : 'Crear reserva'}
             </button>
           </div>
         </form>

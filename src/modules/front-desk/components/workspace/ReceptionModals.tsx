@@ -46,6 +46,8 @@ import {
 } from '@/modules/front-desk/utils/reservationFormValidation';
 import {
   fieldErrorProps,
+  keepDigits,
+  keepPersonNameCharacters,
   isMoneyInput,
   isWholeNumberInput,
   moneyInputToCents,
@@ -641,7 +643,9 @@ export function ReservationFormModal({
                 maxLength={NAME_MAX_LENGTH}
                 className={fieldClass(errors.name)}
                 value={guest.name}
-                onChange={(e) => setGuest({ ...guest, name: e.target.value })}
+                onChange={(e) =>
+                  setGuest({ ...guest, name: keepPersonNameCharacters(e.target.value) })
+                }
               />
               {errors.name && <small className="rc-field-error">{errors.name}</small>}
             </label>
@@ -652,7 +656,9 @@ export function ReservationFormModal({
                 maxLength={NAME_MAX_LENGTH}
                 className={fieldClass(errors.lastName)}
                 value={guest.lastName}
-                onChange={(e) => setGuest({ ...guest, lastName: e.target.value })}
+                onChange={(e) =>
+                  setGuest({ ...guest, lastName: keepPersonNameCharacters(e.target.value) })
+                }
               />
               {errors.lastName && <small className="rc-field-error">{errors.lastName}</small>}
             </label>
@@ -859,6 +865,34 @@ const emptyCompanionDraft = (guestType: 'adult' | 'child'): CompanionDraft => ({
   guestType,
 });
 
+function validateDocumentNumber(value: string): string | undefined {
+  if (!value) return 'Ingresa el número de documento.';
+  if (!/^\d+$/.test(value)) return 'El documento solo debe contener números.';
+  return undefined;
+}
+
+function checkinReservationError(
+  reservation: Reservation,
+  room: RecRoom | undefined,
+  availableRoomCount: number,
+  today: string,
+): string | undefined {
+  if (!reservation.bookingId) return 'La reserva no está vinculada al backend.';
+  if (reservation.status !== 'Confirmada') return 'Confirma la reserva antes de hacer check-in.';
+  if (today < reservation.checkIn || today >= reservation.checkOut) {
+    return 'El check-in solo se puede realizar durante las fechas de la estadía.';
+  }
+  if (!room) {
+    return availableRoomCount > 0
+      ? 'Selecciona una habitación antes de hacer check-in.'
+      : 'No hay habitaciones compatibles disponibles para estas fechas.';
+  }
+  if (room.status !== 'Disponible') {
+    return 'La habitación asignada no está disponible para check-in.';
+  }
+  return undefined;
+}
+
 export function CheckinModal({
   reservation,
   rooms,
@@ -968,6 +1002,7 @@ export function CheckinModal({
     assignedRoom ?? availableRooms.find((candidate) => candidate.backendRoomId === selectedRoomId);
   const capacityExceeded = room ? 1 + companions.length > room.capacity : false;
   const today = hotelToday();
+  const oldestAllowedBirthDate = `${Number(today.slice(0, 4)) - 110}${today.slice(4)}`;
 
   const updateDraft = (field: keyof CompanionDraft, value: string) => {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -978,23 +1013,27 @@ export function CheckinModal({
     // Caracteres de nombres reales, sin el límite 3–20 propio de Nueva reserva.
     const firstName = normalizePersonNamePart(draft.firstName);
     const lastName = normalizePersonNamePart(draft.lastName);
+    const documentNumberError = validateDocumentNumber(draft.documentNumber.trim());
     const nextErrors: CompanionDraftErrors = {
       firstName: validatePersonNamePart(firstName, 'nombre') ?? undefined,
       lastName: validatePersonNamePart(lastName, 'apellido') ?? undefined,
       documentType: draft.documentType ? undefined : 'Selecciona el tipo de documento.',
-      documentNumber:
-        validateRequiredText(draft.documentNumber, 'Ingresa el número de documento.') ?? undefined,
+      documentNumber: documentNumberError,
       // 0 es válido (bebés); vacío no se convierte en 0.
       age:
-        validateWholeNumber(draft.age, { min: 0, requiredMessage: 'Ingresa la edad.' }) ??
-        undefined,
+        validateWholeNumber(draft.age, {
+          min: 0,
+          max: 110,
+          requiredMessage: 'Ingresa la edad.',
+          maxMessage: 'La edad no puede superar 110 años.',
+        }) ?? undefined,
     };
     setDraftErrors(nextErrors);
     if (Object.values(nextErrors).some(Boolean)) return;
     const next: Companion[] = [
       ...companions,
       {
-        id: Date.now() + companions.length,
+        id: Math.max(Date.now(), ...companions.map((companion) => companion.id + 1)),
         name: firstName,
         lastName,
         documentType: draft.documentType,
@@ -1017,44 +1056,25 @@ export function CheckinModal({
     const nextFieldErrors: { docType?: string; docNumber?: string; birthDate?: string } = {};
     if (!docType) nextFieldErrors.docType = 'Selecciona el tipo de documento.';
     if (!docNumber.trim()) nextFieldErrors.docNumber = 'El número de documento es obligatorio.';
-    if (birthDate && (!isCalendarDate(birthDate) || birthDate > today)) {
-      nextFieldErrors.birthDate = 'La fecha de nacimiento no puede ser futura.';
+    if (
+      birthDate &&
+      (!isCalendarDate(birthDate) || birthDate > today || birthDate < oldestAllowedBirthDate)
+    ) {
+      nextFieldErrors.birthDate = 'La edad debe estar entre 0 y 110 años.';
     }
     setFieldErrors(nextFieldErrors);
-    if (!reservation.bookingId) {
-      setError('La reserva no está vinculada al backend.');
-      return;
-    }
-    if (reservation.status !== 'Confirmada') {
-      setError('Confirma la reserva antes de hacer check-in.');
-      return;
-    }
-    if (today < reservation.checkIn || today >= reservation.checkOut) {
-      setError('El check-in solo se puede realizar durante las fechas de la estadía.');
-      return;
-    }
-    if (!room) {
-      setError(
-        availableRooms.length > 0
-          ? 'Selecciona una habitación antes de hacer check-in.'
-          : 'No hay habitaciones compatibles disponibles para estas fechas.',
-      );
-      return;
-    }
-    if (room.status !== 'Disponible') {
-      setError('La habitación asignada no está disponible para check-in.');
+    const reservationError = checkinReservationError(
+      reservation,
+      room,
+      availableRooms.length,
+      today,
+    );
+    if (reservationError) {
+      setError(reservationError);
       return;
     }
     if (nextFieldErrors.docType || nextFieldErrors.docNumber || nextFieldErrors.birthDate) {
       setError('');
-      return;
-    }
-    if (companionsLoading) {
-      setError('Espera a que carguen los acompañantes registrados.');
-      return;
-    }
-    if (companionsError) {
-      setError(companionsError);
       return;
     }
     const compositionError = companionCompositionError(
@@ -1062,12 +1082,13 @@ export function CheckinModal({
       adultsDeclared,
       childrenDeclared,
     );
-    if (compositionError) {
-      setError(compositionError);
-      return;
-    }
-    if (capacityExceeded) {
-      setError(`Excede la capacidad de la habitación (${room?.capacity})`);
+    const companionError = companionsLoading
+      ? 'Espera a que carguen los acompañantes registrados.'
+      : companionsError ||
+        compositionError ||
+        (capacityExceeded ? `Excede la capacidad de la habitación (${room?.capacity})` : '');
+    if (companionError) {
+      setError(companionError);
       return;
     }
     setError('');
@@ -1096,7 +1117,14 @@ export function CheckinModal({
         className={fieldClass(draftErrors[field])}
         value={draft[field]}
         maxLength={maxLength}
-        onChange={(e) => updateDraft(field, e.target.value)}
+        onChange={(e) =>
+          updateDraft(
+            field,
+            field === 'documentNumber'
+              ? keepDigits(e.target.value)
+              : keepPersonNameCharacters(e.target.value),
+          )
+        }
         aria-required="true"
         {...fieldErrorProps(`checkin-comp-${field}-error`, draftErrors[field])}
       />
@@ -1159,8 +1187,11 @@ export function CheckinModal({
               <input
                 className={fieldClass(fieldErrors.docNumber)}
                 value={docNumber}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={30}
                 onChange={(e) => {
-                  setDocNumber(e.target.value);
+                  setDocNumber(keepDigits(e.target.value));
                   setFieldErrors((current) => ({ ...current, docNumber: undefined }));
                 }}
                 placeholder="Número..."
@@ -1177,6 +1208,7 @@ export function CheckinModal({
               <span>Fecha de nacimiento</span>
               <input
                 type="date"
+                min={oldestAllowedBirthDate}
                 max={today}
                 className={fieldClass(fieldErrors.birthDate)}
                 value={birthDate}
@@ -1194,7 +1226,10 @@ export function CheckinModal({
             </label>
             <label className="rc-field">
               <span>Nacionalidad</span>
-              <input value={nationality} onChange={(e) => setNationality(e.target.value)} />
+              <input
+                value={nationality}
+                onChange={(e) => setNationality(keepPersonNameCharacters(e.target.value))}
+              />
             </label>
           </div>
 
@@ -1238,8 +1273,8 @@ export function CheckinModal({
             </small>
           )}
           <div className="rc-form-grid">
-            {draftField('firstName', 'Nombre')}
-            {draftField('lastName', 'Apellido')}
+            {draftField('firstName', 'Nombre', 80)}
+            {draftField('lastName', 'Apellido', 80)}
             <label className="rc-field">
               <span>Tipo de documento *</span>
               <select
@@ -1262,7 +1297,7 @@ export function CheckinModal({
                 </small>
               )}
             </label>
-            {draftField('documentNumber', 'Número de documento')}
+            {draftField('documentNumber', 'Número de documento', 30)}
             <label className="rc-field">
               <span>Edad *</span>
               {/* type="text" con teclado numérico: type="number" admite "-", "e" y decimales. */}
@@ -1271,6 +1306,7 @@ export function CheckinModal({
                 inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={3}
+                max={110}
                 className={fieldClass(draftErrors.age)}
                 value={draft.age}
                 onChange={(e) => {

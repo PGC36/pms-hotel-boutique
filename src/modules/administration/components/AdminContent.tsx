@@ -67,17 +67,20 @@ import { HousekeepingChecklistTemplatePanel } from './HousekeepingChecklistTempl
 import { ErrorState } from '@/shared/components/ErrorState';
 import { ImageGalleryField } from '@/shared/components/ImageGalleryField';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { Pagination } from '@/shared/components/Pagination';
 import { toDtoCalendarDate } from '@/shared/types/common';
 import { catalogNameError } from '@/shared/utils/catalogName';
 import { findBaseRate, getSeasonalRates } from '@/shared/utils/rateSelection';
 import { formatAmenitySchedule, parseAmenityScheduleInput } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
+import { paginateItems } from '@/shared/utils/pagination';
 import { exportDateSuffix, exportToCSV } from '@/shared/utils/exportCsv';
 import {
   amountToMoneyInput,
   fieldErrorProps,
   isMoneyInput,
   isWholeNumberInput,
+  keepPersonNameCharacters,
   moneyInputToCents,
   normalizePersonNamePart,
   validateDateRange,
@@ -107,8 +110,12 @@ import type {
 import type { Booking } from '@/shared/types/entities/booking';
 import type { CashSession } from '@/shared/types/entities/cash-session';
 import { formatDateGT } from '@/shared/utils/date';
-import type { InventoryItemCategory, InventoryUnit } from '@/shared/types/entities/inventory-item';
-import type { InventoryItemCategoryDto } from '@/shared/types/entities/inventory-item';
+import type {
+  InventoryItem,
+  InventoryItemCategory,
+  InventoryItemCategoryDto,
+  InventoryUnit,
+} from '@/shared/types/entities/inventory-item';
 import type { InventoryMovementReasonDto } from '@/shared/types/entities/inventory-movement';
 import type { InventoryMovementReason } from '@/shared/types/entities/inventory-movement';
 import type { Amenity as DomainAmenity, AmenityCategory } from '@/shared/types/entities/amenity';
@@ -229,6 +236,7 @@ type RoomServiceItem = {
 type InventoryProduct = {
   id: number;
   dbId: string;
+  productId?: string;
   sku: string;
   categoryCode: InventoryItemCategory;
   unit: InventoryUnit;
@@ -624,6 +632,26 @@ const adminProductFromDomain = (product: Product, index: number): RoomServiceIte
   available: product.active,
   status: product.active ? 'Activo' : 'Inactivo',
   images: product.images,
+});
+
+const adminInventoryFromDomain = (
+  item: InventoryItem,
+  index: number,
+  product?: Product,
+): InventoryProduct => ({
+  id: parseDbId(item.id, index + 1),
+  dbId: item.id,
+  productId: item.productId,
+  sku: item.sku,
+  categoryCode: item.category,
+  unit: item.unit,
+  name: item.name,
+  category: INVENTORY_CATEGORY_LABELS[item.category],
+  stock: item.currentQuantity,
+  minStock: item.minimumQuantity,
+  price: product ? centsToAmount(product.priceCents) : 0,
+  status: item.active ? 'Activo' : 'Inactivo',
+  images: item.images ?? [],
 });
 
 const productSkuFromName = (name: string) => {
@@ -1404,23 +1432,13 @@ export function AdminContent({
 
         const roomServiceItems: RoomServiceItem[] = products.map(adminProductFromDomain);
 
-        const inventory: InventoryProduct[] = inventoryItems.map((item, index) => {
-          const product = products.find((productItem) => productItem.id === item.productId);
-          return {
-            id: parseDbId(item.id, index + 1),
-            dbId: item.id,
-            sku: item.sku,
-            categoryCode: item.category,
-            unit: item.unit,
-            name: item.name,
-            category: INVENTORY_CATEGORY_LABELS[item.category],
-            stock: item.currentQuantity,
-            minStock: item.minimumQuantity,
-            price: product ? centsToAmount(product.priceCents) : 0,
-            status: item.active ? 'Activo' : 'Inactivo',
-            images: item.images ?? [],
-          };
-        });
+        const inventory: InventoryProduct[] = inventoryItems.map((item, index) =>
+          adminInventoryFromDomain(
+            item,
+            index,
+            products.find((productItem) => productItem.id === item.productId),
+          ),
+        );
 
         const movements: InventoryMovement[] = inventoryMovements.map((movement, index) => ({
           id: parseDbId(movement.id, index + 1),
@@ -1630,6 +1648,15 @@ function AdminContentReady({
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('Todos');
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const [roomServiceCatalogPage, setRoomServiceCatalogPage] = useState(1);
+  const [inventoryMovementsPage, setInventoryMovementsPage] = useState(1);
+
+  useEffect(() => {
+    setInventoryPage(1);
+    setRoomServiceCatalogPage(1);
+    setInventoryMovementsPage(1);
+  }, [search, nav]);
 
   const [showUserModal, setShowUserModal] = useState(false);
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
@@ -1925,6 +1952,22 @@ function AdminContentReady({
     );
   };
 
+  const updateRoomServiceProductStatus = async (item: RoomServiceItem) => {
+    try {
+      const updated = await catalogService.updateAdminProduct(item.dbId, {
+        active: item.status !== 'Activo',
+      });
+      setRsItems((current) =>
+        current.map((entry, index) =>
+          entry.dbId === item.dbId ? adminProductFromDomain(updated, index) : entry,
+        ),
+      );
+      onAction('Producto actualizado correctamente');
+    } catch (error) {
+      onAction(serviceErrorMessage(error));
+    }
+  };
+
   const exportAuditReport = () => {
     const filtered = audit.filter((entry) => {
       const matchesSearch = `${entry.user} ${entry.module} ${entry.action} ${entry.description}`
@@ -1950,7 +1993,7 @@ function AdminContentReady({
   };
 
   // ─── DASHBOARD ───
-  if (nav === 'Dashboard') {
+  function renderDashboard() {
     const lowStock = inventory.filter((p) => p.stock <= p.minStock);
     const occupiedRooms = rooms.filter((room) => room.status === 'Ocupada').length;
     const availableRooms = rooms.filter((room) => room.status === 'Disponible').length;
@@ -2239,9 +2282,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Dashboard') return renderDashboard();
 
   // ─── USUARIOS Y ROLES ───
-  if (nav === 'Usuarios y roles' || nav === 'Gestión de usuarios' || nav === 'Roles y permisos') {
+  function renderUsersAndRoles() {
     const roleFilterOptions = ['Todos', 'Activo', 'Inactivo', ...roles.map((role) => role.name)];
     const filtered = users.filter((u) => {
       const ms = `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(search.toLowerCase());
@@ -2517,13 +2561,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Usuarios y roles' || nav === 'Gestión de usuarios' || nav === 'Roles y permisos')
+    return renderUsersAndRoles();
 
   // ─── HABITACIONES ───
-  if (
-    nav === 'Habitaciones' ||
-    nav === 'Gestión de habitaciones' ||
-    nav === 'Tipos de habitación'
-  ) {
+  function renderRoomsAndTypes() {
     const filtered = rooms.filter((r) => {
       const ms = `${r.number} ${r.floor} ${r.type} ${r.status}`
         .toLowerCase()
@@ -2978,9 +3020,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Habitaciones' || nav === 'Gestión de habitaciones' || nav === 'Tipos de habitación')
+    return renderRoomsAndTypes();
 
   // ─── TARIFAS ───
-  if (nav === 'Tarifas' || nav === 'Tarifas por temporada') {
+  function renderRates() {
     return (
       <>
         {ratesSection === 'Tarifas por temporada' && (
@@ -3147,9 +3191,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Tarifas' || nav === 'Tarifas por temporada') return renderRates();
 
   // ─── PROMOCIONES ───
-  if (nav === 'Promociones') {
+  function renderPromotions() {
     const filtered = promos.filter((p) =>
       `${p.name} ${p.code}`.toLowerCase().includes(search.toLowerCase()),
     );
@@ -3175,7 +3220,11 @@ function AdminContentReady({
           {filtered.length === 0 ? (
             <div className="hk-empty">
               <Percent size={22} />
-              <p>No hay promociones registradas</p>
+              <p>
+                {search.trim()
+                  ? 'No se encontraron promociones para esta búsqueda'
+                  : 'No hay promociones registradas'}
+              </p>
             </div>
           ) : (
             <AdminTable
@@ -3291,12 +3340,14 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Promociones') return renderPromotions();
 
   // ─── SERVICIOS (AMENIDADES + ROOM SERVICE) ───
-  if (nav === 'Servicios' || nav === 'Amenidades' || nav === 'Catálogo de Room Service') {
+  function renderServices() {
     const filteredRs = rsItems.filter((i) =>
       `${i.name} ${i.category} ${i.description}`.toLowerCase().includes(search.toLowerCase()),
     );
+    const pagedRs = paginateItems(filteredRs, roomServiceCatalogPage);
     return (
       <>
         {servicesSection === 'Amenidades' && (
@@ -3431,7 +3482,7 @@ function AdminContentReady({
                   'Acciones',
                 ]}
               >
-                {filteredRs.map((item) => (
+                {pagedRs.items.map((item) => (
                   <tr key={item.id}>
                     <td>
                       <div className="adm-catalog-name">
@@ -3476,25 +3527,7 @@ function AdminContentReady({
                         label={
                           item.status === 'Activo' ? 'Desactivar producto' : 'Activar producto'
                         }
-                        onChange={() => {
-                          void (async () => {
-                            try {
-                              const updated = await catalogService.updateAdminProduct(item.dbId, {
-                                active: item.status !== 'Activo',
-                              });
-                              setRsItems((current) =>
-                                current.map((entry, index) =>
-                                  entry.dbId === item.dbId
-                                    ? adminProductFromDomain(updated, index)
-                                    : entry,
-                                ),
-                              );
-                              onAction('Producto actualizado correctamente');
-                            } catch (error) {
-                              onAction(serviceErrorMessage(error));
-                            }
-                          })();
-                        }}
+                        onChange={() => void updateRoomServiceProductStatus(item)}
                       />
                       <button
                         className="icon-btn danger"
@@ -3511,6 +3544,12 @@ function AdminContentReady({
                 ))}
               </AdminTable>
             )}
+            <Pagination
+              currentPage={pagedRs.currentPage}
+              totalPages={pagedRs.totalPages}
+              onPageChange={setRoomServiceCatalogPage}
+              label="Paginación del catálogo de Room Service"
+            />
           </div>
         )}
         {showAmenityModal && (
@@ -3610,8 +3649,41 @@ function AdminContentReady({
                     )
                   : [...current, adminProductFromDomain(saved, current.length)],
               );
+              if (editRsItem) {
+                setInventory((current) =>
+                  current.map((entry) =>
+                    entry.productId === saved.id
+                      ? { ...entry, name: saved.name, price: centsToAmount(saved.priceCents) }
+                      : entry,
+                  ),
+                );
+              } else {
+                try {
+                  const linkedItem = (await inventoryService.getItems()).find(
+                    (entry) => entry.productId === saved.id,
+                  );
+                  if (linkedItem) {
+                    const inventoryRow = adminInventoryFromDomain(
+                      linkedItem,
+                      inventory.length,
+                      saved,
+                    );
+                    setInventory((current) =>
+                      current.some((entry) => entry.dbId === inventoryRow.dbId)
+                        ? current.map((entry) =>
+                            entry.dbId === inventoryRow.dbId ? inventoryRow : entry,
+                          )
+                        : [...current, inventoryRow],
+                    );
+                  }
+                } catch {
+                  // El producto y su relación de inventario ya se guardaron juntos en el backend.
+                }
+              }
               onAction(
-                editRsItem ? 'Producto actualizado correctamente' : 'Producto creado correctamente',
+                editRsItem
+                  ? 'Producto actualizado correctamente'
+                  : 'Producto creado y agregado al inventario con existencia inicial en cero',
               );
               setShowRsItemModal(false);
               setEditRsItem(null);
@@ -3621,9 +3693,11 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Servicios' || nav === 'Amenidades' || nav === 'Catálogo de Room Service')
+    return renderServices();
 
   // ─── REPORTES ───
-  if (nav === 'Reportes' || nav === 'Resumen operativo' || nav === 'Reportes financieros') {
+  function renderReports() {
     const periodCashMovements = cashMovements.filter((movement) =>
       isDateInReportPeriod(new Date(`${movement.date}T12:00:00`), reportFilter),
     );
@@ -3877,16 +3951,16 @@ function AdminContentReady({
       </div>
     );
   }
+  if (nav === 'Reportes' || nav === 'Resumen operativo' || nav === 'Reportes financieros')
+    return renderReports();
 
   // ─── INVENTARIO ───
-  if (
-    nav === 'Inventario' ||
-    nav === 'Gestión de inventario' ||
-    nav === 'Movimientos de inventario'
-  ) {
+  function renderInventory() {
     const filtered = inventory.filter((p) =>
       `${p.name} ${p.category}`.toLowerCase().includes(search.toLowerCase()),
     );
+    const pagedInventory = paginateItems(filtered, inventoryPage);
+    const pagedMovements = paginateItems(movements, inventoryMovementsPage);
     const lowStock = inventory.filter((p) => p.stock <= p.minStock);
     return (
       <>
@@ -3936,7 +4010,7 @@ function AdminContentReady({
                   'Acciones',
                 ]}
               >
-                {filtered.map((p) => (
+                {pagedInventory.items.map((p) => (
                   <tr key={p.id} className={p.stock <= p.minStock ? 'adm-row-alert' : ''}>
                     <td>
                       <div className="adm-inventory-product">
@@ -3991,6 +4065,12 @@ function AdminContentReady({
                 ))}
               </AdminTable>
             )}
+            <Pagination
+              currentPage={pagedInventory.currentPage}
+              totalPages={pagedInventory.totalPages}
+              onPageChange={setInventoryPage}
+              label="Paginación del inventario"
+            />
           </div>
         )}
         {inventorySection === 'Movimientos de inventario' && (
@@ -4010,7 +4090,7 @@ function AdminContentReady({
               <AdminTable
                 headers={['Fecha', 'Producto', 'Tipo', 'Cantidad', 'Motivo', 'Responsable']}
               >
-                {movements.map((m) => (
+                {pagedMovements.items.map((m) => (
                   <tr key={m.id}>
                     <td>{m.date}</td>
                     <td>
@@ -4033,6 +4113,12 @@ function AdminContentReady({
                 ))}
               </AdminTable>
             )}
+            <Pagination
+              currentPage={pagedMovements.currentPage}
+              totalPages={pagedMovements.totalPages}
+              onPageChange={setInventoryMovementsPage}
+              label="Paginación de movimientos de inventario"
+            />
           </div>
         )}
         {showProductModal && (
@@ -4167,9 +4253,15 @@ function AdminContentReady({
       </>
     );
   }
+  if (
+    nav === 'Inventario' ||
+    nav === 'Gestión de inventario' ||
+    nav === 'Movimientos de inventario'
+  )
+    return renderInventory();
 
   // ─── CAJA ───
-  if (nav === 'Caja') {
+  function renderCash() {
     const visibleCashMovements = cashMovements;
     const visibleCashSessions = cashSessions;
     const latestCashSession =
@@ -4447,9 +4539,10 @@ function AdminContentReady({
       </>
     );
   }
+  if (nav === 'Caja') return renderCash();
 
   // ─── AUDITORÍA ───
-  if (nav === 'Auditoría') {
+  function renderAudit() {
     const filtered = audit.filter((a) => {
       const ms = `${a.user} ${a.module} ${a.action} ${a.description}`
         .toLowerCase()
@@ -4508,6 +4601,7 @@ function AdminContentReady({
       </div>
     );
   }
+  if (nav === 'Auditoría') return renderAudit();
 
   resetSearch();
   return (
@@ -4607,7 +4701,7 @@ export function UserModal({
             value={firstName}
             autoComplete="given-name"
             onChange={(e) => {
-              setFirstName(e.target.value);
+              setFirstName(keepPersonNameCharacters(e.target.value));
               clearError('firstName');
             }}
             aria-required="true"
@@ -4622,7 +4716,7 @@ export function UserModal({
             value={lastName}
             autoComplete="family-name"
             onChange={(e) => {
-              setLastName(e.target.value);
+              setLastName(keepPersonNameCharacters(e.target.value));
               clearError('lastName');
             }}
             aria-required="true"

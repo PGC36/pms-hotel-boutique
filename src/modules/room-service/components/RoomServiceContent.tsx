@@ -24,11 +24,13 @@ import { inventoryService } from '@/services/inventoryService';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { Pagination } from '@/shared/components/Pagination';
 import {
   fieldErrorProps,
   isWholeNumberInput,
   validateWholeNumber,
 } from '@/shared/utils/formValidation';
+import { paginateItems } from '@/shared/utils/pagination';
 
 /** Motivos y observaciones de un pedido: límite del backend (notes, @Size(max = 1000)). */
 const ORDER_NOTES_MAX_LENGTH = 1000;
@@ -154,6 +156,8 @@ export function RoomServiceContent({
   const [cancelReason, setCancelReason] = useState('');
   const [menuState, setMenuState] = useState<MenuState>({ status: 'loading' });
   const [inventoryState, setInventoryState] = useState<InventoryState>({ status: 'idle' });
+  const [menuPage, setMenuPage] = useState(1);
+  const [inventoryPage, setInventoryPage] = useState(1);
   const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
   const [inventoryItemId, setInventoryItemId] = useState('');
   const [inventoryQuantity, setInventoryQuantity] = useState('1');
@@ -215,8 +219,15 @@ export function RoomServiceContent({
     if (nav === 'Inventario' && inventoryState.status === 'idle') void loadInventory();
   }, [nav, inventoryState.status]);
 
+  useEffect(() => {
+    setMenuPage(1);
+    setInventoryPage(1);
+  }, [nav]);
+
   const menuItems = menuState.status === 'ready' ? menuState.menu : [];
   const inventoryItems = inventoryState.status === 'ready' ? inventoryState.inventory : [];
+  const pagedMenu = paginateItems(menuItems, menuPage);
+  const pagedInventory = paginateItems(inventoryItems, inventoryPage);
   const selectedInventoryItem = inventoryItems.find((item) => item.id === inventoryItemId);
 
   const refreshMenu = async (message: string) => {
@@ -703,7 +714,7 @@ export function RoomServiceContent({
         )}
         {menuState.status === 'ready' && menuItems.length > 0 && (
           <div className="rs-menu-grid">
-            {menuItems.map((item) => (
+            {pagedMenu.items.map((item) => (
               <div className="rs-menu-item" key={item.name}>
                 <div className="rs-menu-icon">
                   <Utensils size={18} />
@@ -721,6 +732,12 @@ export function RoomServiceContent({
             ))}
           </div>
         )}
+        <Pagination
+          currentPage={pagedMenu.currentPage}
+          totalPages={pagedMenu.totalPages}
+          onPageChange={setMenuPage}
+          label="Paginación del menú de Room Service"
+        />
       </div>
     );
   }
@@ -832,7 +849,7 @@ export function RoomServiceContent({
         )}
         {inventoryState.status === 'ready' && inventoryItems.length > 0 && (
           <div className="rs-inventory-grid">
-            {inventoryItems.map((item) => (
+            {pagedInventory.items.map((item) => (
               <div className="rs-inventory-item" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
@@ -846,6 +863,14 @@ export function RoomServiceContent({
               </div>
             ))}
           </div>
+        )}
+        {inventoryState.status === 'ready' && (
+          <Pagination
+            currentPage={pagedInventory.currentPage}
+            totalPages={pagedInventory.totalPages}
+            onPageChange={setInventoryPage}
+            label="Paginación del inventario de cocina"
+          />
         )}
         {inventoryModalOpen && (
           <div className="modal-backdrop" onMouseDown={() => setInventoryModalOpen(false)}>
