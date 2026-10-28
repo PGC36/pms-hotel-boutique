@@ -1444,7 +1444,9 @@ function GuestContentReady({
                       image={item.image}
                       variant="thumb"
                       alt={`Foto de ${item.name}`}
-                      placeholderIcon={<Package aria-hidden="true" className="catalog-image__icon" />}
+                      placeholderIcon={
+                        <Package aria-hidden="true" className="catalog-image__icon" />
+                      }
                     />
                   </div>
                   <div className="gs-menu-card-body">

@@ -432,7 +432,11 @@ const formatDbTime = (value?: Date) => {
   return value.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
-const getRoomTypeLabel = (roomTypeId: string | undefined, roomTypes: RoomTypeModel[], roomTypeName?: string): RoomType => {
+const getRoomTypeLabel = (
+  roomTypeId: string | undefined,
+  roomTypes: RoomTypeModel[],
+  roomTypeName?: string,
+): RoomType => {
   const roomType = roomTypes.find((type) => type.id === roomTypeId);
   const name = (roomTypeName ?? roomType?.name ?? '').toLowerCase();
   if (name.includes('suite')) return 'Suite';
@@ -1458,8 +1462,7 @@ function getInitialNav(role: RoleId, initialNav?: string) {
     const scopedRoleItem = navByRole.admin
       .flatMap((item) => item.children ?? [])
       .find(
-        (child) =>
-          child.role === role && (child.nav === initialNav || child.label === initialNav),
+        (child) => child.role === role && (child.nav === initialNav || child.label === initialNav),
       );
     if (scopedRoleItem) return scopedRoleItem.nav;
   }
@@ -1925,7 +1928,9 @@ function PrivateWorkspaceReady({
             item.children?.some((child) => child.nav === requestedNav),
         ) ||
         navByRole.admin.some((item) =>
-          item.children?.some((child) => child.role === workspaceRole && child.nav === requestedNav),
+          item.children?.some(
+            (child) => child.role === workspaceRole && child.nav === requestedNav,
+          ),
         )
       : false;
     const requestedNavIsVisible = requestedNav
@@ -6716,7 +6721,8 @@ function VisitorScreen({
       <footer className="visitor-footer">
         <span>© 2024 Aurora Hotel Group</span>
         <span className="visitor-footer-links">
-          <Link to="/#privacidad">Privacidad</Link> · <Link to="/#politicas">Términos</Link> · <Link to="/#contacto">Contacto</Link>
+          <Link to="/#privacidad">Privacidad</Link> · <Link to="/#politicas">Términos</Link> ·{' '}
+          <Link to="/#contacto">Contacto</Link>
         </span>
       </footer>
 
@@ -6917,7 +6923,9 @@ function VisitorScreen({
                       inputMode="numeric"
                       pattern="[0-9]*"
                       maxLength={20}
-                      onChange={(e) => setResData({ ...resData, phone: keepDigits(e.target.value) })}
+                      onChange={(e) =>
+                        setResData({ ...resData, phone: keepDigits(e.target.value) })
+                      }
                       placeholder="+52 555 123 4567"
                     />
                     {resErrors.phone && <em className="res-error">{resErrors.phone}</em>}
@@ -7000,7 +7008,10 @@ function VisitorScreen({
                           inputMode="numeric"
                           pattern="[0-9]*"
                           onChange={(e) =>
-                            setResData({ ...resData, cardCvc: keepDigits(e.target.value).slice(0, 4) })
+                            setResData({
+                              ...resData,
+                              cardCvc: keepDigits(e.target.value).slice(0, 4),
+                            })
                           }
                           placeholder="123"
                           maxLength={4}

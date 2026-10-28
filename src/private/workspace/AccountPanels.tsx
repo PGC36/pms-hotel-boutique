@@ -130,9 +130,7 @@ export function AccountProfileModal({
             <input
               className="hk-form-select"
               value={displayName}
-              onChange={(event) =>
-                setDisplayName(keepPersonNameCharacters(event.target.value))
-              }
+              onChange={(event) => setDisplayName(keepPersonNameCharacters(event.target.value))}
               maxLength={80}
             />
           </label>

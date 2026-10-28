@@ -1398,9 +1398,8 @@ export function CreateBookingModal({
     try {
       // Reconfirmar antes de crear evita reservar con disponibilidad ya vencida.
       // El backend vuelve a validar y mantiene la última palabra ante solicitudes simultáneas.
-      const { publicBookingCatalogService } = await import(
-        '@/services/publicBookingCatalogService'
-      );
+      const { publicBookingCatalogService } =
+        await import('@/services/publicBookingCatalogService');
       const results = await publicBookingCatalogService.getAvailability({
         checkIn,
         checkOut,

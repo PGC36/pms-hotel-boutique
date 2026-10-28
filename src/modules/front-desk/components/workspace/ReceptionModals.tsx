@@ -1001,8 +1001,7 @@ export function CheckinModal({
           max: 110,
           requiredMessage: 'Ingresa la edad.',
           maxMessage: 'La edad no puede superar 110 años.',
-        }) ??
-        undefined,
+        }) ?? undefined,
     };
     setDraftErrors(nextErrors);
     if (Object.values(nextErrors).some(Boolean)) return;

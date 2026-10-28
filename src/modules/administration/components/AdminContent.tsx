@@ -3202,7 +3202,11 @@ function AdminContentReady({
           {filtered.length === 0 ? (
             <div className="hk-empty">
               <Percent size={22} />
-              <p>{search.trim() ? 'No se encontraron promociones para esta búsqueda' : 'No hay promociones registradas'}</p>
+              <p>
+                {search.trim()
+                  ? 'No se encontraron promociones para esta búsqueda'
+                  : 'No hay promociones registradas'}
+              </p>
             </div>
           ) : (
             <AdminTable
@@ -3658,7 +3662,11 @@ function AdminContentReady({
                     (entry) => entry.productId === saved.id,
                   );
                   if (linkedItem) {
-                    const inventoryRow = adminInventoryFromDomain(linkedItem, inventory.length, saved);
+                    const inventoryRow = adminInventoryFromDomain(
+                      linkedItem,
+                      inventory.length,
+                      saved,
+                    );
                     setInventory((current) =>
                       current.some((entry) => entry.dbId === inventoryRow.dbId)
                         ? current.map((entry) =>

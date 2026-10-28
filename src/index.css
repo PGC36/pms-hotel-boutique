@@ -9037,14 +9037,33 @@ button {
     min-width: 0;
   }
 
-  .rs-order-card { padding: var(--space-5); }
-  .rs-order-head { flex-wrap: wrap; gap: var(--space-3); }
+  .rs-order-card {
+    padding: var(--space-5);
+  }
+  .rs-order-head {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
   .rs-order-head h3,
-  .rs-order-items > div > span:first-child { overflow-wrap: anywhere; }
-  .rs-order-items > div { gap: var(--space-3); }
-  .rs-order-items > div > span:last-child { flex-shrink: 0; }
-  .rs-order-actions { width: 100%; margin-left: 0; }
-  .rs-order-actions .button { flex: 1 1 auto; justify-content: center; }
+  .rs-order-items > div > span:first-child {
+    overflow-wrap: anywhere;
+  }
+  .rs-order-items > div {
+    gap: var(--space-3);
+  }
+  .rs-order-items > div > span:last-child {
+    flex-shrink: 0;
+  }
+  .rs-order-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .rs-order-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
   .rs-menu-grid,
-  .rs-inventory-grid { grid-template-columns: minmax(0, 1fr); }
+  .rs-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

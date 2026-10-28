@@ -2541,7 +2541,12 @@ function installReceptionBackend({
 let recBackend;
 function ReceptionLocationProbe() {
   const location = useLocation();
-  return <span id="reception-location-search">{location.pathname}{location.search}</span>;
+  return (
+    <span id="reception-location-search">
+      {location.pathname}
+      {location.search}
+    </span>
+  );
 }
 async function mountReception(options) {
   recBackend = installReceptionBackend(options);
@@ -2875,7 +2880,7 @@ test('recepción: asigna una habitación compatible dentro del check-in', async 
   });
   assert.equal(recBackend.requests.filter(({ call }) => call.endsWith('/check-in')).length, 0);
   assert.match(text(view.root), /registra 1 acompañante adulto/);
-  fillCheckinCompanion({ firstName: 'Mario', lastName: 'Castro', documentNumber: 'A-123' });
+  fillCheckinCompanion({ firstName: 'Mario', lastName: 'Castro', documentNumber: '123' });
   // Huésped, acompañantes, check-in y folio: cada servicio simula 300–600 ms.
   await act(async () => {
     buttons('Confirmar check-in')[0].props.onClick();
@@ -3309,8 +3314,8 @@ const INVALID_NAMES = [
   'J0sé',
   '@na',
   'Ana!',
-    'Ma. José',
-    'St. John',
+  'Ma. José',
+  'St. John',
   'Ana_Lucía',
   'Ana/Lucía',
   '<script>',

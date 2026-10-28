@@ -11,7 +11,7 @@
 export const MAX_WHOLE_NUMBER = 2_147_483_647;
 
 const DIGITS_ONLY = /^\d*$/;
-const PERSON_NAME_INPUT = /[^\p{L}\p{M} '’\-]/gu;
+const PERSON_NAME_INPUT = /[^\p{L}\p{M} '’-]/gu;
 /** Monto en edición: dígitos con punto decimal opcional y como máximo 2 decimales. */
 const MONEY_TYPING = /^\d*(?:\.\d{0,2})?$/;
 const MONEY_VALUE = /^\d+(?:\.\d{1,2})?$|^\.\d{1,2}$/;
