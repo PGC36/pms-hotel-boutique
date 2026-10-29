@@ -2,18 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   CalendarDays,
-  Car,
   Check,
   ChevronLeft,
   ChevronRight,
-  Coffee,
-  Gift,
   ShieldCheck,
-  Sparkles,
   UserRound,
-  Utensils,
-  Waves,
-  Wifi,
 } from 'lucide-react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { publicBookingCatalogService } from '@/services/publicBookingCatalogService';
@@ -22,15 +15,22 @@ import { CatalogImage } from '@/shared/components/CatalogImage';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
-import type { Amenity, AmenityCategory } from '@/shared/types/entities/amenity';
-import type { Promotion } from '@/shared/types/entities/promotion';
 import { findPrimaryImage } from '@/shared/types/entities/media-image';
 import type { Rate } from '@/shared/types/entities/rate';
 import { findBaseRate } from '@/shared/utils/rateSelection';
 import type { RoomType } from '@/shared/types/entities/room-type';
-import { formatAmenitySchedule } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights, formatDateGT } from '@/shared/utils/date';
+import {
+  AmenitiesSection,
+  PromotionsSection,
+  type AmenitiesState,
+  type PromotionsState,
+} from '@/modules/booking-engine/components/PublicCatalogSections';
+import {
+  advancePublicCarousel,
+  scrollPublicCarousel,
+} from '@/modules/booking-engine/utils/publicCarousel';
 import {
   hotelToday,
   validateStayDates,
@@ -44,23 +44,6 @@ type AvailableRoomType = {
   roomType: RoomType;
   availableRooms?: number;
   rate?: Rate;
-};
-
-type AmenitiesState =
-  | { status: 'idle' | 'loading' }
-  | { status: 'success'; amenities: Amenity[] }
-  | { status: 'error'; message: string };
-
-type PromotionsState =
-  | { status: 'idle' | 'loading' }
-  | { status: 'success'; promotions: Promotion[] }
-  | { status: 'error'; message: string };
-
-/** Ícono de la etiqueta de cada amenidad, por categoría; la foto sale del backend. */
-const AMENITY_CATEGORY_ICONS: Record<AmenityCategory, typeof Sparkles> = {
-  hotel: Waves,
-  room: Coffee,
-  service: Utensils,
 };
 
 const policies = [
@@ -161,9 +144,9 @@ export function SearchScreen() {
   const [hasSearched, setHasSearched] = useState(false);
   const [guests, setGuests] = useState('2 adultos');
   const availabilityRequest = useRef(0);
-  const showcaseCarouselRef = useRef<HTMLDivElement>(null);
-  const amenityCarouselRef = useRef<HTMLDivElement>(null);
-  const promotionCarouselRef = useRef<HTMLDivElement>(null);
+  const showcaseCarouselRef = useRef<HTMLElement>(null);
+  const amenityCarouselRef = useRef<HTMLElement>(null);
+  const promotionCarouselRef = useRef<HTMLElement>(null);
   const [searchDirty, setSearchDirty] = useState(false);
   const [amenitiesState, setAmenitiesState] = useState<AmenitiesState>({ status: 'idle' });
   const [promotionsState, setPromotionsState] = useState<PromotionsState>({ status: 'idle' });
@@ -172,53 +155,21 @@ export function SearchScreen() {
     document.getElementById('buscar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
 
-  const scrollShowcase = useCallback((direction: -1 | 1) => {
-    const carousel = showcaseCarouselRef.current;
-    const firstCard = carousel?.querySelector<HTMLElement>(
-      '.visitor-room:not([data-carousel-clone="true"])',
-    );
-    const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-    if (!carousel || !firstCard) return;
-    const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-    const cycleWidth = cloneStart ? cloneStart.offsetLeft - firstCard.offsetLeft : 0;
-    let destination =
-      carousel.scrollLeft + direction * (firstCard.getBoundingClientRect().width + gap);
-    if (destination < 0 && cycleWidth > 0) destination += cycleWidth;
-    if (destination >= cycleWidth && cycleWidth > 0) destination -= cycleWidth;
-    carousel.scrollLeft = destination;
-  }, []);
-
-  const scrollAmenities = useCallback((direction: -1 | 1) => {
-    const carousel = amenityCarouselRef.current;
-    const firstCard = carousel?.querySelector<HTMLElement>(
-      '.booking-amenity-card:not([data-carousel-clone="true"])',
-    );
-    const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-    if (!carousel || !firstCard) return;
-    const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-    const cycleWidth = cloneStart ? cloneStart.offsetLeft - firstCard.offsetLeft : 0;
-    let destination =
-      carousel.scrollLeft + direction * (firstCard.getBoundingClientRect().width + gap);
-    if (destination < 0 && cycleWidth > 0) destination += cycleWidth;
-    if (destination >= cycleWidth && cycleWidth > 0) destination -= cycleWidth;
-    carousel.scrollLeft = destination;
-  }, []);
-
-  const scrollPromotions = useCallback((direction: -1 | 1) => {
-    const carousel = promotionCarouselRef.current;
-    const firstCard = carousel?.querySelector<HTMLElement>(
-      '.booking-promo-card:not([data-carousel-clone="true"])',
-    );
-    const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-    if (!carousel || !firstCard) return;
-    const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-    const cycleWidth = cloneStart ? cloneStart.offsetLeft - firstCard.offsetLeft : 0;
-    let destination =
-      carousel.scrollLeft + direction * (firstCard.getBoundingClientRect().width + gap);
-    if (destination < 0 && cycleWidth > 0) destination += cycleWidth;
-    if (destination >= cycleWidth && cycleWidth > 0) destination -= cycleWidth;
-    carousel.scrollLeft = destination;
-  }, []);
+  const scrollShowcase = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(showcaseCarouselRef.current, '.visitor-room', direction),
+    [],
+  );
+  const scrollAmenities = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(amenityCarouselRef.current, '.booking-amenity-card', direction),
+    [],
+  );
+  const scrollPromotions = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(promotionCarouselRef.current, '.booking-promo-card', direction),
+    [],
+  );
 
   const showRecommendations = !hasSearched;
   const showFixedResults = hasSearched && !searchDirty && status === 'success';
@@ -252,94 +203,39 @@ export function SearchScreen() {
   }, [loadShowcase]);
 
   useEffect(() => {
-    if (!showRecommendations || showcaseStatus !== 'success' || roomTypes.length < 2) return;
+    const autoCarousel =
+      publicTab === 'amenidades' && amenitiesState.status === 'success'
+        ? {
+            ref: amenityCarouselRef,
+            selector: '.booking-amenity-card',
+            count: amenitiesState.amenities.length,
+          }
+        : publicTab === 'promociones' && promotionsState.status === 'success'
+          ? {
+              ref: promotionCarouselRef,
+              selector: '.booking-promo-card',
+              count: promotionsState.promotions.length,
+            }
+          : {
+              ref: showcaseCarouselRef,
+              selector: '.visitor-room',
+              count: showRecommendations && showcaseStatus === 'success' ? roomTypes.length : 0,
+            };
 
-    const timer = window.setInterval(() => {
-      const carousel = showcaseCarouselRef.current;
-      const firstCard = carousel?.querySelector<HTMLElement>(
-        '.visitor-room:not([data-carousel-clone="true"])',
-      );
-      const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-      if (!carousel || !firstCard || !cloneStart) return;
-
-      const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-      const cycleWidth = cloneStart.offsetLeft - firstCard.offsetLeft;
-      if (cycleWidth > 0 && carousel.scrollLeft >= cycleWidth) {
-        carousel.scrollLeft -= cycleWidth;
-      }
-
-      carousel.scrollBy({
-        left: firstCard.getBoundingClientRect().width + gap,
-        behavior: 'smooth',
-      });
-    }, 5000);
-
+    if (autoCarousel.count < 2) return;
+    const timer = window.setInterval(
+      () => advancePublicCarousel(autoCarousel.ref.current, autoCarousel.selector),
+      5000,
+    );
     return () => window.clearInterval(timer);
-  }, [roomTypes.length, showRecommendations, showcaseStatus]);
-
-  useEffect(() => {
-    if (
-      publicTab !== 'amenidades' ||
-      amenitiesState.status !== 'success' ||
-      amenitiesState.amenities.length < 2
-    ) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      const carousel = amenityCarouselRef.current;
-      const firstCard = carousel?.querySelector<HTMLElement>(
-        '.booking-amenity-card:not([data-carousel-clone="true"])',
-      );
-      const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-      if (!carousel || !firstCard || !cloneStart) return;
-
-      const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-      const cycleWidth = cloneStart.offsetLeft - firstCard.offsetLeft;
-      if (cycleWidth > 0 && carousel.scrollLeft >= cycleWidth) {
-        carousel.scrollLeft -= cycleWidth;
-      }
-
-      carousel.scrollBy({
-        left: firstCard.getBoundingClientRect().width + gap,
-        behavior: 'smooth',
-      });
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, [amenitiesState, publicTab]);
-
-  useEffect(() => {
-    if (
-      publicTab !== 'promociones' ||
-      promotionsState.status !== 'success' ||
-      promotionsState.promotions.length < 2
-    ) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      const carousel = promotionCarouselRef.current;
-      const firstCard = carousel?.querySelector<HTMLElement>(
-        '.booking-promo-card:not([data-carousel-clone="true"])',
-      );
-      const cloneStart = carousel?.querySelector<HTMLElement>('[data-carousel-clone="true"]');
-      if (!carousel || !firstCard || !cloneStart) return;
-
-      const gap = Number.parseFloat(window.getComputedStyle(carousel).columnGap) || 0;
-      const cycleWidth = cloneStart.offsetLeft - firstCard.offsetLeft;
-      if (cycleWidth > 0 && carousel.scrollLeft >= cycleWidth) {
-        carousel.scrollLeft -= cycleWidth;
-      }
-
-      carousel.scrollBy({
-        left: firstCard.getBoundingClientRect().width + gap,
-        behavior: 'smooth',
-      });
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, [promotionsState, publicTab]);
+  }, [
+    amenitiesState,
+    promotionsState,
+    publicTab,
+    roomTypes.length,
+    showcaseStatus,
+    showRecommendations,
+  ]);
 
   const loadAmenities = useCallback(async () => {
     setAmenitiesState({ status: 'loading' });
@@ -482,215 +378,23 @@ export function SearchScreen() {
     ) : null;
   const renderAmenitiesSection = () =>
     publicTab === 'amenidades' ? (
-      <section className="booking-public-section" id="amenidades">
-        <div className="visitor-section-head">
-          <div>
-            <p className="eyebrow">Amenidades incluidas</p>
-            <h2>Todo listo para disfrutar tu estancia</h2>
-          </div>
-          <div className="booking-amenity-actions">
-            {amenitiesState.status === 'success' && amenitiesState.amenities.length > 1 ? (
-              <div className="booking-carousel-controls" aria-label="Controles de amenidades">
-                <button
-                  className="booking-carousel-control"
-                  type="button"
-                  aria-label="Ver amenidad anterior"
-                  onClick={() => scrollAmenities(-1)}
-                >
-                  <ChevronLeft size={18} aria-hidden="true" />
-                </button>
-                <button
-                  className="booking-carousel-control"
-                  type="button"
-                  aria-label="Ver más amenidades"
-                  onClick={() => scrollAmenities(1)}
-                >
-                  <ChevronRight size={18} aria-hidden="true" />
-                </button>
-              </div>
-            ) : null}
-            <button className="text-button" type="button" onClick={scrollToSearch}>
-              Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-        {amenitiesState.status === 'loading' || amenitiesState.status === 'idle' ? (
-          <LoadingState label="Cargando amenidades..." />
-        ) : null}
-        {amenitiesState.status === 'error' ? (
-          <ErrorState description={amenitiesState.message} onRetry={loadAmenities} />
-        ) : null}
-        {amenitiesState.status === 'success' && amenitiesState.amenities.length === 0 ? (
-          <EmptyState
-            title="Sin amenidades publicadas"
-            description="Pronto compartiremos los servicios del hotel."
-          />
-        ) : null}
-        {amenitiesState.status === 'success' && amenitiesState.amenities.length > 0 ? (
-          <div
-            className={`booking-amenity-grid${amenitiesState.amenities.length > 1 ? ` booking-amenity-grid--carousel booking-amenity-grid--count-${Math.min(amenitiesState.amenities.length, 4)}` : ''}`}
-            ref={amenitiesState.amenities.length > 1 ? amenityCarouselRef : undefined}
-            role={amenitiesState.amenities.length > 1 ? 'region' : undefined}
-            aria-label={amenitiesState.amenities.length > 1 ? 'Amenidades del hotel' : undefined}
-            aria-roledescription={amenitiesState.amenities.length > 1 ? 'carrusel' : undefined}
-            aria-live={amenitiesState.amenities.length > 1 ? 'off' : undefined}
-            tabIndex={amenitiesState.amenities.length > 1 ? 0 : undefined}
-          >
-            {(amenitiesState.amenities.length > 1
-              ? [
-                  ...amenitiesState.amenities,
-                  ...amenitiesState.amenities,
-                  ...amenitiesState.amenities,
-                ]
-              : amenitiesState.amenities
-            ).map((amenity, index) => {
-              const isClone = index >= amenitiesState.amenities.length;
-              const Icon = AMENITY_CATEGORY_ICONS[amenity.category] ?? Sparkles;
-              const schedule = formatAmenitySchedule(amenity);
-              return (
-                <article
-                  className="booking-amenity-card"
-                  key={`${amenity.id}-${index}`}
-                  data-carousel-clone={isClone ? 'true' : undefined}
-                  aria-hidden={isClone || undefined}
-                >
-                  <div className="booking-amenity-image">
-                    <CatalogImage
-                      className="booking-amenity-photo"
-                      image={findPrimaryImage(amenity.images)}
-                      variant="medium"
-                      alt={`Foto de ${amenity.name}`}
-                    />
-                    <span>
-                      <Icon size={18} aria-hidden="true" />
-                      {schedule || 'Disponible'}
-                    </span>
-                  </div>
-                  <div>
-                    <h3>{amenity.name}</h3>
-                    {amenity.description ? <p>{amenity.description}</p> : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
-        <div className="booking-service-strip">
-          <span>
-            <Wifi size={16} aria-hidden="true" /> Wi-Fi de alta velocidad
-          </span>
-          <span>
-            <Car size={16} aria-hidden="true" /> Traslado bajo reserva
-          </span>
-          <span>
-            <Sparkles size={16} aria-hidden="true" /> Servicio a la habitación
-          </span>
-        </div>
-      </section>
+      <AmenitiesSection
+        state={amenitiesState}
+        onRetry={loadAmenities}
+        onSearch={scrollToSearch}
+        onMove={scrollAmenities}
+        carouselRef={amenityCarouselRef}
+      />
     ) : null;
   const renderPromotionsSection = () =>
     publicTab === 'promociones' ? (
-      <section className="booking-public-section" id="promociones">
-        <div className="visitor-section-head">
-          <div>
-            <p className="eyebrow">Ofertas especiales</p>
-            <h2>Promociones para tu próxima estancia</h2>
-          </div>
-          <div className="booking-amenity-actions">
-            {promotionsState.status === 'success' && promotionsState.promotions.length > 1 ? (
-              <div className="booking-carousel-controls" aria-label="Controles de promociones">
-                <button
-                  className="booking-carousel-control"
-                  type="button"
-                  aria-label="Ver promoción anterior"
-                  onClick={() => scrollPromotions(-1)}
-                >
-                  <ChevronLeft size={18} aria-hidden="true" />
-                </button>
-                <button
-                  className="booking-carousel-control"
-                  type="button"
-                  aria-label="Ver más promociones"
-                  onClick={() => scrollPromotions(1)}
-                >
-                  <ChevronRight size={18} aria-hidden="true" />
-                </button>
-              </div>
-            ) : null}
-            <button className="text-button" type="button" onClick={scrollToSearch}>
-              Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-        {promotionsState.status === 'loading' || promotionsState.status === 'idle' ? (
-          <LoadingState label="Cargando promociones..." />
-        ) : null}
-        {promotionsState.status === 'error' ? (
-          <ErrorState description={promotionsState.message} onRetry={loadPromotions} />
-        ) : null}
-        {promotionsState.status === 'success' && promotionsState.promotions.length === 0 ? (
-          <EmptyState
-            title="No hay promociones disponibles"
-            description="Vuelve pronto para descubrir nuevas ofertas."
-          />
-        ) : null}
-        {promotionsState.status === 'success' && promotionsState.promotions.length > 0 ? (
-          <div
-            className={`booking-promo-grid${promotionsState.promotions.length > 1 ? ` booking-promo-grid--carousel booking-promo-grid--count-${Math.min(promotionsState.promotions.length, 4)}` : ''}`}
-            ref={promotionsState.promotions.length > 1 ? promotionCarouselRef : undefined}
-            role={promotionsState.promotions.length > 1 ? 'region' : undefined}
-            aria-label={
-              promotionsState.promotions.length > 1 ? 'Promociones disponibles' : undefined
-            }
-            aria-roledescription={promotionsState.promotions.length > 1 ? 'carrusel' : undefined}
-            aria-live={promotionsState.promotions.length > 1 ? 'off' : undefined}
-            tabIndex={promotionsState.promotions.length > 1 ? 0 : undefined}
-          >
-            {(promotionsState.promotions.length > 1
-              ? [
-                  ...promotionsState.promotions,
-                  ...promotionsState.promotions,
-                  ...promotionsState.promotions,
-                ]
-              : promotionsState.promotions
-            ).map((promotion, index) => {
-              const isClone = index >= promotionsState.promotions.length;
-              return (
-                <article
-                  className="booking-promo-card"
-                  key={`${promotion.id}-${index}`}
-                  data-carousel-clone={isClone ? 'true' : undefined}
-                  aria-hidden={isClone || undefined}
-                >
-                  <div className="booking-promo-image">
-                    <span className="booking-promo-icon" aria-hidden="true">
-                      <Gift size={32} strokeWidth={1.6} />
-                    </span>
-                    <span>{promotion.discountPercent}% de descuento</span>
-                  </div>
-                  <div className="booking-promo-body">
-                    <small>Código: {promotion.code}</small>
-                    <h3>{promotion.name}</h3>
-                    {promotion.description ? <p>{promotion.description}</p> : null}
-                    <p>
-                      Vigente del {formatDateGT(promotion.validFrom)} al{' '}
-                      {formatDateGT(promotion.validTo)}
-                    </p>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={scrollToSearch}
-                      tabIndex={isClone ? -1 : undefined}
-                    >
-                      Reservar ahora <ArrowRight size={14} aria-hidden="true" />
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
-      </section>
+      <PromotionsSection
+        state={promotionsState}
+        onRetry={loadPromotions}
+        onSearch={scrollToSearch}
+        onMove={scrollPromotions}
+        carouselRef={promotionCarouselRef}
+      />
     ) : null;
   const renderRoomsSection = () =>
     publicTab === 'habitaciones' ? (
@@ -772,10 +476,9 @@ export function SearchScreen() {
         {showcaseStatus === 'success' &&
         ((showRecommendations && roomCards.length > 0) ||
           (showFixedResults && results.length > 0)) ? (
-          <div
+          <section
             className={`room-cards ${showRecommendations ? 'room-cards--carousel' : 'room-cards--results'}`}
             ref={showRecommendations ? showcaseCarouselRef : undefined}
-            role={showRecommendations ? 'region' : undefined}
             aria-label={showRecommendations ? 'Habitaciones recomendadas' : undefined}
             aria-roledescription={showRecommendations ? 'carrusel' : undefined}
             aria-live={showRecommendations ? 'off' : undefined}
@@ -865,7 +568,7 @@ export function SearchScreen() {
                 );
               },
             )}
-          </div>
+          </section>
         ) : null}
       </>
     ) : null;

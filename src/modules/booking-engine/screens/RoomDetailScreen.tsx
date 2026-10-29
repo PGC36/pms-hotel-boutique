@@ -96,7 +96,7 @@ export function RoomDetailScreen() {
   const [activeGalleryImage, setActiveGalleryImage] = useState(0);
   // Solo la consulta más reciente puede escribir el estado.
   const quoteRequestRef = useRef(0);
-  const galleryViewportRef = useRef<HTMLDivElement>(null);
+  const galleryViewportRef = useRef<HTMLElement>(null);
   const galleryImages = orderGalleryImages(detail.roomType?.images ?? []);
 
   useEffect(() => {
@@ -264,7 +264,7 @@ export function RoomDetailScreen() {
             : undefined;
   // Principal primero, luego en el orden de la galería del backend.
   const roomTypeName = detail.roomType.name;
-  const updateGalleryIndex = (viewport: HTMLDivElement) => {
+  const updateGalleryIndex = (viewport: HTMLElement) => {
     if (viewport.clientWidth === 0) return;
     setActiveGalleryImage(Math.round(viewport.scrollLeft / viewport.clientWidth));
   };
@@ -290,13 +290,12 @@ export function RoomDetailScreen() {
       <div className="booking-detail-layout">
         <div className="booking-detail-main">
           <div className="booking-photo-gallery">
-            <div
+            <section
               className="booking-photo-grid"
               aria-label="Fotografías de la habitación"
               aria-roledescription="carrusel"
               onScroll={(event) => updateGalleryIndex(event.currentTarget)}
               ref={galleryViewportRef}
-              role="region"
             >
               {galleryImages.length > 0 ? (
                 galleryImages.map((image, index) => (
@@ -316,7 +315,7 @@ export function RoomDetailScreen() {
                   />
                 </div>
               )}
-            </div>
+            </section>
             {galleryImages.length > 1 && (
               <div className="booking-photo-controls" aria-label="Controles de fotografías">
                 <button
