@@ -1322,6 +1322,15 @@ function installGuestBookingFetchMock() {
       bookings.push(booking);
       return json(booking, 201);
     }
+    if (method === 'PUT' && /^\/bookings\/[^/]+\/room$/.test(path)) {
+      const id = path.split('/')[2];
+      const booking = bookings.find((item) => item.id === id);
+      if (!booking) return json({ message: 'Not found' }, 404);
+      const room = findRoom(body.roomId);
+      if (!room) return json({ message: 'Not found' }, 404);
+      booking.roomId = room.id;
+      return json(booking);
+    }
     if (method === 'PUT' && path.startsWith('/bookings/')) {
       const id = path.split('/').at(-1);
       const booking = bookings.find((item) => item.id === id);
@@ -2031,7 +2040,7 @@ test('INT-04: recepcion usa backend para acompanantes, asignacion, check-in y ch
     bookingService.assignRoom(bookingId, roomId),
   );
   assert.equal(assigned.roomId, roomId);
-  assert.equal(calls.at(-1).call, `PUT /bookings/${bookingId}`);
+  assert.equal(calls.at(-1).call, `PUT /bookings/${bookingId}/room`);
   assert.deepEqual(calls.at(-1).body, { roomId });
 
   const savedCompanions = await assertServiceCall(

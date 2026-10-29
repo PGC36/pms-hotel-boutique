@@ -72,13 +72,13 @@ export function DataTable<Row extends object>({
   emptyMessage = 'No hay registros para mostrar.',
   getRowId,
   caption = 'Registros',
-  pageSize = 5,
+  pageSize = 10,
 }: DataTableProps<Row>) {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ id: string; direction: 'ascending' | 'descending' } | null>(
     null,
   );
-  const size = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : 5;
+  const size = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : 10;
   const totalPages = Math.max(1, Math.ceil(data.length / size));
   const currentPage = Math.min(page, totalPages);
   useEffect(() => setPage(1), [size]);

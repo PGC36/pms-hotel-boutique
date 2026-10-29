@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Save } from 'lucide-react';
 
 import { housekeepingChecklistTemplateService } from '@/services/housekeepingChecklistTemplateService';
@@ -20,17 +20,25 @@ export function HousekeepingChecklistTemplatePanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const loadingRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  const itemsDirtyRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setError('');
     try {
       const template = await housekeepingChecklistTemplateService.get();
+      hasLoadedRef.current = true;
       setTemplateName(template.name);
       setItemsText(template.items.join('\n'));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'No fue posible cargar la checklist.');
+      if (!hasLoadedRef.current) {
+        setError(cause instanceof Error ? cause.message : 'No fue posible cargar la checklist.');
+      }
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }, []);
@@ -38,6 +46,39 @@ export function HousekeepingChecklistTemplatePanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
+    let active = true;
+    const refreshSilently = () => {
+      if (
+        !active ||
+        saving ||
+        document.visibilityState !== 'visible' ||
+        document.querySelector('.modal-backdrop') ||
+        itemsDirtyRef.current ||
+        (document.activeElement instanceof HTMLElement &&
+          document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
+      )
+        return;
+      void load();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshSilently();
+    };
+    const intervalId = window.setInterval(refreshSilently, 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [load, saving]);
 
   const save = async () => {
     if (saving) return;
@@ -58,6 +99,7 @@ export function HousekeepingChecklistTemplatePanel({
     setSaving(true);
     try {
       const saved = await housekeepingChecklistTemplateService.update(items);
+      itemsDirtyRef.current = false;
       setItemsText(saved.items.join('\n'));
       onAction('Checklist predeterminada actualizada');
     } catch (cause) {

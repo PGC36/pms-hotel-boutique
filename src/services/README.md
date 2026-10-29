@@ -145,7 +145,7 @@ legacy `BKG-*` y las creaciones con catalogos mock `RT-*` ya no conservan el
 prototipo local productivo.
 
 Actualizacion 2026-10-04 (#102 / INT-04): para reservas UUID,
-`bookingService.assignRoom` usa `PUT /bookings/{id}` con `roomId`,
+`bookingService.assignRoom` usa `PUT /bookings/{id}/room` con `roomId`,
 `checkIn` usa `POST /bookings/{id}/check-in` y `checkOut` usa
 `POST /bookings/{id}/check-out`. El frontend no cambia estados localmente ni
 recalcula reglas financieras para esas reservas: si el backend responde `409`

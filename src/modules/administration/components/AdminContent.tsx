@@ -1109,7 +1109,15 @@ function AdminToolbar({
 }
 
 function AdminTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
-  const labeledRows = Children.map(children, (row) => {
+  const [page, setPage] = useState(1);
+  const rows = Children.toArray(children);
+  const totalPages = Math.max(1, Math.ceil(rows.length / 10));
+  const currentPage = Math.min(page, totalPages);
+  const visibleRows = rows.slice((currentPage - 1) * 10, currentPage * 10);
+
+  useEffect(() => setPage((current) => Math.min(current, totalPages)), [totalPages]);
+
+  const labeledRows = Children.map(visibleRows, (row) => {
     if (!isValidElement<{ children?: ReactNode }>(row) || row.type !== 'tr') return row;
 
     const cells = Children.map(row.props.children, (cell, index) => {
@@ -1121,18 +1129,26 @@ function AdminTable({ headers, children }: { headers: string[]; children: React.
   });
 
   return (
-    <div className="adm-table-wrap">
-      <table className="adm-table">
-        <thead>
-          <tr>
-            {headers.map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{labeledRows}</tbody>
-      </table>
-    </div>
+    <>
+      <div className="adm-table-wrap">
+        <table className="adm-table">
+          <thead>
+            <tr>
+              {headers.map((h) => (
+                <th key={h}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>{labeledRows}</tbody>
+        </table>
+      </div>
+      <Pagination
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        label={`Paginación: ${headers[0] ?? 'registros'}`}
+      />
+    </>
   );
 }
 
@@ -1313,12 +1329,14 @@ export function AdminContent({
 }) {
   const [screen, setScreen] = useState<ScreenState>({ status: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
+  const refreshInProgress = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     async function load() {
-      setScreen({ status: 'loading' });
+      refreshInProgress.current = true;
+      setScreen((current) => (current.status === 'ready' ? current : { status: 'loading' }));
       try {
         const [
           users,
@@ -1493,7 +1511,15 @@ export function AdminContent({
           });
         }
       } catch (cause) {
-        if (active) setScreen({ status: 'error', message: getErrorMessage(cause) });
+        if (active) {
+          setScreen((current) =>
+            current.status === 'ready'
+              ? current
+              : { status: 'error', message: getErrorMessage(cause) },
+          );
+        }
+      } finally {
+        refreshInProgress.current = false;
       }
     }
 
@@ -1502,6 +1528,41 @@ export function AdminContent({
       active = false;
     };
   }, [reloadKey]);
+
+  useEffect(() => {
+    if (nav === 'Catálogo de Conserjería' || nav === 'Catálogo de Limpieza') return undefined;
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
+    let active = true;
+    const refreshSilently = () => {
+      if (
+        !active ||
+        refreshInProgress.current ||
+        document.visibilityState !== 'visible' ||
+        document.querySelector('.modal-backdrop') ||
+        (document.activeElement instanceof HTMLElement &&
+          document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
+      ) {
+        return;
+      }
+      refreshInProgress.current = true;
+      setReloadKey((current) => current + 1);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshSilently();
+    };
+    const intervalId = window.setInterval(refreshSilently, 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [nav]);
 
   if (nav === 'Catálogo de Conserjería') {
     return <ConciergeCatalogPanel onAction={onAction} />;
@@ -1532,7 +1593,6 @@ export function AdminContent({
 
   return (
     <AdminContentReady
-      key={reloadKey}
       nav={nav}
       onAction={onAction}
       onNavigate={onNavigate}
@@ -1642,9 +1702,10 @@ function AdminContentReady({
   const [inventory, setInventory] = useState(initialInventory);
   const [movements, setMovements] = useState(initialMovements);
   const [cashMovements, setCashMovements] = useState(initialCashMovements);
-  const [bookings] = useState(initialBookings);
+  const [bookings, setBookings] = useState(initialBookings);
   const [cashSessions, setCashSessions] = useState(initialCashSessions);
-  const [audit] = useState(initialAudit);
+  const [audit, setAudit] = useState(initialAudit);
+  const [activityEntries, setActivityEntries] = useState(recentActivity);
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('Todos');
@@ -1752,6 +1813,40 @@ function AdminContentReady({
   const [cashOpen, setCashOpen] = useState(() =>
     initialCashSessions.some((session) => session.status === 'open'),
   );
+  useEffect(() => {
+    setUsers(initialAdminUsers);
+    setRoles(initialAdminRoles);
+    setRooms(initialAdminRooms);
+    setRoomTypes(initialAdminRoomTypes);
+    setSeasonRates(initialSeasonRates);
+    setPromos(initialPromos);
+    setAmenities(initialAmenities);
+    setRsItems(initialRoomServiceItems);
+    setInventory(initialInventory);
+    setMovements(initialMovements);
+    setCashMovements(initialCashMovements);
+    setBookings(initialBookings);
+    setCashSessions(initialCashSessions);
+    setAudit(initialAudit);
+    setActivityEntries(recentActivity);
+    setCashOpen(initialCashSessions.some((session) => session.status === 'open'));
+  }, [
+    initialAdminUsers,
+    initialAdminRoles,
+    initialAdminRooms,
+    initialAdminRoomTypes,
+    initialSeasonRates,
+    initialPromos,
+    initialAmenities,
+    initialRoomServiceItems,
+    initialInventory,
+    initialMovements,
+    initialCashMovements,
+    initialBookings,
+    initialCashSessions,
+    initialAudit,
+    recentActivity,
+  ]);
   const [reportFilter, setReportFilter] = useState<ReportPeriod>('Mes');
   const [reportTab, setReportTab] = useState<AdminReportTab>('Ocupación');
   const [operationalReport, setOperationalReport] = useState<OperationalReportState>({
@@ -2253,14 +2348,14 @@ function AdminContentReady({
                 <Activity size={17} />
               </button>
             </div>
-            {recentActivity.length === 0 ? (
+            {activityEntries.length === 0 ? (
               <div className="hk-empty">
                 <Activity size={20} />
                 <p>Sin actividad registrada todavía</p>
               </div>
             ) : (
               <div className="activity-list">
-                {recentActivity.map((entry) => (
+                {activityEntries.map((entry) => (
                   <div className="activity-item" key={entry.id}>
                     <span
                       className={`activity-dot ${entry.action === 'Anulación' || entry.action === 'Eliminación' || entry.action === 'Cierre' ? 'terracotta' : 'success'}`}

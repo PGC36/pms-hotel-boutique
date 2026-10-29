@@ -9,6 +9,7 @@ import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { Input } from '@/shared/components/Input';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 import { bookingService } from '@/services/bookingService';
 import { guestAccountService } from '@/services/guestAccountService';
 import { roomService } from '@/services/roomService';
@@ -278,8 +279,12 @@ export function OccupancyScreen() {
           {view.unassignedBookings.length > 0 && (
             <section className="occupancy-panel" aria-labelledby="unassigned-bookings-title">
               <h2 id="unassigned-bookings-title">Reservas sin habitación asignada</h2>
-              <ul className="occupancy-list">
-                {view.unassignedBookings.map((booking) => (
+              <PaginatedList
+                items={view.unassignedBookings}
+                getKey={(booking) => booking.id}
+                listClassName="occupancy-list"
+                label="Paginación de reservas sin habitación"
+                renderItem={(booking) => (
                   <li key={booking.id}>
                     <Button
                       size="sm"
@@ -308,8 +313,8 @@ export function OccupancyScreen() {
                       <span className="occupancy-muted">—</span>
                     )}
                   </li>
-                ))}
-              </ul>
+                )}
+              />
             </section>
           )}
         </>

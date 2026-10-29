@@ -23,6 +23,7 @@ import type {
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
 import { ConfirmActionModal, ReasonModal, ReservationEditModal } from './ReceptionModals';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 
 /** B11: aplicar o devolver un depósito retenido; el backend valida estado y saldo. */
 export type DepositAction = 'apply' | 'refund';
@@ -374,81 +375,88 @@ export function ReservationDetail({
 
         {tab === 'folio' && (
           <>
-            <div className="rc-folio-list">
-              {reservation.folio.length === 0 && (
+            {reservation.folio.length === 0 ? (
+              <div className="rc-folio-list">
                 <div className="hk-empty">
                   <FileText size={22} />
                   <p>Sin movimientos registrados</p>
                 </div>
-              )}
-              {reservation.folio.map((entry) => (
-                <div
-                  className={`rc-folio-row ${entry.status === 'Anulado' ? 'voided' : ''}`}
-                  key={entry.id}
-                >
-                  <div className="rc-folio-info">
-                    <strong>{entry.concept}</strong>
-                    <span>
-                      {entry.category} · {formatDate(entry.date)}
-                      {entry.method ? ` · ${entry.method}` : ''}
-                      {entry.reference ? ` · ${entry.reference}` : ''}
-                    </span>
-                    {entry.status === 'Anulado' && entry.voidReason && (
-                      <small className="rc-void-reason">Anulado: {entry.voidReason}</small>
-                    )}
-                  </div>
-                  <div className="rc-folio-right">
-                    <span
-                      className={`rc-folio-amount ${entry.type === 'Cargo' ? 'charge' : 'credit'}`}
-                    >
-                      {entry.type === 'Cargo' ? '+' : '−'}
-                      {money(entry.amount)}
-                    </span>
-                    <span
-                      className={`status-pill ${entry.type === 'Cargo' ? 'terracotta' : 'success'}`}
-                    >
-                      {entry.type}
-                    </span>
-                    {entry.status === 'Anulado' ? (
-                      <span className="status-pill warning">Anulado</span>
-                    ) : entry.type === 'Cargo' && isActive ? (
-                      <button
-                        className="button small secondary"
-                        onClick={() => onVoidCharge(entry.id)}
-                        aria-label={`Anular cargo ${entry.concept}`}
-                        title="Anular cargo"
-                      >
-                        <Ban size={13} />
-                      </button>
-                    ) : entry.type === 'Depósito' &&
-                      entry.depositStatus === 'held' &&
-                      isActive &&
-                      onDepositAction ? (
-                      <span style={{ display: 'inline-flex', gap: 4 }}>
-                        <button
-                          className="button small secondary"
-                          onClick={() => setDepositAction({ entry, action: 'apply' })}
-                          aria-label={`Aplicar depósito ${money(entry.amount)}`}
-                          title="Aplicar al folio"
-                        >
-                          <Check size={13} />
-                        </button>
-                        <button
-                          className="button small secondary"
-                          onClick={() => setDepositAction({ entry, action: 'refund' })}
-                          aria-label={`Devolver depósito ${money(entry.amount)}`}
-                          title="Devolver depósito"
-                        >
-                          <Wallet size={13} />
-                        </button>
+              </div>
+            ) : (
+              <PaginatedList
+                items={reservation.folio}
+                getKey={(entry) => entry.id}
+                listClassName="rc-folio-list"
+                label="Paginación de movimientos del folio"
+                renderItem={(entry) => (
+                  <div
+                    className={`rc-folio-row ${entry.status === 'Anulado' ? 'voided' : ''}`}
+                    key={entry.id}
+                  >
+                    <div className="rc-folio-info">
+                      <strong>{entry.concept}</strong>
+                      <span>
+                        {entry.category} · {formatDate(entry.date)}
+                        {entry.method ? ` · ${entry.method}` : ''}
+                        {entry.reference ? ` · ${entry.reference}` : ''}
                       </span>
-                    ) : (
-                      <span />
-                    )}
+                      {entry.status === 'Anulado' && entry.voidReason && (
+                        <small className="rc-void-reason">Anulado: {entry.voidReason}</small>
+                      )}
+                    </div>
+                    <div className="rc-folio-right">
+                      <span
+                        className={`rc-folio-amount ${entry.type === 'Cargo' ? 'charge' : 'credit'}`}
+                      >
+                        {entry.type === 'Cargo' ? '+' : '−'}
+                        {money(entry.amount)}
+                      </span>
+                      <span
+                        className={`status-pill ${entry.type === 'Cargo' ? 'terracotta' : 'success'}`}
+                      >
+                        {entry.type}
+                      </span>
+                      {entry.status === 'Anulado' ? (
+                        <span className="status-pill warning">Anulado</span>
+                      ) : entry.type === 'Cargo' && isActive ? (
+                        <button
+                          className="button small secondary"
+                          onClick={() => onVoidCharge(entry.id)}
+                          aria-label={`Anular cargo ${entry.concept}`}
+                          title="Anular cargo"
+                        >
+                          <Ban size={13} />
+                        </button>
+                      ) : entry.type === 'Depósito' &&
+                        entry.depositStatus === 'held' &&
+                        isActive &&
+                        onDepositAction ? (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <button
+                            className="button small secondary"
+                            onClick={() => setDepositAction({ entry, action: 'apply' })}
+                            aria-label={`Aplicar depósito ${money(entry.amount)}`}
+                            title="Aplicar al folio"
+                          >
+                            <Check size={13} />
+                          </button>
+                          <button
+                            className="button small secondary"
+                            onClick={() => setDepositAction({ entry, action: 'refund' })}
+                            aria-label={`Devolver depósito ${money(entry.amount)}`}
+                            title="Devolver depósito"
+                          >
+                            <Wallet size={13} />
+                          </button>
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                )}
+              />
+            )}
 
             <div className="rc-folio-summary">
               <div>
