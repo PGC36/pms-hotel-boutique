@@ -39,6 +39,9 @@ let router;
 let originalFetch;
 let requests;
 let failNextRefresh;
+// Cookie httpOnly simulada (pms_refresh_token): el código de la web nunca la lee;
+// solo viaja a /auth/* cuando la petición usa credentials: 'include'.
+let refreshCookie;
 const wait = () => new Promise((resolve) => setTimeout(resolve, 650));
 const text = () => JSON.stringify(view.toJSON());
 const password = 'AuroraDemo2026!';
@@ -379,6 +382,14 @@ function authResponse(email, expiresIn = 60) {
   };
 }
 
+/** Emite el refresh token en la "cookie" y lo omite del JSON si el cliente es la web. */
+function issueTokens(email, init) {
+  const response = authResponse(email);
+  refreshCookie = response.refreshToken;
+  if (init.headers?.get('X-Client') === 'web') delete response.refreshToken;
+  return json(response);
+}
+
 function json(data, status = 200, statusText = status === 200 ? 'OK' : 'Error') {
   return new Response(JSON.stringify(data), {
     status,
@@ -399,11 +410,18 @@ function decodeAuth(init) {
 function installFetch() {
   requests = [];
   failNextRefresh = false;
+  refreshCookie = null;
   guestTokenSeconds = 60;
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(String(url)).pathname;
     const body = init.body ? JSON.parse(init.body) : undefined;
-    requests.push({ path, body, authorization: init.headers?.get('Authorization') ?? null });
+    requests.push({
+      path,
+      body,
+      authorization: init.headers?.get('Authorization') ?? null,
+      client: init.headers?.get('X-Client') ?? null,
+      credentials: init.credentials,
+    });
 
     if (path === '/api/v1/auth/login') {
       const email = String(body.email ?? '')
@@ -412,16 +430,24 @@ function installFetch() {
       if (!accounts[email] || body.password !== password) {
         return json({ message: 'Correo o contraseña incorrectos.' }, 401, 'Unauthorized');
       }
-      return json(authResponse(email));
+      return issueTokens(email, init);
     }
     if (path === '/api/v1/auth/refresh') {
-      if (failNextRefresh) return json({ message: 'Refresh token inválido.' }, 401, 'Unauthorized');
-      const email = String(body.refreshToken ?? '').split(':')[1];
+      const token =
+        body?.refreshToken ?? (init.credentials === 'include' ? refreshCookie : undefined);
+      if (failNextRefresh || !token || token !== refreshCookie) {
+        refreshCookie = null;
+        return json({ message: 'Refresh token inválido.' }, 401, 'Unauthorized');
+      }
+      const email = String(token).split(':')[1];
       if (!accounts[email])
         return json({ message: 'Refresh token inválido.' }, 401, 'Unauthorized');
-      return json(authResponse(email));
+      return issueTokens(email, init);
     }
-    if (path === '/api/v1/auth/logout') return new Response(null, { status: 204 });
+    if (path === '/api/v1/auth/logout') {
+      refreshCookie = null;
+      return new Response(null, { status: 204 });
+    }
     if (path === '/api/v1/guest/auth/login') {
       const email = body?.email?.trim().toLowerCase();
       const guestPassword = body?.password;
@@ -912,26 +938,13 @@ test('public and private 404 pages remain scoped to their layouts', async () => 
   }
 });
 
-function storedSession(
-  email = 'admin@hotelboutique.test',
-  expiresAt = Date.now() + 10000,
-  accessExpiresIn = 60,
-) {
-  const response = authResponse(email, accessExpiresIn);
-  return JSON.stringify({
-    user: {
-      id: email,
-      email,
-      name: email,
-      role: 'ADMIN',
-      createdAt: new Date().toISOString(),
-    },
-    token: response.accessToken,
-    refreshToken: response.refreshToken,
-    expiresAt: new Date(expiresAt).toISOString(),
-    tokenType: 'Bearer',
-    authorities: accounts[email],
-  });
+/**
+ * Lo que deja una sesión de personal tras recargar: la marca sin tokens en
+ * localStorage y el refresh token en la cookie httpOnly.
+ */
+function storedSession(email = 'admin@hotelboutique.test', expiresAt = Date.now() + 10000) {
+  refreshCookie = `refresh:${email}:${Date.now()}`;
+  return JSON.stringify({ kind: 'staff', expiresAt: new Date(expiresAt).toISOString() });
 }
 
 test('expired, malformed and unknown sessions are cleared; persisted roles are ignored', async () => {
@@ -1001,15 +1014,20 @@ test('shared service sets Bearer, refreshes once, retries, and clears on refresh
   assert.equal(values.size, 0);
 });
 
-test('restore refreshes an expired access token before granting the stored session', async () => {
+test('restore after a reload recovers the session from the refresh cookie', async () => {
   storage.setItem(
     sessionStorageKey,
-    storedSession('admin@hotelboutique.test', Date.now() + 60_000, -5),
+    storedSession('admin@hotelboutique.test', Date.now() + 60_000),
   );
 
   const session = await sharedAuthService.getCurrentSession();
   assert.equal(session.user.email, 'admin@hotelboutique.test');
-  assert.equal(requests.filter((request) => request.path === '/api/v1/auth/refresh').length, 1);
+  const refreshes = requests.filter((request) => request.path === '/api/v1/auth/refresh');
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0].body, undefined, 'el refresh token no sale del código de la web');
+  assert.equal(refreshes[0].credentials, 'include');
+  assert.equal(refreshes[0].client, 'web');
+  assert.equal(refreshes[0].authorization, null);
 
   await httpClient.get('/probe');
   assert.equal(requests.at(-1).authorization, `Bearer ${session.token}`);
@@ -1018,7 +1036,7 @@ test('restore refreshes an expired access token before granting the stored sessi
 test('restore clears the stored session when preventive refresh fails', async () => {
   storage.setItem(
     sessionStorageKey,
-    storedSession('admin@hotelboutique.test', Date.now() + 60_000, -5),
+    storedSession('admin@hotelboutique.test', Date.now() + 60_000),
   );
   failNextRefresh = true;
 
@@ -1027,14 +1045,55 @@ test('restore clears the stored session when preventive refresh fails', async ()
   assert.equal(values.size, 0);
 });
 
-test('logout posts the refresh token and always removes the local session', async () => {
-  const session = await sharedAuthService.login('admin@hotelboutique.test', password);
+test('logout revokes the refresh cookie and always removes the local session', async () => {
+  await sharedAuthService.login('admin@hotelboutique.test', password);
   await sharedAuthService.logout();
   const logout = requests.find((request) => request.path === '/api/v1/auth/logout');
-  assert.equal(logout.body.refreshToken, session.refreshToken);
+  assert.equal(logout.body, undefined);
+  assert.equal(logout.credentials, 'include');
+  assert.equal(logout.client, 'web');
+  assert.equal(refreshCookie, null);
   assert.equal(values.size, 0);
   await httpClient.get('/probe').catch(() => undefined);
   assert.equal(requests.at(-1).authorization, null);
+});
+
+test('staff login keeps tokens out of browser storage (refresh cookie + memory only)', async () => {
+  const session = await sharedAuthService.login('admin@hotelboutique.test', password);
+  const login = requests.find((request) => request.path === '/api/v1/auth/login');
+  assert.equal(login.client, 'web');
+  assert.equal(login.credentials, 'include');
+  assert.ok(refreshCookie, 'el backend dejó el refresh token en la cookie');
+  assert.equal('refreshToken' in session, false);
+
+  const stored = JSON.parse(values.get(sessionStorageKey));
+  assert.deepEqual(Object.keys(stored).sort(), ['expiresAt', 'kind']);
+  assert.equal(stored.kind, 'staff');
+  for (const value of values.values()) {
+    assert.equal(value.includes(session.token), false, 'el access token no se persiste');
+    assert.equal(value.includes(refreshCookie), false, 'el refresh token no se persiste');
+  }
+
+  // La misma pestaña reutiliza el access token en memoria sin volver a refrescar.
+  const restored = await sharedAuthService.getCurrentSession();
+  assert.equal(restored.token, session.token);
+  assert.equal(requests.filter((request) => request.path === '/api/v1/auth/refresh').length, 0);
+});
+
+test('a staff session stored with tokens by the previous version is discarded', async () => {
+  const response = authResponse('admin@hotelboutique.test');
+  storage.setItem(
+    sessionStorageKey,
+    JSON.stringify({
+      user: { id: 'admin', email: 'admin@hotelboutique.test', name: 'Admin', role: 'ADMIN' },
+      token: response.accessToken,
+      refreshToken: response.refreshToken,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
+  );
+  assert.equal(await sharedAuthService.getCurrentSession(), null);
+  assert.equal(values.size, 0);
+  assert.equal(requests.length, 0);
 });
 
 test('in-flight login cannot restore a session after cancellation or logout', async () => {
@@ -1076,7 +1135,10 @@ test('B3: un rol personalizado conserva su código y solo recibe sus permisos re
   // Sin heredar lo que Recepción tendría por defecto.
   assert.ok(!permissions.includes('front-desk:operate'));
   assert.ok(!permissions.includes('users:view'));
-  assert.equal(JSON.parse(values.get('PMS_AUTH_SESSION')).user.roleCode, 'QA_CESAR');
+  // Tras recargar, el refresh por cookie vuelve a derivar el código desde el JWT.
+  sharedAuthService.clearSession();
+  storage.setItem(sessionStorageKey, storedSession('qa.recepcion@hotelboutique.test'));
+  assert.equal((await sharedAuthService.getCurrentSession()).user.roleCode, 'QA_CESAR');
 });
 
 test('B3: los roles predefinidos siguen igual y no reciben código personalizado', async () => {
@@ -1217,7 +1279,7 @@ test('el huésped puede iniciar sesión con correo y contraseña contra backend 
   assert.equal(stored.user.role, 'GUEST');
   assert.equal(stored.user.name, 'Ana López');
   assert.equal(stored.user.email, 'ana.demo@aurora.test');
-  assert.equal(stored.refreshToken, '', 'el huésped no tiene refresh token');
+  assert.equal(stored.refreshToken, undefined, 'el huésped no tiene refresh token');
 
   // Verifica que no se persistan datos de dominio (habitaciones, reservas, pagos) en localStorage
   for (const key of values.keys()) {
@@ -1282,7 +1344,7 @@ test('el huésped entra con el código de su reserva y sale a su acceso', async 
   const stored = JSON.parse(values.get('PMS_AUTH_SESSION'));
   assert.equal(stored.user.role, 'GUEST');
   assert.equal(stored.user.name, 'Ana López');
-  assert.equal(stored.refreshToken, '', 'el huésped no tiene refresh token');
+  assert.equal(stored.refreshToken, undefined, 'el huésped no tiene refresh token');
 
   await logoutFromWorkspace();
   assert.equal(router.state.location.pathname, '/');

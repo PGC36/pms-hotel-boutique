@@ -14,7 +14,6 @@ export interface SessionUser {
 export interface AuthSession {
   user: SessionUser;
   token: string;
-  refreshToken: string;
   expiresAt: Date;
   accessExpiresAt?: Date;
   tokenType?: string;
