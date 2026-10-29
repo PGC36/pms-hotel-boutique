@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ShieldAlert } from 'lucide-react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import type { PublicBookingConfirmation } from '@/services/publicBookingCatalogService';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -67,6 +68,17 @@ export function BookingConfirmationScreen() {
           <p className="booking-muted">
             Guarda este código para identificar tu reserva cuando contactes al hotel.
           </p>
+          <div className="booking-code-security-note" role="note">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <p>
+              Una vez emitido, el código no se puede cambiar desde el sistema. Mantenlo privado:
+              quien lo tenga podría consultar tu reserva. Eres responsable de resguardarlo; el hotel
+              no se responsabiliza por accesos o usos no autorizados derivados de compartirlo. Si
+              creas una cuenta con este código, usa el correo registrado en la reserva; después
+              iniciarás sesión con tu correo y contraseña y el código ya no permitirá el acceso
+              temporal.
+            </p>
+          </div>
 
           <div className="booking-reservation-summary">
             <div>
@@ -126,6 +138,17 @@ export function BookingConfirmationScreen() {
             >
               <h3 id="booking-reservation-details-title">Detalle de tu reserva</h3>
               <div className="booking-confirmation-code">{booking.confirmationCode}</div>
+              <div className="booking-code-security-note" role="note">
+                <ShieldAlert size={18} aria-hidden="true" />
+                <p>
+                  Una vez emitido, el código no se puede cambiar desde el sistema. Mantenlo privado:
+                  quien lo tenga podría consultar tu reserva. Eres responsable de resguardarlo; el
+                  hotel no se responsabiliza por accesos o usos no autorizados derivados de
+                  compartirlo. Si creas una cuenta con este código, usa el correo registrado en la
+                  reserva; después iniciarás sesión con tu correo y contraseña y el código ya no
+                  permitirá el acceso temporal.
+                </p>
+              </div>
               <p className="booking-reservation-status">{statusLabel}</p>
               <div className="booking-reservation-detail-grid">
                 <div>

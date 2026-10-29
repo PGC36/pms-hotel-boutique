@@ -2918,6 +2918,79 @@ button {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Before availability is searched, room recommendations scroll as a carousel.
+   Search results keep the regular responsive grid for side-by-side comparison. */
+.room-cards.room-cards--carousel {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 2 * var(--space-7)) / 3);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  padding-block: var(--space-2);
+}
+
+.room-cards--carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.room-cards--carousel .visitor-room {
+  min-width: 0;
+}
+
+.room-carousel-controls {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-3);
+}
+
+.room-carousel-control {
+  display: grid;
+  width: var(--size-legacy-40);
+  height: var(--size-legacy-40);
+  place-items: center;
+  border: var(--size-legacy-1) solid var(--color-border);
+  border-radius: var(--radius-round);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.room-carousel-control:hover:not(:disabled) {
+  background: var(--color-legacy-f6ebd5);
+}
+
+.room-carousel-control:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.room-carousel-control:focus-visible,
+.room-cards--carousel:focus-visible {
+  outline: 2px solid var(--color-brand-gold-dark);
+  outline-offset: 3px;
+}
+
+@media (max-width: 960px) {
+  .room-cards.room-cards--carousel {
+    grid-auto-columns: calc((100% - var(--space-7)) / 2);
+  }
+}
+
+@media (max-width: 600px) {
+  .room-cards.room-cards--carousel {
+    grid-auto-columns: min(86%, 340px);
+  }
+
+  .room-carousel-control {
+    width: var(--size-legacy-36);
+    height: var(--size-legacy-36);
+  }
+}
 .auth-choice,
 .auth-form {
   width: var(--size-legacy-420);
