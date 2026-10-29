@@ -241,6 +241,9 @@ function guestLoginErrorMessage(error: unknown): string {
 }
 
 function guestLinkErrorMessage(error: unknown): string {
+  if (error instanceof HttpError && error.status === 409) {
+    return 'Esta reserva ya tiene una cuenta. Inicia sesión con el correo y la contraseña que registraste.';
+  }
   if (error instanceof HttpError && (error.status === 400 || error.status === 404)) {
     return 'El código no es válido, la reserva no está vigente o fue cancelada.';
   }

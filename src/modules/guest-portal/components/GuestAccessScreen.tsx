@@ -56,8 +56,8 @@ export function GuestAccessScreen() {
         <h1>{mode === 'register' ? 'Crea tu acceso' : 'Código de reserva'}</h1>
         <p className="muted">
           {mode === 'register'
-            ? 'Usa el código de tu reserva y el correo registrado para crear tu contraseña. El código confirma que la reserva es tuya.'
-            : 'Ingresa el código de confirmación para acceder temporalmente a tu estancia, sin crear contraseña.'}
+            ? 'Usa el código y el mismo correo que registraste al hacer la reserva. Al crear tu cuenta, el código dejará de servir para entrar temporalmente; después ingresarás con tu correo y contraseña.'
+            : 'Ingresa el código de confirmación para acceder temporalmente a tu estancia, sin crear contraseña. Si ya creaste una cuenta, entra con tu correo y contraseña.'}
         </p>
         {expired && (
           <p className="staff-login-success" role="status">
