@@ -1,0 +1,74 @@
+name: Frontend CI
+
+on:
+  # Full code validation runs against develop; main promotion uses its own lightweight checks.
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-test:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run static checks
+        id: check
+        run: |
+          npm run format:check
+          npm run typecheck
+          npm run lint
+          npm run build
+
+      - name: Run tests and coverage
+        id: test
+        run: npm run test:coverage
+
+      - name: CI summary
+        if: always()
+        env:
+          CHECK: ${{ steps.check.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          icon() {
+            case "$1" in
+              success) echo "✅ OK" ;;
+              failure) echo "❌ Falló" ;;
+              *) echo "⏭️ No se ejecutó (falló un paso previo)" ;;
+            esac
+          }
+          {
+            echo "## Frontend CI · develop"
+            echo ""
+            echo "Evento: \`${EVENT_NAME}\`"
+            echo ""
+            echo "| Etapa | Resultado |"
+            echo "| --- | --- |"
+            echo "| Validaciones (formato, tipos, lint y build) | $(icon "$CHECK") |"
+            echo "| Pruebas automatizadas + cobertura | $(icon "$TEST") |"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              echo "| SonarCloud | El Quality Gate de Pull Request lo reporta la integración SonarCloud |"
+            else
+              echo "| SonarCloud | El análisis de rama no está disponible en el plan configurado; se valida en Pull Requests |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
