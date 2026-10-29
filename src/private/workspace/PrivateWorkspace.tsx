@@ -5140,6 +5140,9 @@ function HousekeepingContent({
   const reqPending = requests.filter((r) => r.status === 'Pendiente').length;
   const reqInProgress = requests.filter((r) => r.status === 'En proceso').length;
   const reqCompleted = requests.filter((r) => r.status === 'Completada').length;
+  const prioritizedRequests = [...requests].sort(
+    (first, second) => Number(second.status === 'Pendiente') - Number(first.status === 'Pendiente'),
+  );
   const filteredRooms = rooms.filter((r) => {
     const matchesSearch = `${r.number} ${r.floor} ${r.type} ${r.cleaningType}`
       .toLowerCase()
@@ -5273,7 +5276,7 @@ function HousekeepingContent({
           </div>
         ) : (
           <PaginatedList
-            items={requests}
+            items={prioritizedRequests}
             getKey={(request) => request.id}
             listClassName="hk-req-list"
             label="Paginación de solicitudes de limpieza"
