@@ -48,6 +48,12 @@ export function HousekeepingChecklistTemplatePanel({
   }, [load]);
 
   useEffect(() => {
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
     let active = true;
     const refreshSilently = () => {
       if (

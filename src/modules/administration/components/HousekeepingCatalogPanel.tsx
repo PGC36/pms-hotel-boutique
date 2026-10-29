@@ -48,6 +48,12 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
   };
 
   useEffect(() => {
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
     void load();
     let active = true;
     const refreshSilently = () => {

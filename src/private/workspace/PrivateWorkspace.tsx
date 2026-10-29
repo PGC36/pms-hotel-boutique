@@ -1852,6 +1852,12 @@ function PrivateWorkspaceReady({
       setAdminStockNotifications([]);
       return;
     }
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
 
     let cancelled = false;
     let loading = false;
@@ -1879,12 +1885,12 @@ function PrivateWorkspaceReady({
       if (document.visibilityState === 'visible') void loadStockNotifications();
     };
     void loadStockNotifications();
-    const intervalId = globalThis.setInterval(() => void loadStockNotifications(), 20_000);
+    const intervalId = window.setInterval(() => void loadStockNotifications(), 20_000);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       cancelled = true;
-      globalThis.clearInterval(intervalId);
+      window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [activeRole]);
@@ -2397,6 +2403,12 @@ function PrivateWorkspaceReady({
 
   useEffect(() => {
     if (contentRole === 'admin' || contentRole === 'guest') return undefined;
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
     let active = true;
     let refreshing = false;
     const refreshSilently = async () => {
@@ -2451,11 +2463,11 @@ function PrivateWorkspaceReady({
       if (document.visibilityState === 'visible') void refreshSilently();
     };
 
-    const intervalId = globalThis.setInterval(() => void refreshSilently(), 20_000);
+    const intervalId = window.setInterval(() => void refreshSilently(), 20_000);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       active = false;
-      globalThis.clearInterval(intervalId);
+      window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [activeRole, contentRole, workspaceDataRole]);

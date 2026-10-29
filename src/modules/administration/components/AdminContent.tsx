@@ -1531,6 +1531,12 @@ export function AdminContent({
 
   useEffect(() => {
     if (nav === 'Catálogo de Conserjería' || nav === 'Catálogo de Limpieza') return undefined;
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
     let active = true;
     const refreshSilently = () => {
       if (
