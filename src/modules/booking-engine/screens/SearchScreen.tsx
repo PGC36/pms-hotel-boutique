@@ -579,7 +579,7 @@ export function SearchScreen() {
         <div className="visitor-hero-copy">
           <p className="eyebrow">Hospitalidad que se siente</p>
           <h1>
-            Tu próxima estancia <em>comienza aquí en Aurora.</em>
+            Tu próxima estancia <em>comienza aquí.</em>
           </h1>
           <p>
             Descansa, descubre y déjanos cuidar cada detalle. Encuentra el espacio perfecto para tu
