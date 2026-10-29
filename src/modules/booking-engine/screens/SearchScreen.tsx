@@ -2,16 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   CalendarDays,
-  Car,
   Check,
-  Coffee,
-  Gift,
+  ChevronLeft,
+  ChevronRight,
   ShieldCheck,
-  Sparkles,
   UserRound,
-  Utensils,
-  Waves,
-  Wifi,
 } from 'lucide-react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { publicBookingCatalogService } from '@/services/publicBookingCatalogService';
@@ -20,15 +15,22 @@ import { CatalogImage } from '@/shared/components/CatalogImage';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
-import type { Amenity, AmenityCategory } from '@/shared/types/entities/amenity';
-import type { Promotion } from '@/shared/types/entities/promotion';
 import { findPrimaryImage } from '@/shared/types/entities/media-image';
 import type { Rate } from '@/shared/types/entities/rate';
 import { findBaseRate } from '@/shared/utils/rateSelection';
 import type { RoomType } from '@/shared/types/entities/room-type';
-import { formatAmenitySchedule } from '@/shared/utils/amenitySchedule';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights, formatDateGT } from '@/shared/utils/date';
+import {
+  AmenitiesSection,
+  PromotionsSection,
+  type AmenitiesState,
+  type PromotionsState,
+} from '@/modules/booking-engine/components/PublicCatalogSections';
+import {
+  advancePublicCarousel,
+  scrollPublicCarousel,
+} from '@/modules/booking-engine/utils/publicCarousel';
 import {
   hotelToday,
   validateStayDates,
@@ -42,23 +44,6 @@ type AvailableRoomType = {
   roomType: RoomType;
   availableRooms?: number;
   rate?: Rate;
-};
-
-type AmenitiesState =
-  | { status: 'idle' | 'loading' }
-  | { status: 'success'; amenities: Amenity[] }
-  | { status: 'error'; message: string };
-
-type PromotionsState =
-  | { status: 'idle' | 'loading' }
-  | { status: 'success'; promotions: Promotion[] }
-  | { status: 'error'; message: string };
-
-/** Ícono de la etiqueta de cada amenidad, por categoría; la foto sale del backend. */
-const AMENITY_CATEGORY_ICONS: Record<AmenityCategory, typeof Sparkles> = {
-  hotel: Waves,
-  room: Coffee,
-  service: Utensils,
 };
 
 const policies = [
@@ -159,6 +144,9 @@ export function SearchScreen() {
   const [hasSearched, setHasSearched] = useState(false);
   const [guests, setGuests] = useState('2 adultos');
   const availabilityRequest = useRef(0);
+  const showcaseCarouselRef = useRef<HTMLElement>(null);
+  const amenityCarouselRef = useRef<HTMLElement>(null);
+  const promotionCarouselRef = useRef<HTMLElement>(null);
   const [searchDirty, setSearchDirty] = useState(false);
   const [amenitiesState, setAmenitiesState] = useState<AmenitiesState>({ status: 'idle' });
   const [promotionsState, setPromotionsState] = useState<PromotionsState>({ status: 'idle' });
@@ -166,6 +154,30 @@ export function SearchScreen() {
   const scrollToSearch = useCallback(() => {
     document.getElementById('buscar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
+
+  const scrollShowcase = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(showcaseCarouselRef.current, '.visitor-room', direction),
+    [],
+  );
+  const scrollAmenities = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(amenityCarouselRef.current, '.booking-amenity-card', direction),
+    [],
+  );
+  const scrollPromotions = useCallback(
+    (direction: -1 | 1) =>
+      scrollPublicCarousel(promotionCarouselRef.current, '.booking-promo-card', direction),
+    [],
+  );
+
+  const showRecommendations = !hasSearched;
+  const showFixedResults = hasSearched && !searchDirty && status === 'success';
+  const publicTab = ['amenidades', 'promociones', 'politicas', 'privacidad', 'contacto'].includes(
+    location.hash.replace('#', ''),
+  )
+    ? location.hash.replace('#', '')
+    : 'habitaciones';
 
   const loadShowcase = useCallback(async () => {
     setShowcaseStatus('loading');
@@ -189,6 +201,41 @@ export function SearchScreen() {
   useEffect(() => {
     void loadShowcase();
   }, [loadShowcase]);
+
+  useEffect(() => {
+    const autoCarousel =
+      publicTab === 'amenidades' && amenitiesState.status === 'success'
+        ? {
+            ref: amenityCarouselRef,
+            selector: '.booking-amenity-card',
+            count: amenitiesState.amenities.length,
+          }
+        : publicTab === 'promociones' && promotionsState.status === 'success'
+          ? {
+              ref: promotionCarouselRef,
+              selector: '.booking-promo-card',
+              count: promotionsState.promotions.length,
+            }
+          : {
+              ref: showcaseCarouselRef,
+              selector: '.visitor-room',
+              count: showRecommendations && showcaseStatus === 'success' ? roomTypes.length : 0,
+            };
+
+    if (autoCarousel.count < 2) return;
+    const timer = window.setInterval(
+      () => advancePublicCarousel(autoCarousel.ref.current, autoCarousel.selector),
+      5000,
+    );
+    return () => window.clearInterval(timer);
+  }, [
+    amenitiesState,
+    promotionsState,
+    publicTab,
+    roomTypes.length,
+    showcaseStatus,
+    showRecommendations,
+  ]);
 
   const loadAmenities = useCallback(async () => {
     setAmenitiesState({ status: 'loading' });
@@ -237,6 +284,7 @@ export function SearchScreen() {
     setStatus('loading');
     setHasSearched(true);
     setSearchDirty(false);
+    setResults([]);
     const request = ++availabilityRequest.current;
 
     try {
@@ -277,12 +325,6 @@ export function SearchScreen() {
   }));
   if (hasSearched) roomCards = results;
   if (searchDirty) roomCards = [];
-  const publicTab = ['amenidades', 'promociones', 'politicas', 'privacidad', 'contacto'].includes(
-    location.hash.replace('#', ''),
-  )
-    ? location.hash.replace('#', '')
-    : 'habitaciones';
-
   useEffect(() => {
     if (publicTab === 'amenidades' && amenitiesState.status === 'idle') void loadAmenities();
   }, [publicTab, amenitiesState.status, loadAmenities]);
@@ -336,120 +378,23 @@ export function SearchScreen() {
     ) : null;
   const renderAmenitiesSection = () =>
     publicTab === 'amenidades' ? (
-      <section className="booking-public-section" id="amenidades">
-        <div className="visitor-section-head">
-          <div>
-            <p className="eyebrow">Amenidades incluidas</p>
-            <h2>Todo listo para disfrutar tu estancia</h2>
-          </div>
-          <button className="text-button" type="button" onClick={scrollToSearch}>
-            Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-          </button>
-        </div>
-        {amenitiesState.status === 'loading' || amenitiesState.status === 'idle' ? (
-          <LoadingState label="Cargando amenidades..." />
-        ) : null}
-        {amenitiesState.status === 'error' ? (
-          <ErrorState description={amenitiesState.message} onRetry={loadAmenities} />
-        ) : null}
-        {amenitiesState.status === 'success' && amenitiesState.amenities.length === 0 ? (
-          <EmptyState
-            title="Sin amenidades publicadas"
-            description="Pronto compartiremos los servicios del hotel."
-          />
-        ) : null}
-        {amenitiesState.status === 'success' && amenitiesState.amenities.length > 0 ? (
-          <div className="booking-amenity-grid">
-            {amenitiesState.amenities.map((amenity) => {
-              const Icon = AMENITY_CATEGORY_ICONS[amenity.category] ?? Sparkles;
-              const schedule = formatAmenitySchedule(amenity);
-              return (
-                <article className="booking-amenity-card" key={amenity.id}>
-                  <div className="booking-amenity-image">
-                    <CatalogImage
-                      className="booking-amenity-photo"
-                      image={findPrimaryImage(amenity.images)}
-                      variant="medium"
-                      alt={`Foto de ${amenity.name}`}
-                    />
-                    <span>
-                      <Icon size={18} aria-hidden="true" />
-                      {schedule || 'Disponible'}
-                    </span>
-                  </div>
-                  <div>
-                    <h3>{amenity.name}</h3>
-                    {amenity.description ? <p>{amenity.description}</p> : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
-        <div className="booking-service-strip">
-          <span>
-            <Wifi size={16} aria-hidden="true" /> Wi-Fi de alta velocidad
-          </span>
-          <span>
-            <Car size={16} aria-hidden="true" /> Traslado bajo reserva
-          </span>
-          <span>
-            <Sparkles size={16} aria-hidden="true" /> Servicio a la habitación
-          </span>
-        </div>
-      </section>
+      <AmenitiesSection
+        state={amenitiesState}
+        onRetry={loadAmenities}
+        onSearch={scrollToSearch}
+        onMove={scrollAmenities}
+        carouselRef={amenityCarouselRef}
+      />
     ) : null;
   const renderPromotionsSection = () =>
     publicTab === 'promociones' ? (
-      <section className="booking-public-section" id="promociones">
-        <div className="visitor-section-head">
-          <div>
-            <p className="eyebrow">Ofertas especiales</p>
-            <h2>Promociones para tu próxima estancia</h2>
-          </div>
-          <button className="text-button" type="button" onClick={scrollToSearch}>
-            Buscar fechas <ArrowRight size={14} aria-hidden="true" />
-          </button>
-        </div>
-        {promotionsState.status === 'loading' || promotionsState.status === 'idle' ? (
-          <LoadingState label="Cargando promociones..." />
-        ) : null}
-        {promotionsState.status === 'error' ? (
-          <ErrorState description={promotionsState.message} onRetry={loadPromotions} />
-        ) : null}
-        {promotionsState.status === 'success' && promotionsState.promotions.length === 0 ? (
-          <EmptyState
-            title="No hay promociones disponibles"
-            description="Vuelve pronto para descubrir nuevas ofertas."
-          />
-        ) : null}
-        {promotionsState.status === 'success' && promotionsState.promotions.length > 0 ? (
-          <div className="booking-promo-grid">
-            {promotionsState.promotions.map((promotion) => (
-              <article className="booking-promo-card" key={promotion.id}>
-                <div className="booking-promo-image">
-                  <span className="booking-promo-icon" aria-hidden="true">
-                    <Gift size={32} strokeWidth={1.6} />
-                  </span>
-                  <span>{promotion.discountPercent}% de descuento</span>
-                </div>
-                <div className="booking-promo-body">
-                  <small>Código: {promotion.code}</small>
-                  <h3>{promotion.name}</h3>
-                  {promotion.description ? <p>{promotion.description}</p> : null}
-                  <p>
-                    Vigente del {formatDateGT(promotion.validFrom)} al{' '}
-                    {formatDateGT(promotion.validTo)}
-                  </p>
-                  <button className="button secondary" type="button" onClick={scrollToSearch}>
-                    Reservar ahora <ArrowRight size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
+      <PromotionsSection
+        state={promotionsState}
+        onRetry={loadPromotions}
+        onSearch={scrollToSearch}
+        onMove={scrollPromotions}
+        carouselRef={promotionCarouselRef}
+      />
     ) : null;
   const renderRoomsSection = () =>
     publicTab === 'habitaciones' ? (
@@ -485,12 +430,36 @@ export function SearchScreen() {
             <p className="eyebrow">Elige tu espacio</p>
             <h2>Habitaciones pensadas para ti</h2>
           </div>
+          {showRecommendations && showcaseStatus === 'success' && roomCards.length > 1 ? (
+            <div className="room-carousel-controls" aria-label="Controles de habitaciones">
+              <button
+                className="room-carousel-control"
+                type="button"
+                aria-label="Ver habitaciones anteriores"
+                onClick={() => scrollShowcase(-1)}
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+              </button>
+              <button
+                className="room-carousel-control"
+                type="button"
+                aria-label="Ver más habitaciones"
+                onClick={() => scrollShowcase(1)}
+              >
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {showcaseStatus === 'loading' ? <LoadingState label="Cargando habitaciones..." /> : null}
 
         {showcaseStatus === 'error' ? (
           <ErrorState description={showcaseError ?? 'Intenta nuevamente.'} onRetry={loadShowcase} />
+        ) : null}
+
+        {showcaseStatus === 'success' && hasSearched && !searchDirty && status === 'loading' ? (
+          <LoadingState label="Buscando habitaciones disponibles..." />
         ) : null}
 
         {showcaseStatus === 'success' &&
@@ -504,80 +473,102 @@ export function SearchScreen() {
           />
         ) : null}
 
-        {showcaseStatus === 'success' && roomCards.length > 0 ? (
-          <div className="room-cards">
-            {roomCards.map(({ roomType, availableRooms, rate }, index) => {
-              const displayRate = rate ?? findBaseRate(rates, roomType.id);
-              const detailUrl = isCompleteStayRange(range)
-                ? `/rooms/${roomType.id}?checkIn=${dateKey(range.start)}&checkOut=${dateKey(range.end)}&adults=${guestCounts.adults}&children=${guestCounts.children}`
-                : `/rooms/${roomType.id}`;
+        {showcaseStatus === 'success' &&
+        ((showRecommendations && roomCards.length > 0) ||
+          (showFixedResults && results.length > 0)) ? (
+          <section
+            className={`room-cards ${showRecommendations ? 'room-cards--carousel' : 'room-cards--results'}`}
+            ref={showRecommendations ? showcaseCarouselRef : undefined}
+            aria-label={showRecommendations ? 'Habitaciones recomendadas' : undefined}
+            aria-roledescription={showRecommendations ? 'carrusel' : undefined}
+            aria-live={showRecommendations ? 'off' : undefined}
+            tabIndex={showRecommendations ? 0 : undefined}
+          >
+            {(showRecommendations ? [...roomCards, ...roomCards] : roomCards).map(
+              ({ roomType, availableRooms, rate }, displayIndex) => {
+                const isClone = showRecommendations && displayIndex >= roomCards.length;
+                const index = displayIndex % roomCards.length;
+                const displayRate = rate ?? findBaseRate(rates, roomType.id);
+                const detailUrl = isCompleteStayRange(range)
+                  ? `/rooms/${roomType.id}?checkIn=${dateKey(range.start)}&checkOut=${dateKey(range.end)}&adults=${guestCounts.adults}&children=${guestCounts.children}`
+                  : `/rooms/${roomType.id}`;
 
-              const coverImage = findPrimaryImage(
-                imagesByRoomTypeId.get(roomType.id) ?? roomType.images,
-              );
+                const coverImage = findPrimaryImage(
+                  imagesByRoomTypeId.get(roomType.id) ?? roomType.images,
+                );
 
-              return (
-                <article className="visitor-room" key={roomType.id}>
-                  <div className="room-visual booking-room-visual">
-                    <CatalogImage
-                      className="booking-room-photo"
-                      image={coverImage}
-                      variant="medium"
-                      alt={`Foto de la habitación ${roomType.name}`}
-                      placeholderLabel={roomType.name}
-                    />
-                    <span className="room-tag">
-                      {availableRooms !== undefined
-                        ? `${availableRooms} disponibles`
-                        : index === 0
-                          ? 'Mejor precio'
-                          : index === 1
-                            ? 'Más reservada'
-                            : 'Experiencia premium'}
-                    </span>
-                  </div>
-                  <div className="room-card-body">
-                    <div>
-                      <h3>{roomType.name}</h3>
-                      <p>
-                        {roomType.bedConfiguration} - {roomType.capacity} huéspedes
-                      </p>
+                return (
+                  <article
+                    className="visitor-room"
+                    key={`${roomType.id}${isClone ? '-carousel-clone' : ''}`}
+                    data-carousel-clone={isClone ? 'true' : undefined}
+                    aria-hidden={isClone || undefined}
+                  >
+                    <div className="room-visual booking-room-visual">
+                      <CatalogImage
+                        className="booking-room-photo"
+                        image={coverImage}
+                        variant="medium"
+                        alt={`Foto de la habitación ${roomType.name}`}
+                        placeholderLabel={roomType.name}
+                      />
+                      <span className="room-tag">
+                        {availableRooms !== undefined
+                          ? `${availableRooms} disponibles`
+                          : index === 0
+                            ? 'Mejor precio'
+                            : index === 1
+                              ? 'Más reservada'
+                              : 'Experiencia premium'}
+                      </span>
                     </div>
-                    <div className="room-price">
-                      <small>Desde</small>
-                      <strong>
-                        {displayRate
-                          ? formatCurrency(displayRate.priceCents, displayRate.currency)
-                          : 'Consultar'}
-                      </strong>
-                      <span>por noche</span>
+                    <div className="room-card-body">
+                      <div>
+                        <h3>{roomType.name}</h3>
+                        <p>
+                          {roomType.bedConfiguration} - {roomType.capacity} huéspedes
+                        </p>
+                      </div>
+                      <div className="room-price">
+                        <small>Desde</small>
+                        <strong>
+                          {displayRate
+                            ? formatCurrency(displayRate.priceCents, displayRate.currency)
+                            : 'Consultar'}
+                        </strong>
+                        <span>por noche</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="room-features-list">
-                    <span>
-                      <Check size={12} aria-hidden="true" />
-                      {roomType.bedConfiguration}
-                    </span>
-                    <span>
-                      <Check size={12} aria-hidden="true" />
-                      Wi-Fi gratis
-                    </span>
-                    <span>
-                      <Check size={12} aria-hidden="true" />
-                      Desayuno incluido
-                    </span>
-                  </div>
-                  <div className="room-card-footer">
-                    <span className="booking-room-code">{roomType.code}</span>
-                    <Link className="text-button" to={detailUrl}>
-                      Ver detalle
-                      <ArrowRight size={13} aria-hidden="true" />
-                    </Link>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                    <div className="room-features-list">
+                      <span>
+                        <Check size={12} aria-hidden="true" />
+                        {roomType.bedConfiguration}
+                      </span>
+                      <span>
+                        <Check size={12} aria-hidden="true" />
+                        Wi-Fi gratis
+                      </span>
+                      <span>
+                        <Check size={12} aria-hidden="true" />
+                        Desayuno incluido
+                      </span>
+                    </div>
+                    <div className="room-card-footer">
+                      <span className="booking-room-code">{roomType.code}</span>
+                      <Link
+                        className="text-button"
+                        to={detailUrl}
+                        tabIndex={isClone ? -1 : undefined}
+                      >
+                        Ver detalle
+                        <ArrowRight size={13} aria-hidden="true" />
+                      </Link>
+                    </div>
+                  </article>
+                );
+              },
+            )}
+          </section>
         ) : null}
       </>
     ) : null;

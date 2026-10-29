@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   publicBookingCatalogService,
   type PublicAvailableRoomType,
@@ -92,8 +93,39 @@ export function RoomDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailState>({ features: [], rates: [] });
   const [quote, setQuote] = useState<QuoteState>({ status: 'idle' });
+  const [activeGalleryImage, setActiveGalleryImage] = useState(0);
   // Solo la consulta más reciente puede escribir el estado.
   const quoteRequestRef = useRef(0);
+  const galleryViewportRef = useRef<HTMLElement>(null);
+  const galleryImages = orderGalleryImages(detail.roomType?.images ?? []);
+
+  useEffect(() => {
+    if (status !== 'success' || galleryImages.length < 2) return undefined;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+
+    const advance = () => {
+      const viewport = galleryViewportRef.current;
+      if (!viewport || viewport.clientWidth === 0 || document.visibilityState !== 'visible') return;
+      const nextIndex = (activeGalleryImage + 1) % galleryImages.length;
+      viewport.scrollTo({ left: viewport.clientWidth * nextIndex, behavior: 'smooth' });
+    };
+    let timeoutId = 0;
+    const scheduleAdvance = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(advance, 5_000);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') scheduleAdvance();
+    };
+
+    scheduleAdvance();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [activeGalleryImage, galleryImages.length, roomTypeId, status]);
 
   const loadDetail = useCallback(async () => {
     if (!roomTypeId) return;
@@ -122,8 +154,10 @@ export function RoomDetailScreen() {
   }, [roomTypeId]);
 
   useEffect(() => {
+    setActiveGalleryImage(0);
+    galleryViewportRef.current?.scrollTo({ left: 0 });
     void loadDetail();
-  }, [loadDetail]);
+  }, [loadDetail, roomTypeId]);
 
   const loadQuote = useCallback(async () => {
     const requestId = ++quoteRequestRef.current;
@@ -229,8 +263,16 @@ export function RoomDetailScreen() {
             ? quote.message
             : undefined;
   // Principal primero, luego en el orden de la galería del backend.
-  const galleryImages = orderGalleryImages(detail.roomType.images);
   const roomTypeName = detail.roomType.name;
+  const updateGalleryIndex = (viewport: HTMLElement) => {
+    if (viewport.clientWidth === 0) return;
+    setActiveGalleryImage(Math.round(viewport.scrollLeft / viewport.clientWidth));
+  };
+  const scrollToGalleryImage = (index: number) => {
+    const viewport = galleryViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTo({ left: viewport.clientWidth * index, behavior: 'smooth' });
+  };
 
   return (
     <section className="content booking-detail-page">
@@ -247,24 +289,59 @@ export function RoomDetailScreen() {
 
       <div className="booking-detail-layout">
         <div className="booking-detail-main">
-          <div className="booking-photo-grid" aria-label="Fotografías de la habitación">
-            {galleryImages.length > 0 ? (
-              galleryImages.map((image, index) => (
-                <figure className="booking-photo-card" key={image.id}>
+          <div className="booking-photo-gallery">
+            <section
+              className="booking-photo-grid"
+              aria-label="Fotografías de la habitación"
+              aria-roledescription="carrusel"
+              onScroll={(event) => updateGalleryIndex(event.currentTarget)}
+              ref={galleryViewportRef}
+            >
+              {galleryImages.length > 0 ? (
+                galleryImages.map((image, index) => (
+                  <figure className="booking-photo-card" key={image.id}>
+                    <CatalogImage
+                      image={image}
+                      variant={index === 0 ? 'large' : 'medium'}
+                      alt={`Foto ${index + 1} de ${roomTypeName}`}
+                    />
+                  </figure>
+                ))
+              ) : (
+                <div className="booking-photo-card booking-photo-card--fallback">
                   <CatalogImage
-                    image={image}
-                    variant={index === 0 ? 'large' : 'medium'}
-                    alt={`Foto ${index + 1} de ${roomTypeName}`}
+                    alt={`${detail.roomType.name}: sin fotografías todavía`}
+                    placeholderLabel="Fotografías próximamente"
                   />
-                </figure>
-              ))
-            ) : (
-              <div className="booking-photo-card booking-photo-card--fallback">
-                <CatalogImage
-                  alt={`${detail.roomType.name}: sin fotografías todavía`}
-                  placeholderLabel="Fotografías próximamente"
-                />
+                </div>
+              )}
+            </section>
+            {galleryImages.length > 1 && (
+              <div className="booking-photo-controls" aria-label="Controles de fotografías">
+                <button
+                  aria-label="Ver fotografía anterior"
+                  className="booking-photo-control"
+                  disabled={activeGalleryImage === 0}
+                  onClick={() => scrollToGalleryImage(activeGalleryImage - 1)}
+                  type="button"
+                >
+                  <ChevronLeft aria-hidden="true" size={22} />
+                </button>
+                <button
+                  aria-label="Ver fotografía siguiente"
+                  className="booking-photo-control"
+                  disabled={activeGalleryImage >= galleryImages.length - 1}
+                  onClick={() => scrollToGalleryImage(activeGalleryImage + 1)}
+                  type="button"
+                >
+                  <ChevronRight aria-hidden="true" size={22} />
+                </button>
               </div>
+            )}
+            {galleryImages.length > 1 && (
+              <span className="booking-photo-count" aria-live="polite">
+                {activeGalleryImage + 1} / {galleryImages.length}
+              </span>
             )}
           </div>
 
