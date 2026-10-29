@@ -45,7 +45,10 @@ compartan habitación con un stayover.
 El almacenamiento del navegador queda limitado a sesión/autenticación y avisos
 mínimos:
 
-- `localStorage.PMS_AUTH_SESSION`: tokens y metadatos de sesión.
+- `localStorage.PMS_AUTH_SESSION`: para el personal, solo la marca
+  `{ kind: 'staff', expiresAt }` sin tokens (el refresh token va en cookie
+  httpOnly y el access token en memoria); para el huésped, su JWT, que no tiene
+  refresh token.
 - `sessionStorage.PMS_GUEST_ACCESS_EXPIRED`: aviso temporal para huésped.
 
 No se persisten reservas, huéspedes, habitaciones, folios, pagos, roles,
