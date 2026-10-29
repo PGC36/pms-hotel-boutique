@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- Migracion controlada del prototipo Bolt; se conserva la logica original para portarla incrementalmente. */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   Ban,
@@ -25,6 +25,7 @@ import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { Pagination } from '@/shared/components/Pagination';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 import {
   fieldErrorProps,
   isWholeNumberInput,
@@ -506,17 +507,24 @@ export function RoomServiceContent({
                 </strong>
               </div>
             </div>
-            <div className="rs-order-list">
-              {filteredActive.length === 0 ? (
+            {filteredActive.length === 0 ? (
+              <div className="rs-order-list">
                 <div className="hk-empty">
                   <Package size={22} />
                   <p>No hay pedidos pendientes de gestionar</p>
                   <small>Los pedidos finalizados están disponibles en Historial.</small>
                 </div>
-              ) : (
-                filteredActive.map(renderOrder)
-              )}
-            </div>
+              </div>
+            ) : (
+              <PaginatedList
+                items={filteredActive}
+                getKey={(order) => order.id}
+                renderItem={renderOrder}
+                listClassName="rs-order-list"
+                label="Paginación de pedidos activos"
+                resetKey={`${search}:${filter}`}
+              />
+            )}
           </div>
           <aside className="panel rs-side-panel">
             <div className="panel-heading">
@@ -763,14 +771,20 @@ export function RoomServiceContent({
             {refreshingOrders ? 'Actualizando...' : 'Actualizar'}
           </button>
         </div>
-        <div className="rs-history-list">
-          {completedOrders.length === 0 ? (
+        {completedOrders.length === 0 ? (
+          <div className="rs-history-list">
             <div className="hk-empty">
               <FileText size={22} />
               <p>Aún no hay pedidos finalizados</p>
             </div>
-          ) : (
-            completedOrders.map((order) => (
+          </div>
+        ) : (
+          <PaginatedList
+            items={completedOrders}
+            getKey={(order) => order.id}
+            listClassName="rs-history-list"
+            label="Paginación del historial de pedidos"
+            renderItem={(order) => (
               <div className="rs-history-row" key={order.id}>
                 <div>
                   <strong>
@@ -795,9 +809,9 @@ export function RoomServiceContent({
                   Ver detalle
                 </button>
               </div>
-            ))
-          )}
-        </div>
+            )}
+          />
+        )}
         {selectedOrder && (
           <RoomServiceOrderModal
             order={selectedOrder}

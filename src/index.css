@@ -1627,6 +1627,9 @@ button {
   background: var(--color-success);
   font-size: var(--font-size-md);
 }
+.toast-error .toast-check {
+  background: var(--color-error);
+}
 @keyframes toast-in {
   from {
     transform: translateY(var(--size-legacy-10));
@@ -6092,6 +6095,7 @@ button {
 .rc-cash-row > div:first-child {
   flex: 1;
   min-width: var(--size-legacy-160);
+  min-width: 0;
 }
 .rc-cash-row strong {
   font-size: var(--font-size-md);
@@ -6106,9 +6110,14 @@ button {
 }
 .rc-cash-amounts {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: var(--space-6);
   font-size: var(--font-size-xs);
   color: var(--color-legacy-8e8075);
+}
+.rc-cash-amounts span {
+  overflow-wrap: anywhere;
 }
 .rc-cash-balance {
   text-align: right;
@@ -6124,6 +6133,7 @@ button {
 .rc-cash-balance strong {
   font-size: var(--font-size-legacy-15);
   color: var(--color-text-primary);
+  overflow-wrap: anywhere;
 }
 
 /* Gantt Calendar */
@@ -6306,13 +6316,13 @@ button {
 .rc-gantt-row {
   display: flex;
   align-items: center;
-  height: var(--size-legacy-44);
+  height: var(--size-legacy-52);
   border-bottom: var(--size-legacy-1) solid var(--color-legacy-f0ebe5);
 }
 .rc-gantt-track {
   flex: 1;
   position: relative;
-  height: var(--size-legacy-32);
+  height: var(--size-legacy-40);
   display: flex;
 }
 .rc-gantt-cell {
@@ -6347,14 +6357,13 @@ button {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
   color: var(--color-surface);
-  white-space: nowrap;
+  line-height: 1.2;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-.rc-gantt-res small {
-  font-size: var(--space-3);
-  color: var(--color-legacy-ffffffb0);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .rc-gantt-res.warning {
   background: var(--reservation-status-pending);
@@ -6721,6 +6730,7 @@ button {
   margin-top: var(--space-3);
 }
 .rc-folio-summary > div {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--size-legacy-3);
@@ -6732,8 +6742,11 @@ button {
   letter-spacing: 0.06em;
 }
 .rc-folio-summary strong {
-  font-size: var(--font-size-lg);
+  min-width: 0;
+  font-size: clamp(var(--font-size-sm), 2.5vw, var(--font-size-lg));
   color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 .rc-folio-balance strong {
   font-size: var(--font-size-legacy-16);

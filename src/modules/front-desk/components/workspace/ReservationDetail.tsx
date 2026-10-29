@@ -23,6 +23,7 @@ import type {
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
 import { ConfirmActionModal, ReasonModal, ReservationEditModal } from './ReceptionModals';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 
 /** B11: aplicar o devolver un depósito retenido; el backend valida estado y saldo. */
 export type DepositAction = 'apply' | 'refund';
@@ -374,14 +375,20 @@ export function ReservationDetail({
 
         {tab === 'folio' && (
           <>
-            <div className="rc-folio-list">
-              {reservation.folio.length === 0 && (
+            {reservation.folio.length === 0 ? (
+              <div className="rc-folio-list">
                 <div className="hk-empty">
                   <FileText size={22} />
                   <p>Sin movimientos registrados</p>
                 </div>
-              )}
-              {reservation.folio.map((entry) => (
+              </div>
+            ) : (
+              <PaginatedList
+                items={reservation.folio}
+                getKey={(entry) => entry.id}
+                listClassName="rc-folio-list"
+                label="Paginación de movimientos del folio"
+                renderItem={(entry) => (
                 <div
                   className={`rc-folio-row ${entry.status === 'Anulado' ? 'voided' : ''}`}
                   key={entry.id}
@@ -447,8 +454,9 @@ export function ReservationDetail({
                     )}
                   </div>
                 </div>
-              ))}
-            </div>
+                )}
+              />
+            )}
 
             <div className="rc-folio-summary">
               <div>

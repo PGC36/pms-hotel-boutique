@@ -28,6 +28,7 @@ import type {
   RoomBlock,
 } from '@/private/workspace/PrivateWorkspace';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 import { formatStayRange } from '@/shared/utils/date';
 import type { FrontDeskPaymentMethod } from '@/modules/front-desk/utils/paymentMethods';
 import {
@@ -723,10 +724,16 @@ export function ReceptionContent({
                 </div>
               ))}
             </div>
-            {filteredRooms.map((room) => {
-              const res = filteredRes(room);
-              const blocked = blocks.filter((b) => b.active && b.roomNumber === room.number);
-              return (
+            <PaginatedList
+              items={filteredRooms}
+              getKey={(room) => room.id}
+              listClassName="rc-gantt-room-rows"
+              label="Paginación de habitaciones del calendario"
+              resetKey={`${calFilter.room}:${calFilter.type}:${calFilter.status}`}
+              renderItem={(room) => {
+                const res = filteredRes(room);
+                const blocked = blocks.filter((b) => b.active && b.roomNumber === room.number);
+                return (
                 <div className="rc-gantt-row" key={room.id}>
                   <div className="rc-gantt-room-col">
                     <strong>Hab. {room.number}</strong>
@@ -773,17 +780,17 @@ export function ReceptionContent({
                             width: `${width / days.length}%`,
                           }}
                           onClick={() => onSelectRes(r.id)}
-                          title={`${r.code} · ${r.guest.name}`}
+                          title={`${r.guest.name} ${r.guest.lastName} · ${r.code}`}
                         >
-                          <span>{r.guest.name}</span>
-                          <small>{r.code}</small>
+                          <span>{`${r.guest.name} ${r.guest.lastName}`.trim()}</span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
-              );
-            })}
+                );
+              }}
+            />
           </div>
         </div>
         <div className="rc-gantt-legend">
@@ -921,14 +928,21 @@ export function ReceptionContent({
             Canceladas/Anuladas: {byStatus('Cancelada').length + byStatus('Anulada').length}
           </span>
         </div>
-        <div className="rc-res-list">
-          {filtered.length === 0 && (
+        {filtered.length === 0 ? (
+          <div className="rc-res-list">
             <div className="hk-empty">
               <ClipboardList size={22} />
               <p>No se encontraron reservas</p>
             </div>
-          )}
-          {filtered.map((r) => {
+          </div>
+        ) : (
+          <PaginatedList
+            items={filtered}
+            getKey={(reservation) => reservation.id}
+            listClassName="rc-res-list"
+            label="Paginación de reservas"
+            resetKey={search}
+            renderItem={(r) => {
             const t = folioTotals(r.folio);
             const n = nights(r.checkIn, r.checkOut);
             return (
@@ -972,8 +986,9 @@ export function ReceptionContent({
                 </div>
               </div>
             );
-          })}
-        </div>
+            }}
+          />
+        )}
         {showNewRes && (
           <ReservationFormModal
             nextCode={nextCode}
@@ -1076,13 +1091,14 @@ export function ReceptionContent({
 
   /* ---------- Huéspedes (búsqueda) ---------- */
   if (nav === 'Huéspedes') {
+    const checkedInGuests = reservations.filter((reservation) => reservation.status === 'Check-in');
     const results = search.trim()
-      ? reservations.filter((r) =>
+      ? checkedInGuests.filter((r) =>
           `${r.guest.name} ${r.guest.lastName} ${r.guest.phone} ${r.guest.email} ${r.code}`
             .toLowerCase()
             .includes(search.toLowerCase()),
         )
-      : reservations.slice(0, 5);
+      : checkedInGuests;
     return (
       <div className="panel">
         <div className="panel-heading">
@@ -1102,14 +1118,25 @@ export function ReceptionContent({
             />
           </div>
         </div>
-        <div className="rc-guest-results">
-          {search.trim() && results.length === 0 && (
+        {results.length === 0 ? (
+          <div className="rc-guest-results">
             <div className="hk-empty">
               <Search size={22} />
-              <p>No se encontraron huéspedes</p>
+              <p>
+                {search.trim()
+                  ? 'No se encontraron huéspedes con check-in activo'
+                  : 'No hay huéspedes con check-in activo'}
+              </p>
             </div>
-          )}
-          {results.map((r) => {
+          </div>
+        ) : (
+          <PaginatedList
+            items={results}
+            getKey={(reservation) => reservation.id}
+            listClassName="rc-guest-results"
+            label="Paginación de huéspedes con check-in"
+            resetKey={search}
+            renderItem={(r) => {
             const t = folioTotals(r.folio);
             return (
               <div className="rc-guest-card" key={r.id} onClick={() => onSelectRes(r.id)}>
@@ -1135,8 +1162,9 @@ export function ReceptionContent({
                 </div>
               </div>
             );
-          })}
-        </div>
+            }}
+          />
+        )}
         {selectedRes && (
           <ReservationDetail
             reservation={selectedRes}
@@ -1462,8 +1490,12 @@ export function ReceptionContent({
               <Ban size={14} /> Bloquear habitación
             </button>
           </div>
-          <div className="rc-room-grid">
-            {rooms.map((r) => (
+          <PaginatedList
+            items={rooms}
+            getKey={(room) => room.id}
+            listClassName="rc-room-grid"
+            label="Paginación de habitaciones"
+            renderItem={(r) => (
               <div className={`rc-room-card rc-room-${r.status.toLowerCase()}`} key={r.id}>
                 <div className="rc-room-head">
                   <div>
@@ -1494,8 +1526,8 @@ export function ReceptionContent({
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
+            )}
+          />
         </div>
 
         <div className="panel">
@@ -1505,14 +1537,20 @@ export function ReceptionContent({
               <p>Habitaciones temporalmente fuera de servicio</p>
             </div>
           </div>
-          <div className="rc-block-list">
-            {activeBlocks.length === 0 && (
+          {activeBlocks.length === 0 ? (
+            <div className="rc-block-list">
               <div className="hk-empty">
                 <Ban size={22} />
                 <p>No hay bloqueos activos</p>
               </div>
-            )}
-            {activeBlocks.map((b) => (
+            </div>
+          ) : (
+            <PaginatedList
+              items={activeBlocks}
+              getKey={(block) => block.id}
+              listClassName="rc-block-list"
+              label="Paginación de bloqueos activos"
+              renderItem={(b) => (
               <div className="rc-block-row" key={b.id}>
                 <div className="rc-block-info">
                   <strong>Hab. {b.roomNumber}</strong>
@@ -1525,8 +1563,9 @@ export function ReceptionContent({
                   <Check size={14} /> Finalizar bloqueo
                 </button>
               </div>
-            ))}
-          </div>
+              )}
+            />
+          )}
         </div>
         {showBlock && (
           <BlockModal rooms={rooms} onClose={() => setShowBlock(false)} onAdd={onAddBlock} />
@@ -1661,8 +1700,12 @@ export function ReceptionContent({
             </div>
           </div>
         </div>
-        <div className="rc-cash-list">
-          {activeRes.map((r) => {
+        <PaginatedList
+          items={activeRes}
+          getKey={(reservation) => reservation.id}
+          listClassName="rc-cash-list"
+          label="Paginación de reservas en caja"
+          renderItem={(r) => {
             const t = folioTotals(r.folio);
             return (
               <div className="rc-cash-row" key={r.id} onClick={() => onSelectRes(r.id)}>
@@ -1684,8 +1727,8 @@ export function ReceptionContent({
                 </div>
               </div>
             );
-          })}
-        </div>
+          }}
+        />
         {selectedRes && (
           <ReservationDetail
             reservation={selectedRes}

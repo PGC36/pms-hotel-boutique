@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Edit2, Plus, Trash2, X } from 'lucide-react';
 
 import {
@@ -9,6 +9,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { catalogNameError } from '@/shared/utils/catalogName';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 
 export function ConciergeCatalogPanel({ onAction }: { onAction: (message: string) => void }) {
   const [services, setServices] = useState<ConciergeServiceOption[]>([]);
@@ -21,21 +22,53 @@ export function ConciergeCatalogPanel({ onAction }: { onAction: (message: string
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConciergeServiceOption | null>(null);
+  const loadingRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  const formOpenRef = useRef(formOpen);
+
+  useEffect(() => {
+    formOpenRef.current = formOpen;
+  }, [formOpen]);
 
   const load = async () => {
-    setLoading(true);
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setError('');
     try {
       setServices(await conciergeCatalogService.getServices());
+      hasLoadedRef.current = true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'No fue posible cargar el catálogo.');
+      if (!hasLoadedRef.current) {
+        setError(cause instanceof Error ? cause.message : 'No fue posible cargar el catálogo.');
+      }
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
+    let active = true;
+    const refreshSilently = () => {
+      if (
+        !active || formOpenRef.current || document.visibilityState !== 'visible' ||
+        document.querySelector('.modal-backdrop') ||
+        (document.activeElement instanceof HTMLElement &&
+          document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
+      ) return;
+      void load();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshSilently();
+    };
+    const intervalId = window.setInterval(refreshSilently, 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, []);
 
   const startEdit = (service?: ConciergeServiceOption) => {
@@ -167,8 +200,12 @@ export function ConciergeCatalogPanel({ onAction }: { onAction: (message: string
           <p>No hay servicios configurados</p>
         </div>
       ) : (
-        <div className="adm-concierge-list">
-          {services.map((service) => (
+        <PaginatedList
+          items={services}
+          getKey={(service) => service.id}
+          listClassName="adm-concierge-list"
+          label="Paginación del catálogo de conserjería"
+          renderItem={(service) => (
             <div className="adm-concierge-row" key={service.id}>
               <div>
                 <strong>{service.name}</strong>
@@ -204,8 +241,8 @@ export function ConciergeCatalogPanel({ onAction }: { onAction: (message: string
                 </button>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        />
       )}
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getUserFacingErrorMessage } from '@/services/http-client';
 import {
   Activity,
@@ -36,6 +36,7 @@ import { notificationService, type Notification } from '@/services/notificationS
 import { orderService } from '@/services/orderService';
 import { serviceRequestService } from '@/services/serviceRequestService';
 import { CatalogImage } from '@/shared/components/CatalogImage';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
 import { Pagination } from '@/shared/components/Pagination';
@@ -325,12 +326,16 @@ export function GuestContent({
 }) {
   const [screen, setScreen] = useState<ScreenState>({ status: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
+  const refreshInProgress = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     async function load() {
-      setScreen({ status: 'loading' });
+      refreshInProgress.current = true;
+      setScreen((current) =>
+        current.status === 'ready' ? current : { status: 'loading' },
+      );
       try {
         const [
           stay,
@@ -421,7 +426,15 @@ export function GuestContent({
           });
         }
       } catch (cause) {
-        if (active) setScreen({ status: 'error', message: getErrorMessage(cause) });
+        if (active) {
+          setScreen((current) =>
+            current.status === 'ready'
+              ? current
+              : { status: 'error', message: getErrorMessage(cause) },
+          );
+        }
+      } finally {
+        refreshInProgress.current = false;
       }
     }
 
@@ -430,6 +443,34 @@ export function GuestContent({
       active = false;
     };
   }, [reloadToken]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshSilently = () => {
+      if (
+        !active ||
+        refreshInProgress.current ||
+        document.visibilityState !== 'visible' ||
+        document.querySelector('.modal-backdrop') ||
+        (document.activeElement instanceof HTMLElement &&
+          document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
+      ) {
+        return;
+      }
+      refreshInProgress.current = true;
+      setReloadToken((current) => current + 1);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshSilently();
+    };
+    const intervalId = window.setInterval(refreshSilently, 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   if (screen.status === 'loading') {
     return <LoadingState label="Cargando tu portal de huésped..." />;
@@ -503,6 +544,13 @@ function GuestContentReady({
   const [serviceRequests, setServiceRequests] =
     useState<GuestServiceRequest[]>(initialServiceRequests);
   const [orders, setOrders] = useState<GuestOrder[]>(initialOrders);
+
+  useEffect(() => {
+    setNotifications(initialNotifications);
+    setUnreadCount(initialUnreadCount);
+    setServiceRequests(initialServiceRequests);
+    setOrders(initialOrders);
+  }, [initialNotifications, initialUnreadCount, initialServiceRequests, initialOrders]);
   const [cart, setCart] = useState<GuestCartItem[]>([]);
   const [orderNote, setOrderNote] = useState('');
 
@@ -922,14 +970,21 @@ function GuestContentReady({
               </div>
             </div>
           </div>
-          <div className="gs-res-list">
-            {filteredReservations.length === 0 ? (
+          {filteredReservations.length === 0 ? (
+            <div className="gs-res-list">
               <div className="hk-empty">
                 <CalendarDays size={22} />
                 <p>No tienes reservas en esta categoría</p>
               </div>
-            ) : (
-              filteredReservations.map((res) => {
+            </div>
+          ) : (
+            <PaginatedList
+              items={filteredReservations}
+              getKey={(reservation) => reservation.id}
+              listClassName="gs-res-list"
+              label="Paginación de mis reservas"
+              resetKey={resFilter}
+              renderItem={(res) => {
                 const nights = Math.max(
                   1,
                   calculateNights(
@@ -973,9 +1028,9 @@ function GuestContentReady({
                     </div>
                   </article>
                 );
-              })
-            )}
-          </div>
+              }}
+            />
+          )}
         </div>
         {detailRes && (
           <ReservationDetailModal reservation={detailRes} onClose={() => setDetailResId(null)} />
@@ -1169,8 +1224,18 @@ function GuestContentReady({
             <p>Todo lo que puedes disfrutar durante tu estancia</p>
           </div>
         </div>
-        <div className="gs-amenities-grid">
-          {amenities.map((am) => {
+        {amenities.length === 0 ? (
+          <div className="hk-empty">
+            <Sparkles size={22} />
+            <p>No hay amenidades disponibles</p>
+          </div>
+        ) : (
+          <PaginatedList
+            items={amenities}
+            getKey={(amenity) => amenity.name}
+            listClassName="gs-amenities-grid"
+            label="Paginación de amenidades"
+            renderItem={(am) => {
             const Icon = am.icon;
             return (
               <div
@@ -1202,8 +1267,9 @@ function GuestContentReady({
                 </div>
               </div>
             );
-          })}
-        </div>
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -1239,14 +1305,20 @@ function GuestContentReady({
               <strong>{conciergeRequests.filter((r) => r.status === 'Completada').length}</strong>
             </div>
           </div>
-          <div className="gs-req-list">
-            {conciergeRequests.length === 0 ? (
+          {conciergeRequests.length === 0 ? (
+            <div className="gs-req-list">
               <div className="hk-empty">
                 <MessageSquare size={22} />
                 <p>Aún no tienes solicitudes de conserjería</p>
               </div>
-            ) : (
-              conciergeRequests.map((req) => (
+            </div>
+          ) : (
+            <PaginatedList
+              items={conciergeRequests}
+              getKey={(request) => request.id}
+              listClassName="gs-req-list"
+              label="Paginación de solicitudes de conserjería"
+              renderItem={(req) => (
                 <div className="gs-req-row" key={req.id}>
                   <div className="gs-req-info">
                     <span className="gs-req-type">
@@ -1274,9 +1346,9 @@ function GuestContentReady({
                     )}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              )}
+            />
+          )}
         </div>
         {showRequestService === 'Conserjería' && (
           <RequestServiceModal
@@ -1330,14 +1402,20 @@ function GuestContentReady({
               <strong>{roomRequests.filter((r) => r.status === 'Completada').length}</strong>
             </div>
           </div>
-          <div className="gs-req-list">
-            {roomRequests.length === 0 ? (
+          {roomRequests.length === 0 ? (
+            <div className="gs-req-list">
               <div className="hk-empty">
                 <ClipboardList size={22} />
                 <p>No tienes solicitudes de limpieza</p>
               </div>
-            ) : (
-              roomRequests.map((req) => (
+            </div>
+          ) : (
+            <PaginatedList
+              items={roomRequests}
+              getKey={(request) => request.id}
+              listClassName="gs-req-list"
+              label="Paginación de solicitudes de limpieza"
+              renderItem={(req) => (
                 <div className="gs-req-row" key={req.id}>
                   <div className="gs-req-info">
                     <span className="gs-req-type">
@@ -1370,9 +1448,9 @@ function GuestContentReady({
                     {req.status === 'Completada' && <Check size={16} className="gs-req-done" />}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              )}
+            />
+          )}
         </div>
         {showRequestService && (
           <RequestServiceModal
@@ -1544,14 +1622,20 @@ function GuestContentReady({
         </div>
         <div className="gs-orders-section">
           <h4>Pedidos de Room Service</h4>
-          <div className="gs-orders-list">
-            {orders.length === 0 ? (
+          {orders.length === 0 ? (
+            <div className="gs-orders-list">
               <div className="hk-empty">
                 <ClipboardList size={22} />
                 <p>No tienes pedidos de Room Service</p>
               </div>
-            ) : (
-              orders.map((order) => {
+            </div>
+          ) : (
+            <PaginatedList
+              items={orders}
+              getKey={(order) => order.id}
+              listClassName="gs-orders-list"
+              label="Paginación de pedidos de Room Service"
+              renderItem={(order) => {
                 const total = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
                 const canCancel = canCancelGuestOrder(order);
                 return (
@@ -1598,20 +1682,26 @@ function GuestContentReady({
                     </div>
                   </div>
                 );
-              })
-            )}
-          </div>
+              }}
+            />
+          )}
         </div>
         <div className="gs-orders-section">
           <h4>Solicitudes de servicio</h4>
-          <div className="gs-req-list">
-            {serviceRequests.length === 0 ? (
+          {serviceRequests.length === 0 ? (
+            <div className="gs-req-list">
               <div className="hk-empty">
                 <Sparkles size={22} />
                 <p>No tienes solicitudes de servicio</p>
               </div>
-            ) : (
-              serviceRequests.map((req) => (
+            </div>
+          ) : (
+            <PaginatedList
+              items={serviceRequests}
+              getKey={(request) => request.id}
+              listClassName="gs-req-list"
+              label="Paginación de solicitudes de servicio"
+              renderItem={(req) => (
                 <div className="gs-req-row" key={req.id}>
                   <div className="gs-req-info">
                     <span className="gs-req-type">
@@ -1647,9 +1737,9 @@ function GuestContentReady({
                     {req.status === 'Completada' && <Check size={16} className="gs-req-done" />}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              )}
+            />
+          )}
         </div>
         {cancelOrderId !== null && (
           <CancelOrderModal
@@ -1687,14 +1777,20 @@ function GuestContentReady({
             </button>
           )}
         </div>
-        <div className="gs-notif-list">
-          {notifications.length === 0 ? (
+        {notifications.length === 0 ? (
+          <div className="gs-notif-list">
             <div className="hk-empty">
               <Bell size={22} />
               <p>No tienes notificaciones</p>
             </div>
-          ) : (
-            notifications.map((n) => (
+          </div>
+        ) : (
+          <PaginatedList
+            items={notifications}
+            getKey={(notification) => notification.id}
+            listClassName="gs-notif-list"
+            label="Paginación de notificaciones"
+            renderItem={(n) => (
               <div
                 className={`gs-notif-card ${!n.read ? 'unread' : ''}`}
                 key={n.id}
@@ -1716,9 +1812,9 @@ function GuestContentReady({
                   <small>{n.time}</small>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            )}
+          />
+        )}
       </div>
     );
   }
