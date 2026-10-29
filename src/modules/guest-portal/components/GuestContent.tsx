@@ -333,9 +333,7 @@ export function GuestContent({
 
     async function load() {
       refreshInProgress.current = true;
-      setScreen((current) =>
-        current.status === 'ready' ? current : { status: 'loading' },
-      );
+      setScreen((current) => (current.status === 'ready' ? current : { status: 'loading' }));
       try {
         const [
           stay,
@@ -1236,37 +1234,37 @@ function GuestContentReady({
             listClassName="gs-amenities-grid"
             label="Paginación de amenidades"
             renderItem={(am) => {
-            const Icon = am.icon;
-            return (
-              <div
-                className={`gs-amenity-card ${!am.available ? 'unavailable' : ''}`}
-                key={am.name}
-              >
-                {am.image ? (
-                  <div className="gs-amenity-photo">
-                    <CatalogImage image={am.image} variant="thumb" alt={`Foto de ${am.name}`} />
+              const Icon = am.icon;
+              return (
+                <div
+                  className={`gs-amenity-card ${!am.available ? 'unavailable' : ''}`}
+                  key={am.name}
+                >
+                  {am.image ? (
+                    <div className="gs-amenity-photo">
+                      <CatalogImage image={am.image} variant="thumb" alt={`Foto de ${am.name}`} />
+                    </div>
+                  ) : (
+                    <div className="gs-amenity-icon">
+                      <Icon size={22} />
+                    </div>
+                  )}
+                  <div className="gs-amenity-body">
+                    <div>
+                      <strong>{am.name}</strong>
+                      {am.available ? (
+                        <span className="status-pill success">Disponible</span>
+                      ) : (
+                        <span className="status-pill terracotta">No disponible</span>
+                      )}
+                    </div>
+                    <p>{am.description}</p>
+                    <small>
+                      <Clock size={12} /> {am.schedule}
+                    </small>
                   </div>
-                ) : (
-                  <div className="gs-amenity-icon">
-                    <Icon size={22} />
-                  </div>
-                )}
-                <div className="gs-amenity-body">
-                  <div>
-                    <strong>{am.name}</strong>
-                    {am.available ? (
-                      <span className="status-pill success">Disponible</span>
-                    ) : (
-                      <span className="status-pill terracotta">No disponible</span>
-                    )}
-                  </div>
-                  <p>{am.description}</p>
-                  <small>
-                    <Clock size={12} /> {am.schedule}
-                  </small>
                 </div>
-              </div>
-            );
+              );
             }}
           />
         )}

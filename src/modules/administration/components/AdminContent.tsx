@@ -1336,9 +1336,7 @@ export function AdminContent({
 
     async function load() {
       refreshInProgress.current = true;
-      setScreen((current) =>
-        current.status === 'ready' ? current : { status: 'loading' },
-      );
+      setScreen((current) => (current.status === 'ready' ? current : { status: 'loading' }));
       try {
         const [
           users,

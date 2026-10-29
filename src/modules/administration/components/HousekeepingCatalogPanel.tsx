@@ -52,11 +52,14 @@ export function HousekeepingCatalogPanel({ onAction }: { onAction: (message: str
     let active = true;
     const refreshSilently = () => {
       if (
-        !active || formOpenRef.current || document.visibilityState !== 'visible' ||
+        !active ||
+        formOpenRef.current ||
+        document.visibilityState !== 'visible' ||
         document.querySelector('.modal-backdrop') ||
         (document.activeElement instanceof HTMLElement &&
           document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
-      ) return;
+      )
+        return;
       void load();
     };
     const onVisibilityChange = () => {

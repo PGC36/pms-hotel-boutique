@@ -734,60 +734,60 @@ export function ReceptionContent({
                 const res = filteredRes(room);
                 const blocked = blocks.filter((b) => b.active && b.roomNumber === room.number);
                 return (
-                <div className="rc-gantt-row" key={room.id}>
-                  <div className="rc-gantt-room-col">
-                    <strong>Hab. {room.number}</strong>
-                    <span>
-                      {room.type} · {room.status}
-                    </span>
+                  <div className="rc-gantt-row" key={room.id}>
+                    <div className="rc-gantt-room-col">
+                      <strong>Hab. {room.number}</strong>
+                      <span>
+                        {room.type} · {room.status}
+                      </span>
+                    </div>
+                    <div className="rc-gantt-track">
+                      {days.map((d) => (
+                        <div className="rc-gantt-cell" key={d} />
+                      ))}
+                      {blocked.map((b) => {
+                        const startIdx = Math.max(0, days.indexOf(b.startDate));
+                        const endIdx = Math.min(days.length - 1, days.indexOf(b.endDate));
+                        if (startIdx > days.length - 1 || endIdx < 0) return null;
+                        const left = startIdx * 100;
+                        const width = Math.max(1, endIdx - startIdx + 1) * 100;
+                        return (
+                          <div
+                            className="rc-gantt-block"
+                            key={`b-${b.id}`}
+                            style={{
+                              left: `${left / days.length}%`,
+                              width: `${width / days.length}%`,
+                            }}
+                            title={`${b.reason}: ${b.observation}`}
+                          >
+                            Bloqueo
+                          </div>
+                        );
+                      })}
+                      {res.map((r) => {
+                        const startIdx = Math.max(0, days.indexOf(r.checkIn));
+                        const endIdx = Math.min(days.length - 1, days.indexOf(r.checkOut));
+                        if (startIdx > days.length - 1 || endIdx < 0) return null;
+                        const left = startIdx * 100;
+                        const width = Math.max(1, endIdx - startIdx) * 100;
+                        return (
+                          <button
+                            className={`rc-gantt-res ${statusClass(r.status)}`}
+                            key={r.id}
+                            style={{
+                              left: `${left / days.length}%`,
+                              width: `${width / days.length}%`,
+                            }}
+                            onClick={() => onSelectRes(r.id)}
+                            title={`${r.guest.name} ${r.guest.lastName} · ${r.code}`}
+                          >
+                            <span>{`${r.guest.name} ${r.guest.lastName}`.trim()}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="rc-gantt-track">
-                    {days.map((d) => (
-                      <div className="rc-gantt-cell" key={d} />
-                    ))}
-                    {blocked.map((b) => {
-                      const startIdx = Math.max(0, days.indexOf(b.startDate));
-                      const endIdx = Math.min(days.length - 1, days.indexOf(b.endDate));
-                      if (startIdx > days.length - 1 || endIdx < 0) return null;
-                      const left = startIdx * 100;
-                      const width = Math.max(1, endIdx - startIdx + 1) * 100;
-                      return (
-                        <div
-                          className="rc-gantt-block"
-                          key={`b-${b.id}`}
-                          style={{
-                            left: `${left / days.length}%`,
-                            width: `${width / days.length}%`,
-                          }}
-                          title={`${b.reason}: ${b.observation}`}
-                        >
-                          Bloqueo
-                        </div>
-                      );
-                    })}
-                    {res.map((r) => {
-                      const startIdx = Math.max(0, days.indexOf(r.checkIn));
-                      const endIdx = Math.min(days.length - 1, days.indexOf(r.checkOut));
-                      if (startIdx > days.length - 1 || endIdx < 0) return null;
-                      const left = startIdx * 100;
-                      const width = Math.max(1, endIdx - startIdx) * 100;
-                      return (
-                        <button
-                          className={`rc-gantt-res ${statusClass(r.status)}`}
-                          key={r.id}
-                          style={{
-                            left: `${left / days.length}%`,
-                            width: `${width / days.length}%`,
-                          }}
-                          onClick={() => onSelectRes(r.id)}
-                          title={`${r.guest.name} ${r.guest.lastName} · ${r.code}`}
-                        >
-                          <span>{`${r.guest.name} ${r.guest.lastName}`.trim()}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
                 );
               }}
             />
@@ -943,49 +943,49 @@ export function ReceptionContent({
             label="Paginación de reservas"
             resetKey={search}
             renderItem={(r) => {
-            const t = folioTotals(r.folio);
-            const n = nights(r.checkIn, r.checkOut);
-            return (
-              <div className="rc-res-card" key={r.id} onClick={() => onSelectRes(r.id)}>
-                <div className="rc-res-card-head">
-                  <div>
-                    <strong>{r.code}</strong>
-                    <span>
-                      {r.guest.name} {r.guest.lastName}
-                    </span>
+              const t = folioTotals(r.folio);
+              const n = nights(r.checkIn, r.checkOut);
+              return (
+                <div className="rc-res-card" key={r.id} onClick={() => onSelectRes(r.id)}>
+                  <div className="rc-res-card-head">
+                    <div>
+                      <strong>{r.code}</strong>
+                      <span>
+                        {r.guest.name} {r.guest.lastName}
+                      </span>
+                    </div>
+                    <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
                   </div>
-                  <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
+                  <div className="rc-res-card-meta">
+                    <div>
+                      <small>Habitación</small>
+                      <span>
+                        {r.roomNumber} · {r.roomType}
+                      </span>
+                    </div>
+                    <div>
+                      <small>Estadía</small>
+                      <span>
+                        {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)} · {n}{' '}
+                        {n === 1 ? 'noche' : 'noches'}
+                      </span>
+                    </div>
+                    <div>
+                      <small>Origen</small>
+                      <span>{r.origin}</span>
+                    </div>
+                    <div>
+                      <small>Saldo</small>
+                      <span className={t.balance > 0 ? 'terracotta-text' : 'success-text'}>
+                        {money(t.balance)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="rc-res-card-foot">
+                    <Eye size={14} /> Ver detalle
+                  </div>
                 </div>
-                <div className="rc-res-card-meta">
-                  <div>
-                    <small>Habitación</small>
-                    <span>
-                      {r.roomNumber} · {r.roomType}
-                    </span>
-                  </div>
-                  <div>
-                    <small>Estadía</small>
-                    <span>
-                      {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)} · {n}{' '}
-                      {n === 1 ? 'noche' : 'noches'}
-                    </span>
-                  </div>
-                  <div>
-                    <small>Origen</small>
-                    <span>{r.origin}</span>
-                  </div>
-                  <div>
-                    <small>Saldo</small>
-                    <span className={t.balance > 0 ? 'terracotta-text' : 'success-text'}>
-                      {money(t.balance)}
-                    </span>
-                  </div>
-                </div>
-                <div className="rc-res-card-foot">
-                  <Eye size={14} /> Ver detalle
-                </div>
-              </div>
-            );
+              );
             }}
           />
         )}
@@ -1137,31 +1137,31 @@ export function ReceptionContent({
             label="Paginación de huéspedes con check-in"
             resetKey={search}
             renderItem={(r) => {
-            const t = folioTotals(r.folio);
-            return (
-              <div className="rc-guest-card" key={r.id} onClick={() => onSelectRes(r.id)}>
-                <div className="rc-guest-avatar">
-                  <Users size={20} />
+              const t = folioTotals(r.folio);
+              return (
+                <div className="rc-guest-card" key={r.id} onClick={() => onSelectRes(r.id)}>
+                  <div className="rc-guest-avatar">
+                    <Users size={20} />
+                  </div>
+                  <div className="rc-guest-info">
+                    <strong>
+                      {r.guest.name} {r.guest.lastName}
+                    </strong>
+                    <span>
+                      {r.guest.phone} · {r.guest.email}
+                    </span>
+                    <small>
+                      {r.code} · Hab. {r.roomNumber} · {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}
+                    </small>
+                  </div>
+                  <div className="rc-guest-side">
+                    <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
+                    {t.balance > 0 && (
+                      <span className="rc-guest-balance">Saldo: {money(t.balance)}</span>
+                    )}
+                  </div>
                 </div>
-                <div className="rc-guest-info">
-                  <strong>
-                    {r.guest.name} {r.guest.lastName}
-                  </strong>
-                  <span>
-                    {r.guest.phone} · {r.guest.email}
-                  </span>
-                  <small>
-                    {r.code} · Hab. {r.roomNumber} · {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}
-                  </small>
-                </div>
-                <div className="rc-guest-side">
-                  <span className={`status-pill ${statusClass(r.status)}`}>{r.status}</span>
-                  {t.balance > 0 && (
-                    <span className="rc-guest-balance">Saldo: {money(t.balance)}</span>
-                  )}
-                </div>
-              </div>
-            );
+              );
             }}
           />
         )}
@@ -1551,18 +1551,18 @@ export function ReceptionContent({
               listClassName="rc-block-list"
               label="Paginación de bloqueos activos"
               renderItem={(b) => (
-              <div className="rc-block-row" key={b.id}>
-                <div className="rc-block-info">
-                  <strong>Hab. {b.roomNumber}</strong>
-                  <span>
-                    {b.reason} · {fmtDate(b.startDate)} → {fmtDate(b.endDate)}
-                  </span>
-                  {b.observation && <small>{b.observation}</small>}
+                <div className="rc-block-row" key={b.id}>
+                  <div className="rc-block-info">
+                    <strong>Hab. {b.roomNumber}</strong>
+                    <span>
+                      {b.reason} · {fmtDate(b.startDate)} → {fmtDate(b.endDate)}
+                    </span>
+                    {b.observation && <small>{b.observation}</small>}
+                  </div>
+                  <button className="button small secondary" onClick={() => onRemoveBlock(b.id)}>
+                    <Check size={14} /> Finalizar bloqueo
+                  </button>
                 </div>
-                <button className="button small secondary" onClick={() => onRemoveBlock(b.id)}>
-                  <Check size={14} /> Finalizar bloqueo
-                </button>
-              </div>
               )}
             />
           )}

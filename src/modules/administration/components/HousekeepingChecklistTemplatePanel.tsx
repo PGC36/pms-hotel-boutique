@@ -51,12 +51,15 @@ export function HousekeepingChecklistTemplatePanel({
     let active = true;
     const refreshSilently = () => {
       if (
-        !active || saving || document.visibilityState !== 'visible' ||
+        !active ||
+        saving ||
+        document.visibilityState !== 'visible' ||
         document.querySelector('.modal-backdrop') ||
         itemsDirtyRef.current ||
         (document.activeElement instanceof HTMLElement &&
           document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
-      ) return;
+      )
+        return;
       void load();
     };
     const onVisibilityChange = () => {

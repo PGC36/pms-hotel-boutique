@@ -389,71 +389,71 @@ export function ReservationDetail({
                 listClassName="rc-folio-list"
                 label="Paginación de movimientos del folio"
                 renderItem={(entry) => (
-                <div
-                  className={`rc-folio-row ${entry.status === 'Anulado' ? 'voided' : ''}`}
-                  key={entry.id}
-                >
-                  <div className="rc-folio-info">
-                    <strong>{entry.concept}</strong>
-                    <span>
-                      {entry.category} · {formatDate(entry.date)}
-                      {entry.method ? ` · ${entry.method}` : ''}
-                      {entry.reference ? ` · ${entry.reference}` : ''}
-                    </span>
-                    {entry.status === 'Anulado' && entry.voidReason && (
-                      <small className="rc-void-reason">Anulado: {entry.voidReason}</small>
-                    )}
-                  </div>
-                  <div className="rc-folio-right">
-                    <span
-                      className={`rc-folio-amount ${entry.type === 'Cargo' ? 'charge' : 'credit'}`}
-                    >
-                      {entry.type === 'Cargo' ? '+' : '−'}
-                      {money(entry.amount)}
-                    </span>
-                    <span
-                      className={`status-pill ${entry.type === 'Cargo' ? 'terracotta' : 'success'}`}
-                    >
-                      {entry.type}
-                    </span>
-                    {entry.status === 'Anulado' ? (
-                      <span className="status-pill warning">Anulado</span>
-                    ) : entry.type === 'Cargo' && isActive ? (
-                      <button
-                        className="button small secondary"
-                        onClick={() => onVoidCharge(entry.id)}
-                        aria-label={`Anular cargo ${entry.concept}`}
-                        title="Anular cargo"
-                      >
-                        <Ban size={13} />
-                      </button>
-                    ) : entry.type === 'Depósito' &&
-                      entry.depositStatus === 'held' &&
-                      isActive &&
-                      onDepositAction ? (
-                      <span style={{ display: 'inline-flex', gap: 4 }}>
-                        <button
-                          className="button small secondary"
-                          onClick={() => setDepositAction({ entry, action: 'apply' })}
-                          aria-label={`Aplicar depósito ${money(entry.amount)}`}
-                          title="Aplicar al folio"
-                        >
-                          <Check size={13} />
-                        </button>
-                        <button
-                          className="button small secondary"
-                          onClick={() => setDepositAction({ entry, action: 'refund' })}
-                          aria-label={`Devolver depósito ${money(entry.amount)}`}
-                          title="Devolver depósito"
-                        >
-                          <Wallet size={13} />
-                        </button>
+                  <div
+                    className={`rc-folio-row ${entry.status === 'Anulado' ? 'voided' : ''}`}
+                    key={entry.id}
+                  >
+                    <div className="rc-folio-info">
+                      <strong>{entry.concept}</strong>
+                      <span>
+                        {entry.category} · {formatDate(entry.date)}
+                        {entry.method ? ` · ${entry.method}` : ''}
+                        {entry.reference ? ` · ${entry.reference}` : ''}
                       </span>
-                    ) : (
-                      <span />
-                    )}
+                      {entry.status === 'Anulado' && entry.voidReason && (
+                        <small className="rc-void-reason">Anulado: {entry.voidReason}</small>
+                      )}
+                    </div>
+                    <div className="rc-folio-right">
+                      <span
+                        className={`rc-folio-amount ${entry.type === 'Cargo' ? 'charge' : 'credit'}`}
+                      >
+                        {entry.type === 'Cargo' ? '+' : '−'}
+                        {money(entry.amount)}
+                      </span>
+                      <span
+                        className={`status-pill ${entry.type === 'Cargo' ? 'terracotta' : 'success'}`}
+                      >
+                        {entry.type}
+                      </span>
+                      {entry.status === 'Anulado' ? (
+                        <span className="status-pill warning">Anulado</span>
+                      ) : entry.type === 'Cargo' && isActive ? (
+                        <button
+                          className="button small secondary"
+                          onClick={() => onVoidCharge(entry.id)}
+                          aria-label={`Anular cargo ${entry.concept}`}
+                          title="Anular cargo"
+                        >
+                          <Ban size={13} />
+                        </button>
+                      ) : entry.type === 'Depósito' &&
+                        entry.depositStatus === 'held' &&
+                        isActive &&
+                        onDepositAction ? (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <button
+                            className="button small secondary"
+                            onClick={() => setDepositAction({ entry, action: 'apply' })}
+                            aria-label={`Aplicar depósito ${money(entry.amount)}`}
+                            title="Aplicar al folio"
+                          >
+                            <Check size={13} />
+                          </button>
+                          <button
+                            className="button small secondary"
+                            onClick={() => setDepositAction({ entry, action: 'refund' })}
+                            aria-label={`Devolver depósito ${money(entry.amount)}`}
+                            title="Devolver depósito"
+                          >
+                            <Wallet size={13} />
+                          </button>
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
                   </div>
-                </div>
                 )}
               />
             )}
