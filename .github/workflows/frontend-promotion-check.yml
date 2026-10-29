@@ -9,6 +9,50 @@ permissions:
   contents: read
 
 jobs:
+  sonar-quality-gate:
+    name: SonarCloud Quality Gate
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify SonarCloud configuration
+        run: |
+          if [ -z "$SONAR_TOKEN" ] || [ -z "$SONAR_HOST_URL" ]; then
+            echo "::error title=SonarCloud no configurado::Se requieren SONAR_TOKEN y SONAR_HOST_URL para aprobar la promoción."
+            exit 1
+          fi
+          if ! curl -fsS --max-time 20 "${SONAR_HOST_URL%/}/api/system/status" | grep -q '"status":"UP"'; then
+            echo "::error title=SonarCloud no disponible::No se pudo confirmar el estado UP del servidor."
+            exit 1
+          fi
+
+      - name: Run SonarCloud analysis and Quality Gate
+        run: |
+          npm run sonar -- \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.token="$SONAR_TOKEN" \
+            ${SONAR_PROJECT_KEY:+-Dsonar.projectKey="$SONAR_PROJECT_KEY"} \
+            ${SONAR_ORGANIZATION:+-Dsonar.organization="$SONAR_ORGANIZATION"} \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
+
   docker-check:
     name: Imagen Docker sin source maps
     runs-on: ubuntu-latest
