@@ -48,14 +48,16 @@ export function ConciergeCatalogPanel({ onAction }: { onAction: (message: string
   };
 
   useEffect(() => {
+    void load();
+    let active = true;
     if (
       typeof document === 'undefined' ||
       typeof window === 'undefined' ||
       typeof window.setInterval !== 'function'
     )
-      return;
-    void load();
-    let active = true;
+      return () => {
+        active = false;
+      };
     const refreshSilently = () => {
       if (
         !active ||

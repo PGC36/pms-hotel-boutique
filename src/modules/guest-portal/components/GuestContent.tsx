@@ -329,12 +329,6 @@ export function GuestContent({
   const refreshInProgress = useRef(false);
 
   useEffect(() => {
-    if (
-      typeof document === 'undefined' ||
-      typeof window === 'undefined' ||
-      typeof window.setInterval !== 'function'
-    )
-      return;
     let active = true;
 
     async function load() {
@@ -449,6 +443,12 @@ export function GuestContent({
   }, [reloadToken]);
 
   useEffect(() => {
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
     let active = true;
     const refreshSilently = () => {
       if (
