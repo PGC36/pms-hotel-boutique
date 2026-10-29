@@ -1,6 +1,7 @@
 name: Frontend CI
 
 on:
+  # Full code validation runs against develop; main promotion uses its own lightweight checks.
   push:
     branches:
       - develop
