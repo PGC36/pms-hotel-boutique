@@ -9,7 +9,7 @@ export function PaginatedList<T>({
   label,
   resetKey = '',
   pageSize = 10,
-}: {
+}: Readonly<{
   items: T[];
   getKey: (item: T) => string | number;
   renderItem: (item: T) => ReactNode;
@@ -17,7 +17,7 @@ export function PaginatedList<T>({
   label: string;
   resetKey?: string;
   pageSize?: number;
-}) {
+}>) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const currentPage = Math.min(page, totalPages);
