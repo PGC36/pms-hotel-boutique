@@ -95,6 +95,7 @@ import { serviceRequestService } from '@/services/serviceRequestService';
 import { HttpError } from '@/services/http-client';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingState } from '@/shared/components/LoadingState';
+import { PaginatedList } from '@/shared/components/PaginatedList';
 import { toDomainCalendarDate, toDtoCalendarDate } from '@/shared/types/common';
 import { formatCurrency } from '@/shared/utils/currency';
 import { calculateNights } from '@/shared/utils/date';
@@ -1677,6 +1678,7 @@ function PrivateWorkspaceReady({
   }));
   const [accountPreferences, setAccountPreferences] = useState(defaultAccountPreferences);
   const [toast, setToast] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
   useEffect(() => {
     if (workspaceRole === 'guest') return;
     let active = true;
@@ -1751,7 +1753,7 @@ function PrivateWorkspaceReady({
   const [recRoomList, setRecRoomList] = useState<RecRoom[]>(initialData.recRooms);
   const [recBlockList, setRecBlockList] = useState<RoomBlock[]>(initialData.recRoomBlocks);
   const [recPayments, setRecPayments] = useState<Payment[] | null>(initialData.recPayments);
-  const [recentActivity] = useState(initialData.recentActivity);
+  const [recentActivity, setRecentActivity] = useState(initialData.recentActivity);
   const [recSelectedResId, setRecSelectedResId] = useState<number | null>(null);
   const [recShowNewRes, setRecShowNewRes] = useState(false);
   const [recShowWalkin, setRecShowWalkin] = useState(false);
@@ -1850,11 +1852,20 @@ function PrivateWorkspaceReady({
       setAdminStockNotifications([]);
       return;
     }
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
 
     let cancelled = false;
-    inventoryService
-      .getItemsBelowMinimum()
-      .then((items) => {
+    let loading = false;
+    const loadStockNotifications = async () => {
+      if (cancelled || loading || document.visibilityState !== 'visible') return;
+      loading = true;
+      try {
+        const items = await inventoryService.getItemsBelowMinimum();
         if (cancelled) return;
         setAdminStockNotifications(
           items.map((item) => ({
@@ -1864,13 +1875,23 @@ function PrivateWorkspaceReady({
             destination: scopedNav('admin', 'Gestión de inventario'),
           })),
         );
-      })
-      .catch(() => {
-        if (!cancelled) setAdminStockNotifications([]);
-      });
+      } catch {
+        // Mantiene las notificaciones previas si falla una consulta silenciosa.
+      } finally {
+        loading = false;
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void loadStockNotifications();
+    };
+    void loadStockNotifications();
+    const intervalId = window.setInterval(() => void loadStockNotifications(), 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [activeRole]);
 
@@ -1981,6 +2002,8 @@ function PrivateWorkspaceReady({
   const arrivalsToday = recArrivalsToday.pending;
   const departuresToday = recDeparturesToday.pending;
   const openConciergeRequests = cgRequests.filter((request) => !isClosedConcierge(request.status));
+  const notificationNav = (roleId: RoleId, label: string) =>
+    activeRole === 'admin' ? scopedNav(roleId, label) : label;
   const navBadge = (roleId: RoleId, label: string) => {
     if (roleId === 'housekeeping' && label === 'Habitaciones') {
       return hkRooms.filter((room) => room.status === 'Pendiente').length;
@@ -2204,11 +2227,13 @@ function PrivateWorkspaceReady({
             title: `${hkRooms.filter((room) => room.status === 'Pendiente').length} habitaciones pendientes`,
             detail: 'Revisa la cola de limpieza de hoy',
             tone: 'warning',
+            destination: notificationNav('housekeeping', 'Habitaciones'),
           },
           {
             title: `${hkRequests.filter(isOpenGuestRequest).length} solicitudes activas`,
             detail: 'Amenidades y pedidos de huéspedes',
             tone: 'info',
+            destination: notificationNav('housekeeping', 'Solicitudes'),
           },
         ]
       : contentRole === 'reception'
@@ -2217,11 +2242,13 @@ function PrivateWorkspaceReady({
               title: `${recReservationList.filter((reservation) => reservation.status === 'Pendiente').length} reservas pendientes`,
               detail: 'Confirma o da seguimiento desde Reservas',
               tone: 'warning',
+              destination: notificationNav('reception', 'Reservas'),
             },
             {
               title: `${recRoomList.filter((room) => room.status === 'Limpieza').length} habitaciones en limpieza`,
               detail: 'Valida disponibilidad antes de asignar',
               tone: 'info',
+              destination: notificationNav('reception', 'Habitaciones'),
             },
           ]
         : contentRole === 'room-service'
@@ -2230,11 +2257,13 @@ function PrivateWorkspaceReady({
                 title: `${rsOrders.filter((order) => order.status === 'Pendiente').length} pedidos pendientes`,
                 detail: 'Acepta o rechaza los pedidos nuevos',
                 tone: 'warning',
+                destination: notificationNav('room-service', 'Pedidos activos'),
               },
               {
                 title: `${rsOrders.filter((order) => order.status === 'Listo').length} pedidos listos`,
                 detail: 'Coordina entrega a habitación',
                 tone: 'success',
+                destination: notificationNav('room-service', 'Pedidos activos'),
               },
             ]
           : contentRole === 'concierge'
@@ -2243,11 +2272,13 @@ function PrivateWorkspaceReady({
                   title: `${cgRequests.filter((request) => request.status === 'Pendiente').length} solicitudes pendientes`,
                   detail: 'Transporte, reservas y servicios especiales',
                   tone: 'warning',
+                  destination: notificationNav('concierge', 'Solicitudes'),
                 },
                 {
                   title: `${cgRequests.filter((request) => ['Aceptada', 'En proceso'].includes(request.status)).length} solicitudes en atención`,
                   detail: 'Solicitudes aceptadas o en proceso',
                   tone: 'info',
+                  destination: notificationNav('concierge', 'Solicitudes'),
                 },
               ]
             : contentRole === 'admin'
@@ -2263,12 +2294,15 @@ function PrivateWorkspaceReady({
                   ];
 
   const notify = (message: string) => {
+    setToastType('success');
     setToast(message);
     window.setTimeout(() => setToast(''), 2800);
   };
 
   const notifyError = (cause: unknown) => {
-    notify(getErrorMessage(cause));
+    setToastType('error');
+    setToast(getErrorMessage(cause));
+    window.setTimeout(() => setToast(''), 2800);
   };
 
   useEffect(() => {
@@ -2366,6 +2400,77 @@ function PrivateWorkspaceReady({
       notifyError(cause);
     }
   };
+
+  useEffect(() => {
+    if (contentRole === 'admin' || contentRole === 'guest') return undefined;
+    if (
+      typeof document === 'undefined' ||
+      typeof window === 'undefined' ||
+      typeof window.setInterval !== 'function'
+    )
+      return;
+    let active = true;
+    let refreshing = false;
+    const refreshSilently = async () => {
+      if (
+        !active ||
+        refreshing ||
+        document.visibilityState !== 'visible' ||
+        document.querySelector('.modal-backdrop') ||
+        (document.activeElement instanceof HTMLElement &&
+          document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))
+      ) {
+        return;
+      }
+
+      refreshing = true;
+      try {
+        const data = await loadWorkspaceData(workspaceDataRole);
+        if (!active) return;
+        setTasks(data.tasks);
+        setRecentActivity(data.recentActivity);
+        if (contentRole === 'reception') {
+          setRecReservationList(data.recReservations);
+          setRecRoomList(data.recRooms);
+          setRecBlockList(data.recRoomBlocks);
+        } else if (contentRole === 'housekeeping') {
+          setHkRooms(data.cleaningRooms);
+          setHkRequests(data.guestRequests);
+          setHkHistory(data.history);
+          setHkDefects(data.defects);
+        } else if (contentRole === 'room-service') {
+          setRsOrders(data.roomServiceOrders);
+          setRsSelectedOrderId((currentId) =>
+            currentId !== null && data.roomServiceOrders.some((order) => order.id === currentId)
+              ? currentId
+              : null,
+          );
+        } else if (contentRole === 'concierge') {
+          setCgRequests(data.conciergeRequests);
+          setCgSelectedRequestId((currentId) =>
+            currentId !== null && data.conciergeRequests.some((request) => request.id === currentId)
+              ? currentId
+              : null,
+          );
+        }
+      } catch {
+        // La sincronización automática es silenciosa; la acción manual informa los errores.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshSilently();
+    };
+
+    const intervalId = window.setInterval(() => void refreshSilently(), 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [activeRole, contentRole, workspaceDataRole]);
 
   const handleWorkspaceExport = async () => {
     const date = exportDateSuffix();
@@ -4231,8 +4336,11 @@ function PrivateWorkspaceReady({
         />
       )}
       {toast && (
-        <div className="toast">
-          <span className="toast-check">✓</span>
+        <div
+          className={`toast toast-${toastType}`}
+          role={toastType === 'error' ? 'alert' : 'status'}
+        >
+          <span className="toast-check">{toastType === 'error' ? '!' : '✓'}</span>
           {toast}
         </div>
       )}
@@ -4422,14 +4530,20 @@ function ConciergeContent({
               {refreshing ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
-          <div className="cg-history-list">
-            {completedRequests.length === 0 ? (
+          {completedRequests.length === 0 ? (
+            <div className="cg-history-list">
               <div className="hk-empty">
                 <FileText size={22} />
                 <p>Aún no hay solicitudes finalizados</p>
               </div>
-            ) : (
-              completedRequests.map((req) => (
+            </div>
+          ) : (
+            <PaginatedList
+              items={completedRequests}
+              getKey={(request) => request.id}
+              listClassName="cg-history-list"
+              label="Paginación del historial de conserjería"
+              renderItem={(req) => (
                 <div className="cg-history-row" key={req.id}>
                   <div className="cg-history-info">
                     <strong>
@@ -4457,9 +4571,9 @@ function ConciergeContent({
                     Ver detalle
                   </button>
                 </div>
-              ))
-            )}
-          </div>
+              )}
+            />
+          )}
         </div>
         {selectedRequest && (
           <ConciergeRequestModal
@@ -4628,16 +4742,23 @@ function ConciergeContent({
               <strong>{requests.filter((r) => r.status === 'Completada').length}</strong>
             </div>
           </div>
-          <div className="cg-request-list">
-            {filteredRequests.length === 0 ? (
+          {filteredRequests.length === 0 ? (
+            <div className="cg-request-list">
               <div className="hk-empty">
                 <ClipboardList size={22} />
                 <p>No hay solicitudes activas</p>
               </div>
-            ) : (
-              filteredRequests.map(renderRequest)
-            )}
-          </div>
+            </div>
+          ) : (
+            <PaginatedList
+              items={filteredRequests}
+              getKey={(request) => request.id}
+              renderItem={renderRequest}
+              listClassName="cg-request-list"
+              label="Paginación de solicitudes activas"
+              resetKey={`${search}:${filter}`}
+            />
+          )}
         </div>
         <aside className="panel cg-side-panel">
           <div className="panel-heading">
@@ -5034,6 +5155,9 @@ function HousekeepingContent({
   const reqPending = requests.filter((r) => r.status === 'Pendiente').length;
   const reqInProgress = requests.filter((r) => r.status === 'En proceso').length;
   const reqCompleted = requests.filter((r) => r.status === 'Completada').length;
+  const prioritizedRequests = [...requests].sort(
+    (first, second) => Number(second.status === 'Pendiente') - Number(first.status === 'Pendiente'),
+  );
   const filteredRooms = rooms.filter((r) => {
     const matchesSearch = `${r.number} ${r.floor} ${r.type} ${r.cleaningType}`
       .toLowerCase()
@@ -5100,30 +5224,37 @@ function HousekeepingContent({
             <p>Tareas y solicitudes completadas</p>
           </div>
         </div>
-        <div className="hk-history-list">
-          {history.length === 0 && (
+        {history.length === 0 ? (
+          <div className="hk-history-list">
             <div className="hk-empty">
               <FileText size={22} />
               <p>Aún no hay tareas completadas</p>
             </div>
-          )}
-          {history.map((entry) => (
-            <div className="hk-history-row" key={entry.id}>
-              <div className="hk-history-info">
-                <strong>Habitación {entry.room}</strong>
-                <span>{entry.taskType}</span>
-                <small>{entry.date}</small>
+          </div>
+        ) : (
+          <PaginatedList
+            items={history}
+            getKey={(entry) => entry.id}
+            listClassName="hk-history-list"
+            label="Paginación del historial de limpieza"
+            renderItem={(entry) => (
+              <div className="hk-history-row" key={entry.id}>
+                <div className="hk-history-info">
+                  <strong>Habitación {entry.room}</strong>
+                  <span>{entry.taskType}</span>
+                  <small>{entry.date}</small>
+                </div>
+                <div className="hk-history-time">
+                  <span>
+                    <Clock size={13} /> {entry.startTime} → {entry.endTime}
+                  </span>
+                  <strong>{entry.duration}</strong>
+                </div>
+                <span className="status-pill success">{entry.status}</span>
               </div>
-              <div className="hk-history-time">
-                <span>
-                  <Clock size={13} /> {entry.startTime} → {entry.endTime}
-                </span>
-                <strong>{entry.duration}</strong>
-              </div>
-              <span className="status-pill success">{entry.status}</span>
-            </div>
-          ))}
-        </div>
+            )}
+          />
+        )}
       </div>
     );
   }
@@ -5151,105 +5282,112 @@ function HousekeepingContent({
             <strong>{reqCompleted}</strong>
           </div>
         </div>
-        <div className="hk-req-list">
-          {requests.length === 0 && (
+        {requests.length === 0 ? (
+          <div className="hk-req-list">
             <div className="hk-empty">
               <ClipboardList size={22} />
               <p>No hay solicitudes pendientes</p>
             </div>
-          )}
-          {requests.map((req) => (
-            <div
-              className={`hk-req-row ${req.status === 'Completada' ? 'completed' : ''}`}
-              key={req.id}
-            >
-              <div className="hk-req-info">
-                <strong>Habitación {req.room}</strong>
-                <span>{req.request}</span>
-              </div>
-              <span className="hk-req-time">{req.time}</span>
-              {req.priority === 'Alta' && (
-                <span className="status-pill warning">Prioridad alta</span>
-              )}
-              {req.priority === 'Media' && (
-                <span className="status-pill info">Prioridad media</span>
-              )}
-              {req.priority === 'Baja' && (
-                <span className="status-pill success">Prioridad baja</span>
-              )}
-              <span
-                className={`status-pill ${req.status === 'Pendiente' ? 'warning' : req.status === 'En proceso' ? 'info' : req.status === 'Rechazada' ? 'terracotta' : 'success'}`}
+          </div>
+        ) : (
+          <PaginatedList
+            items={prioritizedRequests}
+            getKey={(request) => request.id}
+            listClassName="hk-req-list"
+            label="Paginación de solicitudes de limpieza"
+            renderItem={(req) => (
+              <div
+                className={`hk-req-row ${req.status === 'Completada' ? 'completed' : ''}`}
+                key={req.id}
               >
-                {req.status}
-              </span>
-              {req.status === 'En proceso' && !isGuestItemRequest(req) && (
-                <div className="hk-request-checklist">
-                  {!req.checklist ? (
-                    <>
-                      <p>Esta solicitud todavía no tiene checklist.</p>
-                      <button
-                        className="button small secondary"
-                        onClick={() => onPrepareRequestChecklist(req.id)}
-                      >
-                        Preparar checklist
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <div className="hk-request-checklist-heading">
-                        <strong>Checklist de limpieza</strong>
-                        <span>
-                          {req.checklist.items.filter((item) => item.done).length}/
-                          {req.checklist.items.length}
-                        </span>
-                      </div>
-                      <div className="hk-request-checklist-items">
-                        {req.checklist.items.map((item, index) => (
-                          <label key={item.id ?? `${item.position}-${item.label}`}>
-                            <input
-                              type="checkbox"
-                              checked={item.done}
-                              disabled={req.checklist?.status === 'completed'}
-                              onChange={() => onToggleRequestChecklist(req.id, index)}
-                            />
-                            <span>{item.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                      {req.checklist.status !== 'completed' && (
+                <div className="hk-req-info">
+                  <strong>Habitación {req.room}</strong>
+                  <span>{req.request}</span>
+                </div>
+                <span className="hk-req-time">{req.time}</span>
+                {req.priority === 'Alta' && (
+                  <span className="status-pill warning">Prioridad alta</span>
+                )}
+                {req.priority === 'Media' && (
+                  <span className="status-pill info">Prioridad media</span>
+                )}
+                {req.priority === 'Baja' && (
+                  <span className="status-pill success">Prioridad baja</span>
+                )}
+                <span
+                  className={`status-pill ${req.status === 'Pendiente' ? 'warning' : req.status === 'En proceso' ? 'info' : req.status === 'Rechazada' ? 'terracotta' : 'success'}`}
+                >
+                  {req.status}
+                </span>
+                {req.status === 'En proceso' && !isGuestItemRequest(req) && (
+                  <div className="hk-request-checklist">
+                    {!req.checklist ? (
+                      <>
+                        <p>Esta solicitud todavía no tiene checklist.</p>
                         <button
                           className="button small secondary"
-                          disabled={
-                            req.checklist.items.length === 0 ||
-                            req.checklist.items.some((item) => !item.done)
-                          }
-                          onClick={() => onCompleteRequestChecklist(req.id)}
+                          onClick={() => onPrepareRequestChecklist(req.id)}
                         >
-                          Completar checklist
+                          Preparar checklist
                         </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-              {req.status === 'Pendiente' && (
-                <button className="button small primary" onClick={() => onAttendRequest(req.id)}>
-                  Atender solicitud
-                </button>
-              )}
-              {req.status === 'En proceso' && (
-                <button
-                  className="button small primary"
-                  disabled={!isGuestItemRequest(req) && req.checklist?.status !== 'completed'}
-                  onClick={() => onCompleteRequest(req.id)}
-                >
-                  Completar solicitud
-                </button>
-              )}
-              {req.status === 'Completada' && <span className="hk-done-label">Atendida</span>}
-            </div>
-          ))}
-        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="hk-request-checklist-heading">
+                          <strong>Checklist de limpieza</strong>
+                          <span>
+                            {req.checklist.items.filter((item) => item.done).length}/
+                            {req.checklist.items.length}
+                          </span>
+                        </div>
+                        <div className="hk-request-checklist-items">
+                          {req.checklist.items.map((item, index) => (
+                            <label key={item.id ?? `${item.position}-${item.label}`}>
+                              <input
+                                type="checkbox"
+                                checked={item.done}
+                                disabled={req.checklist?.status === 'completed'}
+                                onChange={() => onToggleRequestChecklist(req.id, index)}
+                              />
+                              <span>{item.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                        {req.checklist.status !== 'completed' && (
+                          <button
+                            className="button small secondary"
+                            disabled={
+                              req.checklist.items.length === 0 ||
+                              req.checklist.items.some((item) => !item.done)
+                            }
+                            onClick={() => onCompleteRequestChecklist(req.id)}
+                          >
+                            Completar checklist
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+                {req.status === 'Pendiente' && (
+                  <button className="button small primary" onClick={() => onAttendRequest(req.id)}>
+                    Atender solicitud
+                  </button>
+                )}
+                {req.status === 'En proceso' && (
+                  <button
+                    className="button small primary"
+                    disabled={!isGuestItemRequest(req) && req.checklist?.status !== 'completed'}
+                    onClick={() => onCompleteRequest(req.id)}
+                  >
+                    Completar solicitud
+                  </button>
+                )}
+                {req.status === 'Completada' && <span className="hk-done-label">Atendida</span>}
+              </div>
+            )}
+          />
+        )}
       </div>
     );
   }
@@ -5313,89 +5451,100 @@ function HousekeepingContent({
               </div>
             </div>
           </div>
-          <div className="hk-room-grid">
-            {filteredRooms.length === 0 && (
+          {filteredRooms.length === 0 ? (
+            <div className="hk-room-grid">
               <div className="hk-empty">
                 <Search size={22} />
                 <p>No se encontraron habitaciones</p>
               </div>
-            )}
-            {filteredRooms.map((room) => (
-              <div className={`hk-room-card priority-${room.priority.toLowerCase()}`} key={room.id}>
-                <div className="hk-room-head">
-                  <div>
-                    <strong>Habitación {room.number}</strong>
-                    <span>
-                      {room.floor}
-                      {room.type ? ` · ${room.type}` : ''}
+            </div>
+          ) : (
+            <PaginatedList
+              items={filteredRooms}
+              getKey={(room) => room.id}
+              listClassName="hk-room-grid"
+              label="Paginación de habitaciones de limpieza"
+              resetKey={`${search}:${hkFilter}`}
+              renderItem={(room) => (
+                <div
+                  className={`hk-room-card priority-${room.priority.toLowerCase()}`}
+                  key={room.id}
+                >
+                  <div className="hk-room-head">
+                    <div>
+                      <strong>Habitación {room.number}</strong>
+                      <span>
+                        {room.floor}
+                        {room.type ? ` · ${room.type}` : ''}
+                      </span>
+                    </div>
+                    <span
+                      className={`status-pill ${room.status === 'Pendiente' ? 'warning' : room.status === 'En proceso' ? 'info' : 'success'}`}
+                    >
+                      {room.status}
                     </span>
                   </div>
-                  <span
-                    className={`status-pill ${room.status === 'Pendiente' ? 'warning' : room.status === 'En proceso' ? 'info' : 'success'}`}
-                  >
-                    {room.status}
-                  </span>
-                </div>
-                <div className="hk-room-meta">
-                  <div>
-                    <small>Tipo de limpieza</small>
-                    <span>{room.cleaningType}</span>
+                  <div className="hk-room-meta">
+                    <div>
+                      <small>Tipo de limpieza</small>
+                      <span>{room.cleaningType}</span>
+                    </div>
+                    <div>
+                      <small>Prioridad</small>
+                      <span>{room.priority}</span>
+                    </div>
+                    {room.startTime && (
+                      <div>
+                        <small>Inicio</small>
+                        <span>{room.startTime}</span>
+                      </div>
+                    )}
+                    {room.endTime && (
+                      <div>
+                        <small>Fin</small>
+                        <span>{room.endTime}</span>
+                      </div>
+                    )}
+                    {room.duration && (
+                      <div>
+                        <small>Duración</small>
+                        <span>{room.duration}</span>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <small>Prioridad</small>
-                    <span>{room.priority}</span>
+                  <div className="hk-room-actions">
+                    {room.status === 'Pendiente' && (
+                      <button
+                        className="button small primary"
+                        onClick={() => onStartCleaning(room.id)}
+                      >
+                        Iniciar limpieza
+                      </button>
+                    )}
+                    {room.status === 'En proceso' && (
+                      <button
+                        className="button small primary"
+                        onClick={() => onFinishCleaning(room.id)}
+                      >
+                        Finalizar limpieza
+                      </button>
+                    )}
+                    {room.status === 'Completada' && (
+                      <button className="button small primary" onClick={() => onInspect(room.id)}>
+                        Inspeccionar
+                      </button>
+                    )}
+                    {room.status === 'Inspeccionada' && (
+                      <span className="hk-done-label">Habitación inspeccionada</span>
+                    )}
+                    <button className="button small secondary" onClick={() => onOpenDetail(room)}>
+                      Ver detalle
+                    </button>
                   </div>
-                  {room.startTime && (
-                    <div>
-                      <small>Inicio</small>
-                      <span>{room.startTime}</span>
-                    </div>
-                  )}
-                  {room.endTime && (
-                    <div>
-                      <small>Fin</small>
-                      <span>{room.endTime}</span>
-                    </div>
-                  )}
-                  {room.duration && (
-                    <div>
-                      <small>Duración</small>
-                      <span>{room.duration}</span>
-                    </div>
-                  )}
                 </div>
-                <div className="hk-room-actions">
-                  {room.status === 'Pendiente' && (
-                    <button
-                      className="button small primary"
-                      onClick={() => onStartCleaning(room.id)}
-                    >
-                      Iniciar limpieza
-                    </button>
-                  )}
-                  {room.status === 'En proceso' && (
-                    <button
-                      className="button small primary"
-                      onClick={() => onFinishCleaning(room.id)}
-                    >
-                      Finalizar limpieza
-                    </button>
-                  )}
-                  {room.status === 'Completada' && (
-                    <button className="button small primary" onClick={() => onInspect(room.id)}>
-                      Inspeccionar
-                    </button>
-                  )}
-                  {room.status === 'Inspeccionada' && (
-                    <span className="hk-done-label">Habitación inspeccionada</span>
-                  )}
-                  <button className="button small secondary" onClick={() => onOpenDetail(room)}>
-                    Ver detalle
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              )}
+            />
+          )}
         </div>
         {detailRoom && (
           <RoomDetailModal
@@ -5465,9 +5614,12 @@ function HousekeepingContent({
                   <p>Toda la jornada está al día</p>
                 </div>
               )}
-            {rooms
-              .filter((r) => !isCleaningDone(r.status))
-              .map((room) => (
+            <PaginatedList
+              items={rooms.filter((room) => !isCleaningDone(room.status))}
+              getKey={(room) => `room-${room.id}`}
+              listClassName="task-list"
+              label="Paginación de tareas de limpieza"
+              renderItem={(room) => (
                 <div className="task-row" key={room.id}>
                   <div className="task-status-dot" />
                   <div className="task-info">
@@ -5500,33 +5652,45 @@ function HousekeepingContent({
                     </button>
                   )}
                 </div>
-              ))}
-            {requests.filter(isOpenGuestRequest).map((req) => (
-              <div className="task-row" key={req.id}>
-                <div className="task-status-dot" />
-                <div className="task-info">
-                  <strong>{req.request}</strong>
-                  <span>Habitación {req.room}</span>
-                </div>
-                <span className="task-time">{req.time}</span>
-                <span className={`status-pill ${req.status === 'Pendiente' ? 'warning' : 'info'}`}>
-                  {req.status}
-                </span>
-                {req.status === 'Pendiente' && (
-                  <button className="button small primary" onClick={() => onAttendRequest(req.id)}>
-                    Atender
-                  </button>
-                )}
-                {req.status === 'En proceso' && (
-                  <button
-                    className="button small primary"
-                    onClick={() => onCompleteRequest(req.id)}
+              )}
+            />
+            <PaginatedList
+              items={requests.filter(isOpenGuestRequest)}
+              getKey={(request) => `request-${request.id}`}
+              listClassName="task-list"
+              label="Paginación de solicitudes de limpieza"
+              renderItem={(req) => (
+                <div className="task-row" key={req.id}>
+                  <div className="task-status-dot" />
+                  <div className="task-info">
+                    <strong>{req.request}</strong>
+                    <span>Habitación {req.room}</span>
+                  </div>
+                  <span className="task-time">{req.time}</span>
+                  <span
+                    className={`status-pill ${req.status === 'Pendiente' ? 'warning' : 'info'}`}
                   >
-                    Completar
-                  </button>
-                )}
-              </div>
-            ))}
+                    {req.status}
+                  </span>
+                  {req.status === 'Pendiente' && (
+                    <button
+                      className="button small primary"
+                      onClick={() => onAttendRequest(req.id)}
+                    >
+                      Atender
+                    </button>
+                  )}
+                  {req.status === 'En proceso' && (
+                    <button
+                      className="button small primary"
+                      onClick={() => onCompleteRequest(req.id)}
+                    >
+                      Completar
+                    </button>
+                  )}
+                </div>
+              )}
+            />
           </div>
         </div>
         <div className="panel side-panel">

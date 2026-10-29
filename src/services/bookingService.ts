@@ -260,7 +260,7 @@ export const bookingService = {
     if (!isUuid(roomId)) throw new Error('La asignacion requiere una habitacion del backend real.');
 
     const booking = await request(
-      () => httpClient.put<ApiBooking>(`/bookings/${bookingId}`, { roomId }),
+      () => httpClient.put<ApiBooking>(`/bookings/${bookingId}/room`, { roomId }),
       'No fue posible asignar la habitacion.',
     );
     return toBooking(toBookingDto(booking));

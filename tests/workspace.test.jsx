@@ -2471,6 +2471,10 @@ function installReceptionBackend({
       Object.assign(state.booking, { status: 'confirmed', updatedAt: now });
       return json(state.booking);
     }
+    if (method === 'PUT' && path === `/bookings/${REC_BOOKING_ID}/room`) {
+      state.booking.roomId = body.roomId;
+      return json(state.booking);
+    }
     if (method === 'PUT' && path === `/bookings/${REC_BOOKING_ID}`) {
       Object.assign(state.booking, body);
       return json(state.booking);
@@ -2888,7 +2892,7 @@ test('recepción: asigna una habitación compatible dentro del check-in', async 
   });
 
   const calls = recBackend.requests.map(({ call }) => call);
-  const assignmentIndex = calls.indexOf(`PUT /bookings/${REC_BOOKING_ID}`);
+  const assignmentIndex = calls.indexOf(`PUT /bookings/${REC_BOOKING_ID}/room`);
   const companionIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/companions`);
   const checkInIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/check-in`);
   const folioIndex = calls.indexOf(`POST /bookings/${REC_BOOKING_ID}/folio/open`);
