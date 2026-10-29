@@ -10,8 +10,12 @@ El flujo es `StaffLoginPage` -> `AuthProvider` -> fachada de
 credenciales contra `sessionAccountsDB`. El backend esperado expone:
 
 - `POST /auth/login` con `{ email, password }`.
-- `POST /auth/refresh` con `{ refreshToken }`.
-- `POST /auth/logout` con `{ refreshToken }` y respuesta `204`.
+- `POST /auth/refresh` sin cuerpo: el refresh token llega en la cookie httpOnly.
+- `POST /auth/logout` sin cuerpo y respuesta `204` (revoca y borra la cookie).
+
+Las tres llamadas mandan `X-Client: web` y usan `credentials: 'include'` (valor
+por defecto del `http-client`). Con ese header el backend omite `refreshToken`
+del JSON; la app móvil no lo manda y sigue recibiéndolo en el cuerpo.
 
 `VITE_API_BASE_URL` debe apuntar al prefijo del backend, por defecto
 `http://localhost:8080/api/v1` en desarrollo y `/api/v1` en un build de
@@ -20,7 +24,8 @@ producción. Puede ser relativa (`/api/v1`, como en la imagen Docker): el
 
 ## Sesion y permisos
 
-El backend devuelve `accessToken`, `refreshToken`, `tokenType` y `expiresIn`.
+El backend devuelve `accessToken`, `tokenType` y `expiresIn` (sin `refreshToken`
+para la web, ver arriba).
 El frontend normaliza esa respuesta al contrato `AuthSession`: decodifica el
 JWT para leer `sub`, `ROLE_*`, `authorities`, `iat` y `exp`.
 
@@ -43,22 +48,35 @@ mismo PR.
 
 ## Persistencia, refresh y logout
 
-La persistencia local usa `PMS_AUTH_SESSION`. Guarda tokens y metadatos de
-sesion, nunca password ni permisos frontend materializados.
+Desde la cookie httpOnly (backend: `docs/adr/0002-auth-cookie-httponly.md`):
 
-`http-client.ts` agrega `Authorization: Bearer <accessToken>` automaticamente.
-Al restaurar una sesion persistida, `authService` valida el `exp` del JWT y
-refresca antes de entregar la sesion si el access token ya vencio o vence en la
-ventana preventiva. Esto mantiene separadas las 8 horas de sesion frontend
-(`expiresAt`) de la expiracion real del JWT (`accessExpiresAt`).
-Si una peticion protegida responde `401`, intenta `POST /auth/refresh` una sola
-vez, actualiza access/refresh token y reintenta la peticion original una sola
-vez. Si refresh falla, limpia la sesion local y el usuario debe iniciar sesion
-de nuevo.
+- **Refresh token** del personal: solo en la cookie `pms_refresh_token`
+  (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth`). JavaScript no la
+  puede leer, así que un XSS no puede robarlo.
+- **Access token** del personal: solo en memoria (`authService`), nunca en
+  `localStorage`/`sessionStorage`. Se pierde al recargar.
+- `PMS_AUTH_SESSION` guarda para el personal solo `{ kind: 'staff', expiresAt }`:
+  indica que hay sesión, fija el tope de 8 horas y avisa a las otras pestañas
+  (evento `storage`) de un login o logout. Nunca guarda tokens, password ni
+  permisos materializados.
+- Una sesión de personal del formato anterior (con tokens en `localStorage`) se
+  descarta al restaurar: hay que iniciar sesión una vez tras el despliegue.
 
-`logout` intenta revocar el refresh token con `POST /auth/logout`, pero siempre
-limpia la sesion local aunque el backend falle. La clave legacy
-`hotel-aurora.auth.v1` se elimina durante restauracion o limpieza.
+Al recargar, `restore` ve la marca y llama `POST /auth/refresh`; el navegador
+adjunta la cookie, el backend la rota y devuelve un access token nuevo. En la
+misma pestaña, si el token en memoria no está por vencer, se reutiliza sin
+refrescar. Si una petición protegida responde `401`, se intenta un refresh una
+sola vez y se reintenta la petición original una sola vez. Si refresh falla, se
+limpia la sesión local y el usuario debe iniciar sesión de nuevo.
+
+`logout` llama `POST /auth/logout` (el backend revoca el token de la cookie y la
+borra con `Max-Age=0`) y siempre limpia la sesión local aunque el backend falle.
+La clave legacy `hotel-aurora.auth.v1` se elimina durante restauración o limpieza.
+
+Limitación conocida: el huésped no tiene refresh token (el backend solo le
+emite un access token), así que su sesión sigue guardando el JWT de huésped en
+`PMS_AUTH_SESSION` para sobrevivir a una recarga. Dos pestañas que refresquen
+exactamente a la vez pueden hacer que una reciba `401` (rotación) y pida login.
 
 La salida voluntaria desde cualquier workspace privado navega a la home publica
 (`/`) con reemplazo de historial, tanto para personal como para huespedes. Esta
@@ -79,9 +97,11 @@ liberarlo o ampliar CORS del backend antes de probar login real.
 
 - login exitoso y credenciales invalidas;
 - Bearer automatico;
-- refresh preventivo al restaurar JWT vencido;
+- login sin tokens en el almacenamiento (cookie simulada + memoria);
+- recuperación de sesión tras recargar con `POST /auth/refresh` por cookie;
+- descarte de sesiones del formato anterior con tokens;
 - refresh + retry unico;
 - refresh fallido con limpieza local;
-- logout con envio de refresh token;
+- logout sin cuerpo que revoca la cookie;
 - restauracion de sesion;
 - guards por rol y permisos.

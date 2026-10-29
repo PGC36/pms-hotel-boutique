@@ -16,6 +16,34 @@ const sessionDuration = 8 * 60 * 60 * 1000;
 const accessTokenRefreshWindow = 30 * 1000;
 let revision = 0;
 
+/**
+ * Pide al backend que no devuelva el refresh token en el JSON: la web lo recibe solo
+ * en la cookie httpOnly `pms_refresh_token` (Path=/api/v1/auth, SameSite=Strict), que
+ * el navegador manda sola gracias a `credentials: 'include'` del cliente HTTP.
+ */
+const webClientHeaders = { 'X-Client': 'web' } as const;
+const authEndpointOptions = {
+  headers: webClientHeaders,
+  auth: { skipAuthorization: true, skipRefresh: true },
+} as const;
+
+/**
+ * Sesión del personal en memoria: el access token nunca se escribe en el
+ * almacenamiento del navegador. Al recargar se recupera con `POST /auth/refresh`.
+ */
+let staffSession: AuthResponseDTO | null = null;
+
+/**
+ * Lo que queda en `localStorage`:
+ * - personal: solo la marca `{ kind: 'staff', expiresAt }` (hay sesión y su tope de 8 h),
+ *   sin tokens; sirve para no llamar a refresh en cada visita anónima y para que
+ *   las otras pestañas se enteren de un login/logout (evento `storage`);
+ * - huésped: su sesión completa, porque el backend no le emite refresh token y sin
+ *   ella perdería el acceso al recargar (limitación documentada en el README de auth).
+ */
+type StoredSession =
+  { kind: 'staff'; expiresAt: string } | { kind: 'guest'; session: AuthResponseDTO };
+
 type JwtPayload = {
   sub?: string;
   authorities?: string[];
@@ -133,7 +161,6 @@ function normalizeAuthResponse(
       createdAt: issuedAt.toISOString(),
     },
     token: response.accessToken,
-    refreshToken: response.refreshToken,
     expiresAt: sessionExpiresAt ?? new Date(Date.now() + sessionDuration).toISOString(),
     accessExpiresAt: accessExpiresAt.toISOString(),
     tokenType: response.tokenType,
@@ -186,7 +213,6 @@ function normalizeGuestSession(
       createdAt: issuedAt.toISOString(),
     },
     token,
-    refreshToken: '',
     expiresAt: accessExpiresAt.toISOString(),
     accessExpiresAt: accessExpiresAt.toISOString(),
     tokenType,
@@ -237,33 +263,39 @@ function guestRegistrationErrorMessage(error: unknown): string {
   return messageFromHttpError(error, 'No fue posible crear tu cuenta de huésped.');
 }
 
-function readStoredSession(): AuthResponseDTO | null {
+function readStoredSession(): StoredSession | null {
   localStorage.removeItem(legacyStorageKey);
   const raw = localStorage.getItem(sessionStorageKey);
   if (!raw) return null;
   try {
-    const value = JSON.parse(raw) as Partial<AuthResponseDTO>;
+    const value = JSON.parse(raw) as Partial<AuthResponseDTO> & { kind?: unknown };
+    if (!value || typeof value !== 'object' || typeof value.expiresAt !== 'string') return null;
+    if (value.kind === 'staff') return { kind: 'staff', expiresAt: value.expiresAt };
+    // Una sesión de personal del formato anterior (con access y refresh token en
+    // localStorage) se descarta: el refresh token ahora solo vive en la cookie httpOnly.
     if (
-      !value ||
-      typeof value !== 'object' ||
       typeof value.token !== 'string' ||
-      typeof value.refreshToken !== 'string' ||
-      typeof value.expiresAt !== 'string' ||
+      !isGuestToken(value.token) ||
       !value.user ||
       typeof value.user.email !== 'string'
     ) {
       return null;
     }
-    return value as AuthResponseDTO;
+    return { kind: 'guest', session: value as AuthResponseDTO };
   } catch {
     return null;
   }
 }
 
-function persistSession(dto: AuthResponseDTO): void {
+function writeStoredSession(value: StoredSession): void {
   try {
     localStorage.removeItem(legacyStorageKey);
-    localStorage.setItem(sessionStorageKey, JSON.stringify(dto));
+    localStorage.setItem(
+      sessionStorageKey,
+      JSON.stringify(
+        value.kind === 'staff' ? { kind: 'staff', expiresAt: value.expiresAt } : value.session,
+      ),
+    );
   } catch {
     httpClient.clearToken();
     throw new Error(
@@ -272,15 +304,20 @@ function persistSession(dto: AuthResponseDTO): void {
   }
 }
 
+function persistGuestSession(dto: AuthResponseDTO): void {
+  writeStoredSession({ kind: 'guest', session: dto });
+}
+
 function isAccessTokenExpiring(dto: AuthResponseDTO): boolean {
   const expiresAt = Date.parse(dto.accessExpiresAt ?? '');
   return Number.isFinite(expiresAt) && expiresAt <= Date.now() + accessTokenRefreshWindow;
 }
 
-async function refreshStoredSession(): Promise<string | null> {
+/** Rota el refresh token de la cookie y deja el nuevo access token solo en memoria. */
+async function refreshStaffSession(): Promise<string | null> {
   const stored = readStoredSession();
   if (!stored) return null;
-  if (isGuestToken(stored.token)) {
+  if (stored.kind === 'guest') {
     // El huésped no tiene refresh token: vuelve a ingresar su código.
     authService.clearSession();
     return null;
@@ -288,11 +325,11 @@ async function refreshStoredSession(): Promise<string | null> {
   try {
     const response = await httpClient.post<BackendAuthResponseDTO>(
       '/auth/refresh',
-      { refreshToken: stored.refreshToken },
-      { auth: { skipAuthorization: true, skipRefresh: true } },
+      undefined,
+      authEndpointOptions,
     );
     const next = normalizeAuthResponse(response, stored.expiresAt);
-    persistSession(next);
+    staffSession = next;
     return next.token;
   } catch {
     authService.clearSession();
@@ -303,6 +340,7 @@ async function refreshStoredSession(): Promise<string | null> {
 export const authService = {
   clearSession(): void {
     ++revision;
+    staffSession = null;
     httpClient.clearToken();
     try {
       localStorage.removeItem(sessionStorageKey);
@@ -317,7 +355,7 @@ export const authService = {
       const response = await httpClient.post<BackendAuthResponseDTO>(
         '/auth/login',
         { email: email.trim().toLowerCase(), password },
-        { signal, auth: { skipAuthorization: true, skipRefresh: true } },
+        { signal, ...authEndpointOptions },
       );
       checkRequest(current, signal);
       const dto = normalizeAuthResponse(response);
@@ -326,7 +364,8 @@ export const authService = {
           'Los huéspedes ingresan con el código de su reserva en "Acceso de huésped".',
         );
       }
-      persistSession(dto);
+      writeStoredSession({ kind: 'staff', expiresAt: dto.expiresAt });
+      staffSession = dto;
       httpClient.setToken(dto.token);
       return toAuthSession(dto);
     } catch (error) {
@@ -374,7 +413,7 @@ export const authService = {
     }
     checkRequest(current, signal);
     this.clearGuestAccessExpired();
-    persistSession(dto);
+    persistGuestSession(dto);
     return toAuthSession(dto);
   },
   /** Creates guest credentials only after the backend validates the reservation code and email. */
@@ -422,7 +461,7 @@ export const authService = {
     }
     checkRequest(current, signal);
     this.clearGuestAccessExpired();
-    persistSession(dto);
+    persistGuestSession(dto);
     return toAuthSession(dto);
   },
   /** Canjea el código de la reserva por una sesión de huésped (flujo secundario de compatibilidad). */
@@ -458,7 +497,7 @@ export const authService = {
     }
     checkRequest(current, signal);
     this.clearGuestAccessExpired();
-    persistSession(dto);
+    persistGuestSession(dto);
     return toAuthSession(dto);
   },
   /** Permisos reales del empleado en sesión (`GET /auth/permissions`), p. ej. `inventory.read`. */
@@ -497,26 +536,30 @@ export const authService = {
     const hadStoredSession = localStorage.getItem(sessionStorageKey) !== null;
     const stored = readStoredSession();
     if (!stored) {
-      if (hadStoredSession) this.clearSession();
+      // Sin marca (p. ej. logout en otra pestaña) tampoco vale la sesión en memoria.
+      if (hadStoredSession || staffSession) this.clearSession();
       return null;
     }
     checkRequest(current, signal);
-    const expiresAt = Date.parse(stored.expiresAt);
+    const expiresAt = Date.parse(
+      stored.kind === 'staff' ? stored.expiresAt : stored.session.expiresAt,
+    );
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      if (isGuestToken(stored.token)) this.markGuestAccessExpired();
+      if (stored.kind === 'guest') this.markGuestAccessExpired();
       this.clearSession();
       return null;
     }
-    if (isGuestToken(stored.token)) {
+    if (stored.kind === 'guest') {
+      staffSession = null;
       try {
         const guest = normalizeGuestSession(
-          stored.token,
-          stored.tokenType ?? 'Bearer',
+          stored.session.token,
+          stored.session.tokenType ?? 'Bearer',
           0,
-          stored.user.name,
-          stored.user.email,
+          stored.session.user.name,
+          stored.session.user.email,
         );
-        persistSession(guest);
+        persistGuestSession(guest);
         httpClient.setToken(guest.token);
         return toAuthSession(guest);
       } catch {
@@ -525,28 +568,19 @@ export const authService = {
       }
     }
     try {
-      const normalized = normalizeAuthResponse(
-        {
-          accessToken: stored.token,
-          refreshToken: stored.refreshToken,
-          tokenType: stored.tokenType ?? 'Bearer',
-          expiresIn: 0,
-        },
-        stored.expiresAt,
-      );
-      if (isAccessTokenExpiring(normalized)) {
-        const refreshedToken = await refreshStoredSession();
-        if (!refreshedToken) return null;
-        checkRequest(current, signal);
-        const refreshed = readStoredSession();
-        if (!refreshed) return null;
-        httpClient.setToken(refreshed.token);
-        return toAuthSession(refreshed);
+      // Misma pestaña y misma sesión (la marca no cambió): se reutiliza el token en memoria.
+      const inMemory = staffSession;
+      if (inMemory && inMemory.expiresAt === stored.expiresAt && !isAccessTokenExpiring(inMemory)) {
+        httpClient.setToken(inMemory.token);
+        return toAuthSession(inMemory);
       }
+      // Recarga, otra pestaña o access token por vencer: la cookie httpOnly recupera la sesión.
+      const refreshedToken = await refreshStaffSession();
       checkRequest(current, signal);
-      persistSession(normalized);
-      httpClient.setToken(normalized.token);
-      return toAuthSession(normalized);
+      const refreshed = staffSession;
+      if (!refreshedToken || !refreshed) return null;
+      httpClient.setToken(refreshedToken);
+      return toAuthSession(refreshed);
     } catch {
       this.clearSession();
       return null;
@@ -556,15 +590,13 @@ export const authService = {
     return (await this.getCurrentSession())?.user ?? null;
   },
   async logout(): Promise<void> {
-    const stored = readStoredSession();
+    const wasStaff = readStoredSession()?.kind === 'staff' || staffSession !== null;
     this.clearSession();
-    if (!stored?.refreshToken) return;
+    // El huésped no tiene refresh token que revocar.
+    if (!wasStaff) return;
     try {
-      await httpClient.post<void>(
-        '/auth/logout',
-        { refreshToken: stored.refreshToken },
-        { auth: { skipAuthorization: true, skipRefresh: true } },
-      );
+      // Sin cuerpo: el backend revoca el refresh token de la cookie y la borra (Max-Age=0).
+      await httpClient.post<void>('/auth/logout', undefined, authEndpointOptions);
     } catch (error) {
       throw new Error(
         messageFromHttpError(
@@ -576,7 +608,7 @@ export const authService = {
   },
 };
 
-httpClient.setRefreshHandler(refreshStoredSession);
+httpClient.setRefreshHandler(refreshStaffSession);
 httpClient.setUnauthorizedHandler(() => authService.clearSession());
 
 export default authService;

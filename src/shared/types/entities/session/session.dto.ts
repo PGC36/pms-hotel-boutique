@@ -26,9 +26,14 @@ export interface LoginDTO {
   password: string;
 }
 
+/**
+ * Respuesta de `POST /auth/login` y `/auth/refresh`. La web manda `X-Client: web`
+ * y el backend omite `refreshToken` del cuerpo: el refresh token viaja solo en la
+ * cookie httpOnly `pms_refresh_token` (Path=/api/v1/auth). La app móvil sí lo recibe.
+ */
 export interface BackendAuthResponseDTO {
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string;
   tokenType: string;
   expiresIn: number;
 }
@@ -56,7 +61,6 @@ export interface BackendGuestLoginResponseDTO {
 export interface AuthResponseDTO {
   user: SessionUserDTO;
   token: string;
-  refreshToken: string;
   expiresAt: ISODateString;
   accessExpiresAt?: ISODateString;
   tokenType?: string;

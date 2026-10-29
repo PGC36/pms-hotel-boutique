@@ -5,7 +5,6 @@ import type { AuthSession } from './session.model';
 export const toDomain = (dto: AuthResponseDTO): AuthSession => ({
   user: { ...dto.user, createdAt: new Date(dto.user.createdAt) },
   token: dto.token,
-  refreshToken: dto.refreshToken,
   expiresAt: new Date(dto.expiresAt),
   accessExpiresAt: dto.accessExpiresAt ? new Date(dto.accessExpiresAt) : undefined,
   tokenType: dto.tokenType,
